@@ -11,6 +11,7 @@ export declare class ChatGPTDriver extends BaseDriver {
     sendMessage(text: string): Promise<void>;
     extractResponse(): Promise<string>;
     isValidConversationUrl(url: string): boolean;
+    protected getCopyButtonSelector(): string | null;
     protected getStopButtonSelector(): string | null;
     protected getResponseAreaSelector(): string | null;
     /**

@@ -39,6 +39,15 @@ const SELECTORS = {
         '[class*="markdown-body"]',
         '[class*="message-content"][class*="assistant"]',
     ].join(', '),
+    // 回复完成后的复制按钮
+    copyButton: [
+        'button[aria-label*="复制"]',
+        'button[aria-label*="copy"]',
+        'button[title*="复制"]',
+        'button[title*="copy"]',
+        'button[class*="copy"]',
+        '[data-testid*="copy"]',
+    ].join(', '),
 };
 class KimiDriver extends BaseDriver_1.BaseDriver {
     constructor(page, options = {}) {
@@ -139,6 +148,9 @@ class KimiDriver extends BaseDriver_1.BaseDriver {
     }
     isValidConversationUrl(url) {
         return url.startsWith('https://www.kimi.com/') && url !== 'https://www.kimi.com/';
+    }
+    getCopyButtonSelector() {
+        return SELECTORS.copyButton;
     }
     getStopButtonSelector() {
         return SELECTORS.stopButton;

@@ -40,6 +40,7 @@ class BaseDriver {
      */
     async waitForResponse() {
         const timeout = this.responseTimeoutMs;
+        const copySelector = this.getCopyButtonSelector();
         const stopSelector = this.getStopButtonSelector();
         const responseSelector = this.getResponseAreaSelector();
         const timeoutPromise = new Promise((_, reject) => {
@@ -48,6 +49,14 @@ class BaseDriver {
             }, timeout);
         });
         try {
+            // 策略 0：优先使用“复制按钮就绪”判定（跨站点统一）
+            if (copySelector) {
+                await Promise.race([
+                    timeoutPromise,
+                    this.waitByCopyButtonReady(),
+                ]);
+                return;
+            }
             if (stopSelector) {
                 // 策略 1：等待停止按钮出现 → 再等待其消失
                 // 停止按钮出现说明模型已开始生成，消失说明生成完毕
@@ -75,6 +84,68 @@ class BaseDriver {
                 throw err;
             throw new types_1.WebDriverError(types_1.WebDriverErrorCode.RESPONSE_TIMEOUT, '等待模型响应时发生错误', err);
         }
+    }
+    /**
+     * 检测策略 0：复制按钮就绪检测（跨站点统一）
+     * 条件：复制按钮可见，且（若配置了 responseSelector）最后一条回复非空并稳定
+     */
+    async waitByCopyButtonReady() {
+        const copySelector = this.getCopyButtonSelector();
+        if (!copySelector)
+            return;
+        const responseSelector = this.getResponseAreaSelector();
+        const checkInterval = Math.max(300, this.stabilityCheckIntervalMs);
+        const requiredStableRounds = Math.max(2, Math.min(4, this.stabilityCheckCount));
+        let stableCount = 0;
+        let lastSnapshot = '';
+        const start = Date.now();
+        while (Date.now() - start < this.responseTimeoutMs) {
+            await this.sleep(checkInterval);
+            const state = await this.page.evaluate(([copySel, respSel]) => {
+                const doc = globalThis.document;
+                const isVisible = (el) => {
+                    if (!el)
+                        return false;
+                    const style = globalThis.getComputedStyle?.(el);
+                    if (!style)
+                        return true;
+                    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0;
+                };
+                const copyEl = doc.querySelector(copySel);
+                const copyVisible = isVisible(copyEl);
+                let lastResponseText = '';
+                if (respSel) {
+                    const responseEls = doc.querySelectorAll(respSel);
+                    if (responseEls.length > 0) {
+                        const lastEl = responseEls[responseEls.length - 1];
+                        lastResponseText = (lastEl?.textContent || '').replace(/\s+/g, ' ').trim();
+                    }
+                }
+                return { copyVisible, lastResponseText };
+            }, [copySelector, responseSelector]);
+            if (!state.copyVisible) {
+                stableCount = 0;
+                lastSnapshot = '';
+                continue;
+            }
+            if (responseSelector && !state.lastResponseText) {
+                stableCount = 0;
+                lastSnapshot = '';
+                continue;
+            }
+            const snapshot = `${state.copyVisible}|${state.lastResponseText}`;
+            if (snapshot === lastSnapshot) {
+                stableCount++;
+            }
+            else {
+                lastSnapshot = snapshot;
+                stableCount = 1;
+            }
+            if (stableCount >= requiredStableRounds) {
+                return;
+            }
+        }
+        throw new types_1.WebDriverError(types_1.WebDriverErrorCode.RESPONSE_TIMEOUT, '等待复制按钮就绪超时');
     }
     /**
      * 检测策略 1：发送按钮状态检测
@@ -172,6 +243,10 @@ class BaseDriver {
     // ============================
     // 子类可覆盖的钩子方法
     // ============================
+    /** 返回复制按钮的 CSS 选择器（用于回复完成判定），子类不支持可返回 null */
+    getCopyButtonSelector() {
+        return null;
+    }
     /** 返回停止按钮的 CSS 选择器，子类如果没有停止按钮可返回 null */
     getStopButtonSelector() {
         return null;

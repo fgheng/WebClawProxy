@@ -21,6 +21,14 @@ const SELECTORS = {
   sendButton: '[data-testid="send-button"]',
   /** 停止生成按钮 */
   stopButton: '[data-testid="stop-button"]',
+  /** 回复完成后的复制按钮 */
+  copyButton: [
+    'button[data-testid*="copy"]',
+    'button[aria-label*="Copy"]',
+    'button[aria-label*="复制"]',
+    'button[title*="Copy"]',
+    'button[title*="复制"]',
+  ].join(', '),
   /** 最后一条助手消息区域 */
   responseArea: '[data-message-author-role="assistant"]',
   /** 可能出现的弹窗/广告关闭按钮 */
@@ -143,6 +151,10 @@ export class ChatGPTDriver extends BaseDriver {
   isValidConversationUrl(url: string): boolean {
     // ChatGPT 对话链接格式: https://chatgpt.com/c/{id}
     return /^https:\/\/chatgpt\.com\/c\/[\w-]+/.test(url);
+  }
+
+  protected getCopyButtonSelector(): string | null {
+    return SELECTORS.copyButton;
   }
 
   protected getStopButtonSelector(): string | null {

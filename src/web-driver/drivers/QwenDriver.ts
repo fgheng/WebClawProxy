@@ -51,6 +51,15 @@ const SELECTORS = {
     '[class*="markdown-body"]',
     '[class*="message-content-wrapper"]',
   ].join(', '),
+  // 回复完成后的复制按钮
+  copyButton: [
+    'button[aria-label*="复制"]',
+    'button[aria-label*="copy"]',
+    'button[title*="复制"]',
+    'button[title*="copy"]',
+    'button[class*="copy"]',
+    '[data-testid*="copy"]',
+  ].join(', '),
 };
 
 export class QwenDriver extends BaseDriver {
@@ -227,6 +236,10 @@ export class QwenDriver extends BaseDriver {
 
   isValidConversationUrl(url: string): boolean {
     return url.startsWith('https://chat.qwen.ai/') && url !== 'https://chat.qwen.ai/';
+  }
+
+  protected getCopyButtonSelector(): string | null {
+    return SELECTORS.copyButton;
   }
 
   protected getStopButtonSelector(): string | null {

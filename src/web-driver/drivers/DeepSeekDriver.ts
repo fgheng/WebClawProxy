@@ -24,6 +24,14 @@ const SELECTORS = {
   ].join(', '),
   responseArea: '.ds-markdown, [class*="ds-markdown"], [class*="markdown-body"]',
   thinkingArea: '[class*="thinking"], [class*="think-content"], [class*="chain-of-thought"]',
+  copyButton: [
+    'button[aria-label*="复制"]',
+    'button[aria-label*="copy"]',
+    'button[title*="复制"]',
+    'button[title*="copy"]',
+    'button[class*="copy"]',
+    '[data-testid*="copy"]',
+  ].join(', '),
 };
 
 export class DeepSeekDriver extends BaseDriver {
@@ -179,6 +187,10 @@ export class DeepSeekDriver extends BaseDriver {
       url.startsWith('https://chat.deepseek.com/') &&
       url !== 'https://chat.deepseek.com/'
     );
+  }
+
+  protected getCopyButtonSelector(): string | null {
+    return SELECTORS.copyButton;
   }
 
   protected getStopButtonSelector(): string | null {
