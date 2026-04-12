@@ -47,6 +47,8 @@ export declare class WebDriverManager {
      */
     openBrowser(url: string, hint?: string): Promise<void>;
     preflightConfiguredSites(sites?: SiteKey[]): Promise<void>;
+    openConfiguredSites(sites?: SiteKey[]): Promise<void>;
+    private openSitePage;
     /**
      * 关闭浏览器，释放资源
      */
@@ -67,6 +69,7 @@ export declare class WebDriverManager {
     /**
      * 获取或创建指定 site 的 Driver
      */
+    private waitForPageReadyBeforeSend;
     private getOrCreateDriver;
     private ensureLoggedIn;
     private clearLoginHintOverlay;

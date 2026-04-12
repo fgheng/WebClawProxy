@@ -51,15 +51,6 @@ const SELECTORS = {
     '[class*="markdown-body"]',
     '[class*="message-content-wrapper"]',
   ].join(', '),
-  // 回复完成后的复制按钮
-  copyButton: [
-    'button[aria-label*="复制"]',
-    'button[aria-label*="copy"]',
-    'button[title*="复制"]',
-    'button[title*="copy"]',
-    'button[class*="copy"]',
-    '[data-testid*="copy"]',
-  ].join(', '),
 };
 
 export class QwenDriver extends BaseDriver {
@@ -209,6 +200,12 @@ export class QwenDriver extends BaseDriver {
           continue;
         }
 
+        // 结构化内容（JSON）未闭合时继续等待，避免截断文本提前返回
+        if (this.isLikelyIncompleteStructuredText(picked)) {
+          await this.sleep(350);
+          continue;
+        }
+
         // 防止拿到上一轮旧回复
         if (currentCount <= this.pendingResponseBaseCount && picked === this.lastAssistantResponseText) {
           await this.sleep(300);
@@ -236,10 +233,6 @@ export class QwenDriver extends BaseDriver {
 
   isValidConversationUrl(url: string): boolean {
     return url.startsWith('https://chat.qwen.ai/') && url !== 'https://chat.qwen.ai/';
-  }
-
-  protected getCopyButtonSelector(): string | null {
-    return SELECTORS.copyButton;
   }
 
   protected getStopButtonSelector(): string | null {
@@ -375,5 +368,59 @@ export class QwenDriver extends BaseDriver {
     if (/^正在思考[\.。…]*$/.test(content.trim())) return true;
     if (/^思考中[\.。…]*$/.test(content.trim())) return true;
     return false;
+  }
+
+  private isLikelyIncompleteStructuredText(content: string): boolean {
+    const text = content.trim();
+    if (!text) return false;
+
+    // 仅在看起来像 JSON 的场景生效，避免影响普通自然语言回复
+    if (!(text.startsWith('{') || text.startsWith('['))) {
+      return false;
+    }
+
+    let stack: string[] = [];
+    let inString = false;
+    let quote = '';
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          inString = false;
+          quote = '';
+        }
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        inString = true;
+        quote = ch;
+        continue;
+      }
+
+      if (ch === '{' || ch === '[') {
+        stack.push(ch);
+        continue;
+      }
+
+      if (ch === '}' || ch === ']') {
+        const top = stack[stack.length - 1];
+        if ((ch === '}' && top === '{') || (ch === ']' && top === '[')) {
+          stack.pop();
+        } else {
+          return true;
+        }
+      }
+    }
+
+    // 字符串未闭合或括号未闭合，认为仍在输出中
+    return inString || stack.length > 0;
   }
 }

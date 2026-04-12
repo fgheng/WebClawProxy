@@ -11,6 +11,7 @@ import {
   buildToolsPrompt,
   buildInitPrompt,
   buildCurrentPromptWithTemplate,
+  buildCurrentPromptForWebSend,
 } from './utils/prompt';
 import type {} from './utils/prompt';
 
@@ -85,6 +86,10 @@ export class DataManager {
         customConfig?.currentTemplate ??
         config.defaults?.current_template ??
         '请按照下面的模板回答\n{{json_template}}\n\n---\n{{current}}',
+      userMessageTemplate:
+        customConfig?.userMessageTemplate ??
+        config.defaults?.user_message_template ??
+        '',
       sessionIndexMaxEntries:
         customConfig?.sessionIndexMaxEntries ??
         config.session_index?.max_entries ??
@@ -364,6 +369,17 @@ export class DataManager {
     return buildCurrentPromptWithTemplate({
       template: this.config.currentTemplate!,
       jsonTemplate: this.config.jsonTemplate!,
+      currentPrompt: this.get_current_prompt(),
+    });
+  }
+
+  /**
+   * 发送到网页前的用户消息包装。
+   * 注意：该包装仅用于首次发送，不影响 JSON 解析失败后的重试模板。
+   */
+  get_current_prompt_for_web_send(): string {
+    return buildCurrentPromptForWebSend({
+      template: this.config.userMessageTemplate,
       currentPrompt: this.get_current_prompt(),
     });
   }

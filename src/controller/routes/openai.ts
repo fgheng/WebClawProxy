@@ -22,6 +22,12 @@ export async function preflightWebDriverSites(): Promise<void> {
   await webDriver.preflightConfiguredSites(siteKeys);
 }
 
+export async function openConfiguredWebDriverSites(): Promise<void> {
+  const siteKeys = Object.keys(config.sites ?? {}) as SiteKey[];
+  if (siteKeys.length === 0) return;
+  await webDriver.openConfiguredSites(siteKeys);
+}
+
 /**
  * 根据模型名称推断使用哪个网站
  * 优先查找配置文件中的 models 映射，再根据大类选择 site
@@ -79,6 +85,15 @@ function normalizeJsonLike(input: string): string | null {
     const obj = JSON.parse(noTrailingComma);
     return JSON.stringify(obj);
   } catch {
+    // ignore
+  }
+
+  // 针对 message.content 等字段中“未转义双引号”做定向修复
+  const repairedQuoteFields = repairUnescapedQuotesInFields(noTrailingComma, ['content']);
+  try {
+    const obj = JSON.parse(repairedQuoteFields);
+    return JSON.stringify(obj);
+  } catch {
     return null;
   }
 }
@@ -99,6 +114,69 @@ function repairMalformedToolCallArguments(text: string): string {
       return `${prefix}"${escaped}"`;
     }
   );
+}
+
+function repairUnescapedQuotesInFields(text: string, fields: string[]): string {
+  let result = text;
+  for (const field of fields) {
+    result = repairUnescapedQuotesInField(result, field);
+  }
+  return result;
+}
+
+function repairUnescapedQuotesInField(text: string, fieldName: string): string {
+  const pattern = new RegExp(`"${fieldName}"\\s*:\\s*"`, 'g');
+  let cursor = 0;
+  let out = '';
+
+  while (true) {
+    pattern.lastIndex = cursor;
+    const match = pattern.exec(text);
+    if (!match) {
+      out += text.slice(cursor);
+      break;
+    }
+
+    const valueStart = match.index + match[0].length;
+    out += text.slice(cursor, valueStart);
+
+    let i = valueStart;
+    let escaped = false;
+    while (i < text.length) {
+      const ch = text[i];
+
+      if (ch === '"' && !escaped) {
+        let j = i + 1;
+        while (j < text.length && /\s/.test(text[j])) j++;
+
+        if (j < text.length && (text[j] === ',' || text[j] === '}' || text[j] === ']')) {
+          out += '"';
+          i += 1;
+          break;
+        }
+
+        // 非终止引号，视为字符串内部未转义引号
+        out += '\\"';
+        i += 1;
+        escaped = false;
+        continue;
+      }
+
+      out += ch;
+
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      }
+
+      i += 1;
+    }
+
+    cursor = i;
+  }
+
+  return out;
 }
 
 /**
@@ -465,6 +543,12 @@ function logRequestTrace(
   }
 }
 
+function buildContentPreview(content: string, maxLength = 200): string {
+  return content
+    .replace(/\s+/g, ' ')
+    .slice(0, maxLength);
+}
+
 /**
  * POST /v1/chat/completions — OpenAI 兼容接口处理器
  */
@@ -611,7 +695,7 @@ export async function chatCompletionsHandler(
     }
 
     // ===== Step 6: 发送当前消息 =====
-    const currentPrompt = dm.get_current_prompt();
+    const currentPrompt = dm.get_current_prompt_for_web_send();
     logRequestTrace(traceId, 'chat_dispatch', {
       site,
       session_url: sessionUrl,
@@ -655,6 +739,12 @@ export async function chatCompletionsHandler(
     let responseContent = chatResult.content;
     let parsedJson = extractJson(responseContent);
     let upstreamError = detectUpstreamServiceError(responseContent);
+    logRequestTrace(traceId, 'json_extract_initial', {
+      content_length: responseContent.length,
+      parsed_json: Boolean(parsedJson),
+      upstream_error: Boolean(upstreamError),
+      content_preview: buildContentPreview(responseContent),
+    });
     const maxRetries = 2;
     let retryCount = 0;
 
@@ -670,10 +760,25 @@ export async function chatCompletionsHandler(
         responseContent = retryResult.content;
         parsedJson = extractJson(responseContent);
         upstreamError = detectUpstreamServiceError(responseContent);
+        logRequestTrace(traceId, 'json_extract_retry', {
+          retry_index: retryCount + 1,
+          content_length: responseContent.length,
+          parsed_json: Boolean(parsedJson),
+          upstream_error: Boolean(upstreamError),
+          content_preview: buildContentPreview(responseContent),
+        });
       } catch {
         break;
       }
       retryCount++;
+    }
+
+    if (!parsedJson && !upstreamError) {
+      logRequestTrace(traceId, 'json_extract_fallback_plain_text', {
+        retries: retryCount,
+        content_length: responseContent.length,
+        content_preview: buildContentPreview(responseContent),
+      });
     }
 
     if (upstreamError) {

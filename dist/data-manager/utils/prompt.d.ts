@@ -58,4 +58,13 @@ export declare function buildCurrentPromptWithTemplate(options: {
     jsonTemplate: string;
     currentPrompt: string;
 }): string;
+/**
+ * 构造发送到网页前的用户消息包装
+ * - template 为空（或全空白）时，直接返回 currentPrompt
+ * - 非空时用 {{content}} 替换当前消息；若未出现占位符，则按原样返回模板
+ */
+export declare function buildCurrentPromptForWebSend(options: {
+    template?: string;
+    currentPrompt: string;
+}): string;
 //# sourceMappingURL=prompt.d.ts.map

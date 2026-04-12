@@ -170,6 +170,9 @@ export class WebDriverManager {
     // 2. 新建对话
     await driver.createNewConversation();
 
+    // 发送初始化提示词前，等待页面稳定，避免刚新建对话时输入被吞
+    await this.waitForPageReadyBeforeSend(site);
+
     // 3. 发送初始化提示词
     await driver.sendMessage(prompt);
 
@@ -222,8 +225,12 @@ export class WebDriverManager {
     if (currentUrl !== sessionUrl) {
       console.log(`[WebDriver] 跳转到对话: ${sessionUrl}`);
       await driver.navigateToConversation(sessionUrl);
+      // 跳转后等待页面稳定，再发送消息
+      await this.waitForPageReadyBeforeSend(site);
     } else {
       console.log(`[WebDriver] 已在目标对话页面，跳过导航`);
+      // 即使未跳转，也做一次轻量稳定等待，避免页面刚切换完成时输入丢失
+      await this.waitForPageReadyBeforeSend(site);
     }
 
     // 4. 发送消息
@@ -293,6 +300,53 @@ export class WebDriverManager {
       await this.ensureLoggedIn(site, driver);
       console.log(`[WebDriver] 启动预检通过：${site}`);
     }
+  }
+
+  async openConfiguredSites(sites?: SiteKey[]): Promise<void> {
+    await this.ensureBrowser();
+    const targetSites = sites ?? (Object.keys(SITE_URLS) as SiteKey[]);
+
+    for (const site of targetSites) {
+      const siteUrl = SITE_URLS[site];
+      if (!siteUrl) continue;
+      console.log(`[WebDriver] 启动打开站点：${site} -> ${siteUrl}`);
+      await this.openSitePage(site);
+    }
+  }
+
+  private async openSitePage(site: SiteKey): Promise<Page> {
+    if (!this.context) {
+      throw new WebDriverError(WebDriverErrorCode.BROWSER_NOT_INITIALIZED, '浏览器未初始化');
+    }
+
+    const siteUrl = SITE_URLS[site];
+    if (!siteUrl) {
+      throw new WebDriverError(WebDriverErrorCode.UNKNOWN_SITE, `未知的 site key: ${site}`);
+    }
+
+    const existingSitePage = this.pageMap.get(site);
+    if (existingSitePage) {
+      await existingSitePage.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      return existingSitePage;
+    }
+
+    const targetHost = new URL(siteUrl).host;
+    const reusableByHost = ((this.context as BrowserContext).pages?.() ?? []).find((p) => {
+      try {
+        return new URL(p.url()).host === targetHost;
+      } catch {
+        return false;
+      }
+    });
+
+    const page = reusableByHost ?? await (this.context as BrowserContext).newPage();
+    await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    this.pageMap.set(site, page);
+
+    // 页面绑定变化后，确保后续 driver 与 page 一致
+    this.driverMap.delete(site);
+
+    return page;
   }
 
   /**
@@ -495,6 +549,36 @@ export class WebDriverManager {
   /**
    * 获取或创建指定 site 的 Driver
    */
+  private async waitForPageReadyBeforeSend(site: SiteKey): Promise<void> {
+    const page = this.pageMap.get(site);
+    if (!page) return;
+
+    // 1) 等待文档事件（若 API 可用）
+    try {
+      await (page as any).waitForLoadState?.('domcontentloaded', { timeout: 4000 });
+    } catch {
+      // 忽略，继续走 URL 稳定性判断
+    }
+
+    // 2) URL 稳定性：连续两次相同视为稳定
+    let lastUrl = '';
+    let stableRounds = 0;
+    const start = Date.now();
+    while (Date.now() - start < 3000 && stableRounds < 2) {
+      const currentUrl = page.url?.() ?? '';
+      if (currentUrl && currentUrl === lastUrl) {
+        stableRounds++;
+      } else {
+        stableRounds = 0;
+        lastUrl = currentUrl;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    // 3) 最后缓冲，给前端框架渲染一个小窗口
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
   private async getOrCreateDriver(site: SiteKey): Promise<BaseDriver> {
     if (!this.driverMap.has(site)) {
       if (!this.context) {
@@ -504,8 +588,21 @@ export class WebDriverManager {
         );
       }
 
-      const page = await (this.context as BrowserContext).newPage();
-      this.pageMap.set(site, page);
+      let page = this.pageMap.get(site);
+      if (!page) {
+        const siteUrl = SITE_URLS[site];
+        const targetHost = siteUrl ? new URL(siteUrl).host : '';
+        const reusableByHost = ((this.context as BrowserContext).pages?.() ?? []).find((p) => {
+          try {
+            return targetHost ? new URL(p.url()).host === targetHost : false;
+          } catch {
+            return false;
+          }
+        });
+
+        page = reusableByHost ?? await (this.context as BrowserContext).newPage();
+        this.pageMap.set(site, page);
+      }
 
       const driverOptions = {
         responseTimeoutMs: this.options.responseTimeoutMs,

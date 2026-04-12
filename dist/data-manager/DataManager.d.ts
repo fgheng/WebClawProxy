@@ -76,6 +76,11 @@ export declare class DataManager {
         };
     };
     get_current_prompt_with_template(): string;
+    /**
+     * 发送到网页前的用户消息包装。
+     * 注意：该包装仅用于首次发送，不影响 JSON 解析失败后的重试模板。
+     */
+    get_current_prompt_for_web_send(): string;
     private estimateTokenCount;
     private ensureDataPath;
     private writeHistoryJsonl;

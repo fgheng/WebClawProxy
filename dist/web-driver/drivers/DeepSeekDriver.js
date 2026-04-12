@@ -25,14 +25,6 @@ const SELECTORS = {
     ].join(', '),
     responseArea: '.ds-markdown, [class*="ds-markdown"], [class*="markdown-body"]',
     thinkingArea: '[class*="thinking"], [class*="think-content"], [class*="chain-of-thought"]',
-    copyButton: [
-        'button[aria-label*="复制"]',
-        'button[aria-label*="copy"]',
-        'button[title*="复制"]',
-        'button[title*="copy"]',
-        'button[class*="copy"]',
-        '[data-testid*="copy"]',
-    ].join(', '),
 };
 class DeepSeekDriver extends BaseDriver_1.BaseDriver {
     constructor(page, options = {}) {
@@ -113,38 +105,50 @@ class DeepSeekDriver extends BaseDriver_1.BaseDriver {
     async extractResponse() {
         try {
             const allMessages = await this.page.$$('[class*="message"], [class*="chat-message"]');
-            let lastAssistantEl = null;
+            const assistantCandidates = [];
             for (const msg of allMessages) {
                 const isAssistant = await msg.evaluate((el) => {
-                    return (el.className.includes('assistant') ||
-                        el.getAttribute('data-role') === 'assistant' ||
-                        !!(el.querySelectorAll('[class*="ds-markdown"], [class*="markdown-body"]').length));
+                    const cls = String(el.className || '').toLowerCase();
+                    const role = (el.getAttribute('data-role') ||
+                        el.getAttribute('data-message-role') ||
+                        el.getAttribute('data-author-role') ||
+                        '').toLowerCase();
+                    return (cls.includes('assistant') ||
+                        role === 'assistant' ||
+                        !!el.querySelector('[class*="ds-markdown"], [class*="markdown-body"], [class*="markdown"]'));
                 });
-                if (isAssistant) {
-                    lastAssistantEl = msg;
-                }
+                if (isAssistant)
+                    assistantCandidates.push(msg);
             }
-            if (!lastAssistantEl) {
+            if (assistantCandidates.length === 0) {
                 const responseEls = await this.page.$$(SELECTORS.responseArea);
-                if (responseEls.length > 0) {
-                    lastAssistantEl = responseEls[responseEls.length - 1];
-                }
+                assistantCandidates.push(...responseEls);
             }
-            if (!lastAssistantEl) {
+            if (assistantCandidates.length === 0) {
                 throw new types_1.WebDriverError(types_1.WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED, 'DeepSeek 未找到响应元素');
             }
-            const content = await lastAssistantEl.evaluate((el) => {
-                const thinkEls = el.querySelectorAll('[class*="thinking"], [class*="think"], [class*="chain"], details, summary');
-                thinkEls.forEach((e) => e.remove());
-                const mdEl = el.querySelector('[class*="ds-markdown"], [class*="markdown"], [class*="content"]');
-                if (mdEl)
-                    return mdEl.textContent?.trim() || '';
-                return el.textContent?.trim() || '';
-            });
-            if (!content) {
-                throw new types_1.WebDriverError(types_1.WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED, 'DeepSeek 响应内容为空');
+            for (let i = assistantCandidates.length - 1; i >= 0; i--) {
+                const content = await assistantCandidates[i].evaluate((el) => {
+                    const cloned = el.cloneNode(true);
+                    const thinkEls = cloned.querySelectorAll('[class*="thinking"], [class*="think"], [class*="chain"], details, summary');
+                    thinkEls.forEach((e) => e.remove());
+                    // 优先提取代码块（JSON 输出最稳定）
+                    const codeNodes = Array.from(cloned.querySelectorAll('pre code, code[class*="language"], pre'));
+                    const codeTexts = codeNodes
+                        .map((n) => (n.textContent || '').trim())
+                        .filter((t) => t.length > 0);
+                    if (codeTexts.length > 0) {
+                        return codeTexts.sort((a, b) => b.length - a.length)[0];
+                    }
+                    const mdEl = cloned.querySelector('[class*="ds-markdown"], [class*="markdown"], [class*="content"]');
+                    const text = (mdEl ? mdEl.textContent : cloned.textContent) || '';
+                    return text.replace(/\s+/g, ' ').trim();
+                });
+                if (content) {
+                    return content;
+                }
             }
-            return content;
+            throw new types_1.WebDriverError(types_1.WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED, 'DeepSeek 响应内容为空');
         }
         catch (err) {
             if (err instanceof types_1.WebDriverError)
@@ -155,9 +159,6 @@ class DeepSeekDriver extends BaseDriver_1.BaseDriver {
     isValidConversationUrl(url) {
         return (url.startsWith('https://chat.deepseek.com/') &&
             url !== 'https://chat.deepseek.com/');
-    }
-    getCopyButtonSelector() {
-        return SELECTORS.copyButton;
     }
     getStopButtonSelector() {
         return SELECTORS.stopButton;

@@ -18,6 +18,7 @@ const mockDm = {
   get_init_prompt: jest.fn(),
   get_init_prompt_for_new_session: jest.fn(),
   get_current_prompt: jest.fn(),
+  get_current_prompt_for_web_send: jest.fn(),
   get_current_prompt_with_template: jest.fn(),
   get_usage: jest.fn(),
   update_web_url: jest.fn(),
@@ -93,6 +94,7 @@ beforeEach(() => {
   mockDm.get_init_prompt.mockReturnValue('初始化 prompt');
   mockDm.get_init_prompt_for_new_session.mockReturnValue('初始化 prompt（不含当前轮）');
   mockDm.get_current_prompt.mockReturnValue('你好');
+  mockDm.get_current_prompt_for_web_send.mockReturnValue('你好');
   mockDm.get_current_prompt_with_template.mockReturnValue('带模板的 prompt');
   mockDm.get_usage.mockReturnValue({
     usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
@@ -356,6 +358,73 @@ describe('控制模块 API 测试', () => {
       expect(res.body.choices?.[0]?.message?.content).toBe('正在为您读取 downloads/player.txt 文件内容...');
       expect(mockChat).toHaveBeenCalledTimes(1);
       expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
+    it('Qwen 内容字段包含未转义双引号时也应修复并解析成功', async () => {
+      mockDm.model = 'qwen';
+      const qwenRequest = {
+        ...openAIRequest,
+        model: 'qwen',
+      };
+
+      mockChat.mockResolvedValueOnce({
+        content: `{
+  "index": 0,
+  "message": {
+    "role": "assistant",
+    "content": "👋 嘿，你好呀！我是 Qwen，"qw 哥"这个称呼我收下啦～ 有什么我可以帮你的吗？",
+    "tool_calls": []
+  },
+  "logprobs": null,
+  "finish_reason": "stop"
+}`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(qwenRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.object).toBe('chat.completion');
+      expect(res.body.model).toBe('qwen');
+      expect(res.body.choices?.[0]?.message?.content).toContain('qw 哥');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
+    it('Qwen 首轮回复截断时应触发重试并在二次成功后返回', async () => {
+      mockDm.model = 'qwen';
+      const qwenRequest = {
+        ...openAIRequest,
+        model: 'qwen',
+      };
+
+      mockChat
+        .mockResolvedValueOnce({
+          content: '{ "index": 0, "message": { "role"',
+        })
+        .mockResolvedValueOnce({
+          content: `{
+  "index": 0,
+  "message": {
+    "role": "assistant",
+    "content": "二次重试后的完整 JSON",
+    "tool_calls": []
+  },
+  "finish_reason": "stop"
+}`,
+        });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(qwenRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.choices?.[0]?.message?.content).toBe('二次重试后的完整 JSON');
+      expect(mockChat).toHaveBeenCalledTimes(2);
+      expect(mockDm.get_current_prompt_with_template).toHaveBeenCalledTimes(1);
     });
 
     it('无效的请求格式应该返回 400', async () => {

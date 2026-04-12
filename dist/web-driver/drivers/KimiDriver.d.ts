@@ -7,7 +7,6 @@ export declare class KimiDriver extends BaseDriver {
     sendMessage(text: string): Promise<void>;
     extractResponse(): Promise<string>;
     isValidConversationUrl(url: string): boolean;
-    protected getCopyButtonSelector(): string | null;
     protected getStopButtonSelector(): string | null;
     protected getResponseAreaSelector(): string | null;
     private dismissDialogs;

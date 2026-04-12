@@ -40,15 +40,6 @@ const SELECTORS = {
     '[class*="markdown-body"]',
     '[class*="message-content"][class*="assistant"]',
   ].join(', '),
-  // 回复完成后的复制按钮
-  copyButton: [
-    'button[aria-label*="复制"]',
-    'button[aria-label*="copy"]',
-    'button[title*="复制"]',
-    'button[title*="copy"]',
-    'button[class*="copy"]',
-    '[data-testid*="copy"]',
-  ].join(', '),
 };
 
 export class KimiDriver extends BaseDriver {
@@ -125,42 +116,83 @@ export class KimiDriver extends BaseDriver {
 
   async extractResponse(): Promise<string> {
     try {
-      // 先尝试通过 data-role 属性精确定位助手消息（最可靠）
-      let responseElements = await this.page.$$('[data-role="assistant"], [data-message-role="assistant"]');
+      const candidates: any[] = [];
 
-      // 备用：通过 responseArea 选择器
-      if (responseElements.length === 0) {
-        responseElements = await this.page.$$(SELECTORS.responseArea);
+      // 1) 语义化 assistant 节点（优先）
+      const semanticAssistant = await this.page.$$(
+        '[data-role="assistant"], [data-message-role="assistant"], [data-author-role="assistant"]'
+      );
+      candidates.push(...semanticAssistant);
+
+      // 2) 备用：所有可能的消息节点，筛选 assistant 特征
+      if (candidates.length === 0) {
+        const allMessages = await this.page.$$(
+          '[class*="message"], [class*="chat-message"], [class*="segment"], [class*="item"]'
+        );
+        for (const msg of allMessages) {
+          const isAssistant = await msg.evaluate((el: any) => {
+            const cls = String(el.className || '').toLowerCase();
+            const role =
+              (el.getAttribute('data-role') ||
+                el.getAttribute('data-message-role') ||
+                el.getAttribute('data-author-role') ||
+                '').toLowerCase();
+            return (
+              role === 'assistant' ||
+              cls.includes('assistant') ||
+              Boolean(el.querySelector('[class*="markdown"], [class*="message-content"]'))
+            );
+          });
+          if (isAssistant) candidates.push(msg);
+        }
       }
 
-      if (responseElements.length === 0) {
+      // 3) 兜底：responseArea 命中节点
+      if (candidates.length === 0) {
+        const responseElements = await this.page.$$(SELECTORS.responseArea);
+        candidates.push(...responseElements);
+      }
+
+      if (candidates.length === 0) {
         throw new WebDriverError(
           WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
           'Kimi 未找到响应元素'
         );
       }
 
-      const lastResponse = responseElements[responseElements.length - 1];
+      // 从后往前找最后一个非空响应
+      for (let i = candidates.length - 1; i >= 0; i--) {
+        const content = await candidates[i].evaluate((el: any) => {
+          // 在 clone 上移除思维链，避免污染原页面
+          const cloned = el.cloneNode(true) as any;
+          const thinkEls = cloned.querySelectorAll(
+            '[class*="think"], [class*="reason"], [class*="cot"], details, summary'
+          );
+          thinkEls.forEach((e: any) => e.remove());
 
-      const content = await lastResponse.evaluate((el: any) => {
-        // 移除思维链
-        const thinkEls = el.querySelectorAll('[class*="think"], details, summary');
-        thinkEls.forEach((e: any) => e.remove());
+          // 优先取代码块（Deep/JSON 场景更稳定）
+          const codeNodes = Array.from(
+            cloned.querySelectorAll('pre code, code[class*="language"], pre')
+          ) as any[];
+          const codeTexts = codeNodes
+            .map((n) => (n.textContent || '').trim())
+            .filter((t) => t.length > 0);
+          if (codeTexts.length > 0) {
+            return codeTexts.sort((a, b) => b.length - a.length)[0];
+          }
 
-        // 优先取 markdown 渲染区域
-        const mdEl = el.querySelector('[class*="markdown"], [class*="content"]');
-        if (mdEl) return mdEl.textContent?.trim() || '';
-        return el.textContent?.trim() || '';
-      });
+          const mdEl = cloned.querySelector('[class*="markdown"], [class*="message-content"], [class*="content"]');
+          const text = (mdEl ? mdEl.textContent : cloned.textContent) || '';
+          return text.replace(/\s+/g, ' ').trim();
+        });
 
-      if (!content) {
-        throw new WebDriverError(
-          WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
-          'Kimi 响应内容为空'
-        );
+        if (content) return content;
       }
 
-      return content;
+      throw new WebDriverError(
+        WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
+        'Kimi 响应内容为空'
+      );
     } catch (err) {
       if (err instanceof WebDriverError) throw err;
       throw new WebDriverError(
@@ -175,12 +207,10 @@ export class KimiDriver extends BaseDriver {
     return url.startsWith('https://www.kimi.com/') && url !== 'https://www.kimi.com/';
   }
 
-  protected getCopyButtonSelector(): string | null {
-    return SELECTORS.copyButton;
-  }
-
   protected getStopButtonSelector(): string | null {
-    return SELECTORS.stopButton;
+    // Kimi 的“停止”按钮样式波动较大，易误判导致等待卡住
+    // 这里禁用 stop 策略，统一走内容稳定性检测
+    return null;
   }
 
   protected getResponseAreaSelector(): string | null {

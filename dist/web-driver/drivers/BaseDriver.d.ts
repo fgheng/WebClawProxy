@@ -41,16 +41,11 @@ export declare abstract class BaseDriver implements IWebDriver {
      */
     waitForResponse(): Promise<void>;
     /**
-     * 检测策略 0：复制按钮就绪检测（跨站点统一）
-     * 条件：复制按钮可见，且（若配置了 responseSelector）最后一条回复非空并稳定
-     */
-    protected waitByCopyButtonReady(): Promise<void>;
-    /**
      * 检测策略 1：发送按钮状态检测
      * 等待"停止"按钮消失（即发送按钮恢复）
      * 注意：需要先等待停止按钮出现，再等待其消失，避免误判
      */
-    protected waitBySendButtonRestore(): Promise<void>;
+    protected waitBySendButtonRestore(): Promise<boolean>;
     /**
      * 检测策略 2：内容稳定性检测
      * 每隔 stabilityCheckIntervalMs 检查输出内容，
@@ -63,8 +58,6 @@ export declare abstract class BaseDriver implements IWebDriver {
      * 4. 最少等待 minWaitMs，防止极端情况下过早退出
      */
     protected waitByContentStability(): Promise<void>;
-    /** 返回复制按钮的 CSS 选择器（用于回复完成判定），子类不支持可返回 null */
-    protected getCopyButtonSelector(): string | null;
     /** 返回停止按钮的 CSS 选择器，子类如果没有停止按钮可返回 null */
     protected getStopButtonSelector(): string | null;
     /** 返回响应区域的 CSS 选择器，用于内容稳定性检测 */

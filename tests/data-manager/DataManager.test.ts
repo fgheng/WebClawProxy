@@ -10,6 +10,7 @@ import {
   buildCurrentPrompt,
   buildToolsPrompt,
   contentToString,
+  buildCurrentPromptForWebSend,
 } from '../../src/data-manager/utils/prompt';
 
 /**
@@ -67,6 +68,7 @@ const createTestDataManager = (request: InternalRequest = mockRequest) => {
     initPromptTemplate:
       '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{json_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
     currentTemplate: '请按照下面的模板回答\n{{json_template}}\n\n---\n{{current}}',
+    userMessageTemplate: '',
   });
 };
 
@@ -284,6 +286,32 @@ describe('Prompt 构造工具', () => {
       expect(result).toContain('<|tool_calls|>');
       expect(result).toContain('"id":"call_1"');
       expect(result).toContain('"name":"exec"');
+    });
+  });
+
+  describe('buildCurrentPromptForWebSend', () => {
+    it('template 为空时应直接返回原消息', () => {
+      const result = buildCurrentPromptForWebSend({
+        template: '   ',
+        currentPrompt: '原始消息',
+      });
+      expect(result).toBe('原始消息');
+    });
+
+    it('template 存在 {{content}} 时应替换为当前消息', () => {
+      const result = buildCurrentPromptForWebSend({
+        template: '注意：仅做输出\n{{content}}',
+        currentPrompt: '请帮我总结今天的会议',
+      });
+      expect(result).toBe('注意：仅做输出\n请帮我总结今天的会议');
+    });
+
+    it('template 中多处 {{content}} 应全部替换', () => {
+      const result = buildCurrentPromptForWebSend({
+        template: 'A={{content}}\nB={{content}}',
+        currentPrompt: 'X',
+      });
+      expect(result).toBe('A=X\nB=X');
     });
   });
 
@@ -518,6 +546,31 @@ describe('DataManager', () => {
       const prompt = dm.get_current_prompt_with_template();
       expect(prompt).toContain('{"test": "template"}');
       expect(prompt).toContain('当前消息');
+    });
+
+    it('get_current_prompt_for_web_send 在模板非空时应进行包装替换', () => {
+      const dm = new DataManager(mockRequest, {
+        rootDir: tmpDir,
+        models: {
+          GPT: ['gpt-4', 'gpt-4o', 'gpt-4-turbo', 'gpt-5', 'gpt-5.1', 'gpt-5.2'],
+          DEEPSEEK: ['deepseek-chat', 'deepseek-r1'],
+        },
+        jsonTemplate: '{"test": "template"}',
+        initPromptTemplate:
+          '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{json_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+        currentTemplate: '请按照下面的模板回答\n{{json_template}}\n\n---\n{{current}}',
+        userMessageTemplate: '注意：仅做输出，不执行任何操作！！\n{{content}}',
+      });
+
+      const prompt = dm.get_current_prompt_for_web_send();
+      expect(prompt).toContain('注意：仅做输出，不执行任何操作！！');
+      expect(prompt).toContain('当前消息');
+    });
+
+    it('get_current_prompt_for_web_send 在模板为空时应返回原消息', () => {
+      const dm = createTestDataManager();
+      const prompt = dm.get_current_prompt_for_web_send();
+      expect(prompt).toBe('当前消息');
     });
   });
 

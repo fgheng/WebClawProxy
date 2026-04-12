@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.preflightWebDriverSites = preflightWebDriverSites;
+exports.openConfiguredWebDriverSites = openConfiguredWebDriverSites;
 exports.chatCompletionsHandler = chatCompletionsHandler;
 exports.listModelsHandler = listModelsHandler;
 const protocol_1 = require("../../protocol");
@@ -54,6 +55,12 @@ async function preflightWebDriverSites() {
     if (siteKeys.length === 0)
         return;
     await webDriver.preflightConfiguredSites(siteKeys);
+}
+async function openConfiguredWebDriverSites() {
+    const siteKeys = Object.keys(config.sites ?? {});
+    if (siteKeys.length === 0)
+        return;
+    await webDriver.openConfiguredSites(siteKeys);
 }
 /**
  * 根据模型名称推断使用哪个网站
@@ -116,6 +123,15 @@ function normalizeJsonLike(input) {
         return JSON.stringify(obj);
     }
     catch {
+        // ignore
+    }
+    // 针对 message.content 等字段中“未转义双引号”做定向修复
+    const repairedQuoteFields = repairUnescapedQuotesInFields(noTrailingComma, ['content']);
+    try {
+        const obj = JSON.parse(repairedQuoteFields);
+        return JSON.stringify(obj);
+    }
+    catch {
         return null;
     }
 }
@@ -131,6 +147,58 @@ function repairMalformedToolCallArguments(text) {
         const escaped = raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         return `${prefix}"${escaped}"`;
     });
+}
+function repairUnescapedQuotesInFields(text, fields) {
+    let result = text;
+    for (const field of fields) {
+        result = repairUnescapedQuotesInField(result, field);
+    }
+    return result;
+}
+function repairUnescapedQuotesInField(text, fieldName) {
+    const pattern = new RegExp(`"${fieldName}"\\s*:\\s*"`, 'g');
+    let cursor = 0;
+    let out = '';
+    while (true) {
+        pattern.lastIndex = cursor;
+        const match = pattern.exec(text);
+        if (!match) {
+            out += text.slice(cursor);
+            break;
+        }
+        const valueStart = match.index + match[0].length;
+        out += text.slice(cursor, valueStart);
+        let i = valueStart;
+        let escaped = false;
+        while (i < text.length) {
+            const ch = text[i];
+            if (ch === '"' && !escaped) {
+                let j = i + 1;
+                while (j < text.length && /\s/.test(text[j]))
+                    j++;
+                if (j < text.length && (text[j] === ',' || text[j] === '}' || text[j] === ']')) {
+                    out += '"';
+                    i += 1;
+                    break;
+                }
+                // 非终止引号，视为字符串内部未转义引号
+                out += '\\"';
+                i += 1;
+                escaped = false;
+                continue;
+            }
+            out += ch;
+            if (escaped) {
+                escaped = false;
+            }
+            else if (ch === '\\') {
+                escaped = true;
+            }
+            i += 1;
+        }
+        cursor = i;
+    }
+    return out;
 }
 /**
  * 清理常见网页渲染噪声，提升 JSON 识别稳定性
@@ -440,6 +508,11 @@ function logRequestTrace(traceId, stage, payload) {
         console.log(`[RequestTrace][${traceId}] stage=${stage} payload=[unserializable]`);
     }
 }
+function buildContentPreview(content, maxLength = 200) {
+    return content
+        .replace(/\s+/g, ' ')
+        .slice(0, maxLength);
+}
 /**
  * POST /v1/chat/completions — OpenAI 兼容接口处理器
  */
@@ -571,7 +644,7 @@ async function chatCompletionsHandler(req, res, next) {
             }
         }
         // ===== Step 6: 发送当前消息 =====
-        const currentPrompt = dm.get_current_prompt();
+        const currentPrompt = dm.get_current_prompt_for_web_send();
         logRequestTrace(traceId, 'chat_dispatch', {
             site,
             session_url: sessionUrl,
@@ -613,6 +686,12 @@ async function chatCompletionsHandler(req, res, next) {
         let responseContent = chatResult.content;
         let parsedJson = extractJson(responseContent);
         let upstreamError = detectUpstreamServiceError(responseContent);
+        logRequestTrace(traceId, 'json_extract_initial', {
+            content_length: responseContent.length,
+            parsed_json: Boolean(parsedJson),
+            upstream_error: Boolean(upstreamError),
+            content_preview: buildContentPreview(responseContent),
+        });
         const maxRetries = 2;
         let retryCount = 0;
         while (!parsedJson && !upstreamError && retryCount < maxRetries) {
@@ -624,11 +703,25 @@ async function chatCompletionsHandler(req, res, next) {
                 responseContent = retryResult.content;
                 parsedJson = extractJson(responseContent);
                 upstreamError = detectUpstreamServiceError(responseContent);
+                logRequestTrace(traceId, 'json_extract_retry', {
+                    retry_index: retryCount + 1,
+                    content_length: responseContent.length,
+                    parsed_json: Boolean(parsedJson),
+                    upstream_error: Boolean(upstreamError),
+                    content_preview: buildContentPreview(responseContent),
+                });
             }
             catch {
                 break;
             }
             retryCount++;
+        }
+        if (!parsedJson && !upstreamError) {
+            logRequestTrace(traceId, 'json_extract_fallback_plain_text', {
+                retries: retryCount,
+                content_length: responseContent.length,
+                content_preview: buildContentPreview(responseContent),
+            });
         }
         if (upstreamError) {
             sendUpstreamServiceError(res, upstreamError);

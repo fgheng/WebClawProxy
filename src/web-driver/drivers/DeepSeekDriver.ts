@@ -24,14 +24,6 @@ const SELECTORS = {
   ].join(', '),
   responseArea: '.ds-markdown, [class*="ds-markdown"], [class*="markdown-body"]',
   thinkingArea: '[class*="thinking"], [class*="think-content"], [class*="chain-of-thought"]',
-  copyButton: [
-    'button[aria-label*="复制"]',
-    'button[aria-label*="copy"]',
-    'button[title*="复制"]',
-    'button[title*="copy"]',
-    'button[class*="copy"]',
-    '[data-testid*="copy"]',
-  ].join(', '),
 };
 
 export class DeepSeekDriver extends BaseDriver {
@@ -125,53 +117,71 @@ export class DeepSeekDriver extends BaseDriver {
     try {
       const allMessages = await this.page.$$('[class*="message"], [class*="chat-message"]');
 
-      let lastAssistantEl = null;
+      const assistantCandidates: any[] = [];
       for (const msg of allMessages) {
         const isAssistant = await msg.evaluate((el: any) => {
+          const cls = String(el.className || '').toLowerCase();
+          const role =
+            (el.getAttribute('data-role') ||
+              el.getAttribute('data-message-role') ||
+              el.getAttribute('data-author-role') ||
+              '').toLowerCase();
           return (
-            el.className.includes('assistant') ||
-            el.getAttribute('data-role') === 'assistant' ||
-            !!(el.querySelectorAll('[class*="ds-markdown"], [class*="markdown-body"]').length)
+            cls.includes('assistant') ||
+            role === 'assistant' ||
+            !!el.querySelector('[class*="ds-markdown"], [class*="markdown-body"], [class*="markdown"]')
           );
         });
-        if (isAssistant) {
-          lastAssistantEl = msg;
-        }
+        if (isAssistant) assistantCandidates.push(msg);
       }
 
-      if (!lastAssistantEl) {
+      if (assistantCandidates.length === 0) {
         const responseEls = await this.page.$$(SELECTORS.responseArea);
-        if (responseEls.length > 0) {
-          lastAssistantEl = responseEls[responseEls.length - 1];
-        }
+        assistantCandidates.push(...responseEls);
       }
 
-      if (!lastAssistantEl) {
+      if (assistantCandidates.length === 0) {
         throw new WebDriverError(
           WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
           'DeepSeek 未找到响应元素'
         );
       }
 
-      const content = await lastAssistantEl.evaluate((el: any) => {
-        const thinkEls = el.querySelectorAll(
-          '[class*="thinking"], [class*="think"], [class*="chain"], details, summary'
-        );
-        thinkEls.forEach((e: any) => e.remove());
+      for (let i = assistantCandidates.length - 1; i >= 0; i--) {
+        const content = await assistantCandidates[i].evaluate((el: any) => {
+          const cloned = el.cloneNode(true) as any;
+          const thinkEls = cloned.querySelectorAll(
+            '[class*="thinking"], [class*="think"], [class*="chain"], details, summary'
+          );
+          thinkEls.forEach((e: any) => e.remove());
 
-        const mdEl = el.querySelector('[class*="ds-markdown"], [class*="markdown"], [class*="content"]');
-        if (mdEl) return mdEl.textContent?.trim() || '';
-        return el.textContent?.trim() || '';
-      });
+          // 优先提取代码块（JSON 输出最稳定）
+          const codeNodes = Array.from(
+            cloned.querySelectorAll('pre code, code[class*="language"], pre')
+          ) as any[];
+          const codeTexts = codeNodes
+            .map((n) => (n.textContent || '').trim())
+            .filter((t) => t.length > 0);
+          if (codeTexts.length > 0) {
+            return codeTexts.sort((a, b) => b.length - a.length)[0];
+          }
 
-      if (!content) {
-        throw new WebDriverError(
-          WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
-          'DeepSeek 响应内容为空'
-        );
+          const mdEl = cloned.querySelector(
+            '[class*="ds-markdown"], [class*="markdown"], [class*="content"]'
+          );
+          const text = (mdEl ? mdEl.textContent : cloned.textContent) || '';
+          return text.replace(/\s+/g, ' ').trim();
+        });
+
+        if (content) {
+          return content;
+        }
       }
 
-      return content;
+      throw new WebDriverError(
+        WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
+        'DeepSeek 响应内容为空'
+      );
     } catch (err) {
       if (err instanceof WebDriverError) throw err;
       throw new WebDriverError(
@@ -187,10 +197,6 @@ export class DeepSeekDriver extends BaseDriver {
       url.startsWith('https://chat.deepseek.com/') &&
       url !== 'https://chat.deepseek.com/'
     );
-  }
-
-  protected getCopyButtonSelector(): string | null {
-    return SELECTORS.copyButton;
   }
 
   protected getStopButtonSelector(): string | null {

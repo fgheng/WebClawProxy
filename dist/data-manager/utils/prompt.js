@@ -7,6 +7,7 @@ exports.buildCurrentPrompt = buildCurrentPrompt;
 exports.buildToolsPrompt = buildToolsPrompt;
 exports.buildInitPrompt = buildInitPrompt;
 exports.buildCurrentPromptWithTemplate = buildCurrentPromptWithTemplate;
+exports.buildCurrentPromptForWebSend = buildCurrentPromptForWebSend;
 function formatNonTextContentItem(item) {
     const { type, ...rest } = item;
     if (Object.keys(rest).length === 0) {
@@ -141,5 +142,18 @@ function buildCurrentPromptWithTemplate(options) {
     return template
         .replace('{{json_template}}', jsonTemplate)
         .replace('{{current}}', currentPrompt);
+}
+/**
+ * 构造发送到网页前的用户消息包装
+ * - template 为空（或全空白）时，直接返回 currentPrompt
+ * - 非空时用 {{content}} 替换当前消息；若未出现占位符，则按原样返回模板
+ */
+function buildCurrentPromptForWebSend(options) {
+    const { template, currentPrompt } = options;
+    const normalizedTemplate = (template ?? '').trim();
+    if (!normalizedTemplate) {
+        return currentPrompt;
+    }
+    return normalizedTemplate.split('{{content}}').join(currentPrompt);
 }
 //# sourceMappingURL=prompt.js.map

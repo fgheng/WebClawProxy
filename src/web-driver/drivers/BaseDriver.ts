@@ -83,7 +83,6 @@ export abstract class BaseDriver implements IWebDriver {
    */
   async waitForResponse(): Promise<void> {
     const timeout = this.responseTimeoutMs;
-    const copySelector = this.getCopyButtonSelector();
     const stopSelector = this.getStopButtonSelector();
     const responseSelector = this.getResponseAreaSelector();
 
@@ -99,25 +98,23 @@ export abstract class BaseDriver implements IWebDriver {
     });
 
     try {
-      // 策略 0：优先使用“复制按钮就绪”判定（跨站点统一）
-      if (copySelector) {
-        await Promise.race([
-          timeoutPromise,
-          this.waitByCopyButtonReady(),
-        ]);
-        return;
-      }
-
       if (stopSelector) {
-        // 策略 1：等待停止按钮出现 → 再等待其消失
-        // 停止按钮出现说明模型已开始生成，消失说明生成完毕
-        await Promise.race([
+        // 策略 1：优先尝试停止按钮
+        // 仅当“确认出现过停止按钮”时，才可用“等待其消失”判定完成。
+        // 若停止按钮从未出现，则回退到内容稳定性检测，避免误判过早完成。
+        const stopObserved = await Promise.race([
           timeoutPromise,
           this.waitBySendButtonRestore(),
         ]);
-        // 停止按钮消失后额外等待 500ms，确保最后一帧内容已写入 DOM
-        await this.sleep(500);
-      } else if (responseSelector) {
+
+        if (stopObserved) {
+          // 停止按钮消失后额外等待 500ms，确保最后一帧内容已写入 DOM
+          await this.sleep(500);
+          return;
+        }
+      }
+
+      if (responseSelector) {
         // 策略 2（fallback）：内容稳定性检测
         await Promise.race([
           timeoutPromise,
@@ -138,103 +135,32 @@ export abstract class BaseDriver implements IWebDriver {
   }
 
   /**
-   * 检测策略 0：复制按钮就绪检测（跨站点统一）
-   * 条件：复制按钮可见，且（若配置了 responseSelector）最后一条回复非空并稳定
-   */
-  protected async waitByCopyButtonReady(): Promise<void> {
-    const copySelector = this.getCopyButtonSelector();
-    if (!copySelector) return;
-
-    const responseSelector = this.getResponseAreaSelector();
-    const checkInterval = Math.max(300, this.stabilityCheckIntervalMs);
-    const requiredStableRounds = Math.max(2, Math.min(4, this.stabilityCheckCount));
-
-    let stableCount = 0;
-    let lastSnapshot = '';
-    const start = Date.now();
-
-    while (Date.now() - start < this.responseTimeoutMs) {
-      await this.sleep(checkInterval);
-
-      const state = await this.page.evaluate(
-        ([copySel, respSel]: [string, string | null]) => {
-          const doc = (globalThis as any).document;
-          const isVisible = (el: any): boolean => {
-            if (!el) return false;
-            const style = (globalThis as any).getComputedStyle?.(el);
-            if (!style) return true;
-            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0;
-          };
-
-          const copyEl = doc.querySelector(copySel as string);
-          const copyVisible = isVisible(copyEl);
-
-          let lastResponseText = '';
-          if (respSel) {
-            const responseEls = doc.querySelectorAll(respSel as string);
-            if (responseEls.length > 0) {
-              const lastEl = responseEls[responseEls.length - 1] as any;
-              lastResponseText = (lastEl?.textContent || '').replace(/\s+/g, ' ').trim();
-            }
-          }
-
-          return { copyVisible, lastResponseText };
-        },
-        [copySelector, responseSelector] as [string, string | null]
-      );
-
-      if (!state.copyVisible) {
-        stableCount = 0;
-        lastSnapshot = '';
-        continue;
-      }
-
-      if (responseSelector && !state.lastResponseText) {
-        stableCount = 0;
-        lastSnapshot = '';
-        continue;
-      }
-
-      const snapshot = `${state.copyVisible}|${state.lastResponseText}`;
-      if (snapshot === lastSnapshot) {
-        stableCount++;
-      } else {
-        lastSnapshot = snapshot;
-        stableCount = 1;
-      }
-
-      if (stableCount >= requiredStableRounds) {
-        return;
-      }
-    }
-
-    throw new WebDriverError(
-      WebDriverErrorCode.RESPONSE_TIMEOUT,
-      '等待复制按钮就绪超时'
-    );
-  }
-
-  /**
    * 检测策略 1：发送按钮状态检测
    * 等待"停止"按钮消失（即发送按钮恢复）
    * 注意：需要先等待停止按钮出现，再等待其消失，避免误判
    */
-  protected async waitBySendButtonRestore(): Promise<void> {
+  protected async waitBySendButtonRestore(): Promise<boolean> {
     const stopSelector = this.getStopButtonSelector();
-    if (!stopSelector) return;
+    if (!stopSelector) return false;
 
-    // 先等待停止按钮出现（最多等 5s，如果本来就没有停止按钮则跳过）
+    let stopObserved = false;
+
+    // 先等待停止按钮出现（最多等 5s）
     try {
       await this.page.waitForSelector(stopSelector, { timeout: 5000, state: 'visible' });
+      stopObserved = true;
     } catch {
-      // 停止按钮没有出现，可能已经结束了
+      // 停止按钮没有出现，交由上层回退到内容稳定性策略
+      return false;
     }
 
-    // 等待停止按钮消失
+    // 只有在出现过停止按钮时，才等待其消失
     await this.page.waitForSelector(stopSelector, {
       state: 'hidden',
       timeout: this.responseTimeoutMs,
     });
+
+    return stopObserved;
   }
 
   /**
@@ -318,11 +244,6 @@ export abstract class BaseDriver implements IWebDriver {
   // ============================
   // 子类可覆盖的钩子方法
   // ============================
-
-  /** 返回复制按钮的 CSS 选择器（用于回复完成判定），子类不支持可返回 null */
-  protected getCopyButtonSelector(): string | null {
-    return null;
-  }
 
   /** 返回停止按钮的 CSS 选择器，子类如果没有停止按钮可返回 null */
   protected getStopButtonSelector(): string | null {

@@ -13,7 +13,6 @@ export declare class QwenDriver extends BaseDriver {
     sendMessage(text: string): Promise<void>;
     extractResponse(): Promise<string>;
     isValidConversationUrl(url: string): boolean;
-    protected getCopyButtonSelector(): string | null;
     protected getStopButtonSelector(): string | null;
     protected getResponseAreaSelector(): string | null;
     private dismissDialogs;
@@ -24,5 +23,6 @@ export declare class QwenDriver extends BaseDriver {
     private tryFallbackSend;
     private fillInputRobustly;
     private isThinkingPlaceholder;
+    private isLikelyIncompleteStructuredText;
 }
 //# sourceMappingURL=QwenDriver.d.ts.map

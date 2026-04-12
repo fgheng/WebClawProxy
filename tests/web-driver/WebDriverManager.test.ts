@@ -1,4 +1,5 @@
 import { WebDriverManager, WebDriverError, WebDriverErrorCode } from '../../src/web-driver';
+import { BaseDriver } from '../../src/web-driver/drivers/BaseDriver';
 import type { SiteKey } from '../../src/web-driver';
 
 /**
@@ -282,6 +283,168 @@ describe('WebDriverError', () => {
   });
 });
 
+describe('BaseDriver waitForResponse 回退策略', () => {
+  class TestDriver extends BaseDriver {
+    constructor(page: any, options: ConstructorParameters<typeof BaseDriver>[2] = {}) {
+      super(page, 'https://example.test/', options);
+    }
+    async isLoggedIn(): Promise<boolean> { return true; }
+    async createNewConversation(): Promise<void> {}
+    async sendMessage(_text: string): Promise<void> {}
+    async extractResponse(): Promise<string> { return 'ok'; }
+    isValidConversationUrl(_url: string): boolean { return true; }
+    protected getStopButtonSelector(): string | null { return '.stop'; }
+    protected getResponseAreaSelector(): string | null { return '.resp'; }
+  }
+
+  it('当 stop 按钮未出现时应回退到内容稳定性检测', async () => {
+    const mockPage = {
+      waitForSelector: jest.fn().mockRejectedValue(new Error('not found')),
+      evaluate: jest.fn().mockResolvedValue('final'),
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/c/abc'),
+      goto: jest.fn(),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      $$: jest.fn().mockResolvedValue([]),
+      $: jest.fn().mockResolvedValue(null),
+    } as any;
+
+    const driver = new TestDriver(mockPage, {
+      responseTimeoutMs: 2000,
+      stabilityCheckIntervalMs: 1,
+      stabilityCheckCount: 1,
+    });
+
+    const stopSpy = jest.spyOn(driver as any, 'waitBySendButtonRestore').mockResolvedValue(false);
+    const stabilitySpy = jest.spyOn(driver as any, 'waitByContentStability').mockResolvedValue(undefined);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+
+    await expect(driver.waitForResponse()).resolves.toBeUndefined();
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stabilitySpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('WebDriverManager 站点页面复用', () => {
+  let manager: WebDriverManager;
+
+  beforeEach(() => {
+    manager = new WebDriverManager({ headless: true });
+    jest.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await manager.close();
+  });
+
+  it('启动阶段已打开站点页面后，同站点 driver 应复用该页面', async () => {
+    const reusedPage = {
+      url: jest.fn().mockReturnValue('https://chatgpt.com/'),
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn(),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+    } as any;
+
+    const context = {
+      pages: jest.fn().mockReturnValue([reusedPage]),
+      close: jest.fn().mockResolvedValue(undefined),
+      newPage: jest.fn().mockResolvedValue({
+        url: jest.fn().mockReturnValue('about:blank'),
+        goto: jest.fn().mockResolvedValue(undefined),
+      }),
+    } as any;
+
+    (manager as any).context = context;
+    (manager as any).browser = {
+      isConnected: jest.fn().mockReturnValue(true),
+      close: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
+    await (manager as any).openSitePage('gpt');
+    const mappedPage = (manager as any).pageMap.get('gpt');
+    expect(mappedPage).toBe(reusedPage);
+
+    await (manager as any).getOrCreateDriver('gpt');
+
+    // 复用 host 匹配页面，不应为 gpt 再创建新页
+    expect(context.newPage).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebDriverManager 发送前页面稳定等待', () => {
+  let manager: WebDriverManager;
+
+  beforeEach(() => {
+    manager = new WebDriverManager({ headless: true });
+    jest.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await manager.close();
+  });
+
+  it('initConversation: 新建对话后应先等待页面稳定再发送初始化提示词', async () => {
+    const mockDriver = {
+      createNewConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
+    jest.spyOn(manager as any, 'ensureBrowser').mockResolvedValue(undefined);
+    jest.spyOn(manager as any, 'getOrCreateDriver').mockResolvedValue(mockDriver);
+    jest.spyOn(manager as any, 'waitForConversationUrl').mockResolvedValue('https://chatgpt.com/c/abc');
+    const readySpy = jest.spyOn(manager as any, 'waitForPageReadyBeforeSend').mockResolvedValue(undefined);
+
+    await expect(manager.initConversation('gpt', 'init prompt')).resolves.toEqual({
+      url: 'https://chatgpt.com/c/abc',
+    });
+
+    expect(mockDriver.createNewConversation).toHaveBeenCalledTimes(1);
+    expect(readySpy).toHaveBeenCalledWith('gpt');
+    expect(mockDriver.sendMessage).toHaveBeenCalledWith('init prompt');
+    expect(mockDriver.createNewConversation.mock.invocationCallOrder[0]).toBeLessThan(
+      readySpy.mock.invocationCallOrder[0]
+    );
+    expect(readySpy.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDriver.sendMessage.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('chat: 跳转会话后应先等待页面稳定再发送消息', async () => {
+    const mockDriver = {
+      isValidConversationUrl: jest.fn().mockReturnValue(true),
+      getConversationUrl: jest.fn().mockResolvedValue('https://chatgpt.com/c/old'),
+      navigateToConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+      extractResponse: jest.fn().mockResolvedValue('ok'),
+    } as any;
+
+    jest.spyOn(manager as any, 'ensureBrowser').mockResolvedValue(undefined);
+    jest.spyOn(manager as any, 'getOrCreateDriver').mockResolvedValue(mockDriver);
+    const readySpy = jest.spyOn(manager as any, 'waitForPageReadyBeforeSend').mockResolvedValue(undefined);
+
+    const result = await manager.chat('gpt', 'https://chatgpt.com/c/new', 'hello');
+    expect(result).toEqual({ content: 'ok' });
+
+    expect(mockDriver.navigateToConversation).toHaveBeenCalledWith('https://chatgpt.com/c/new');
+    expect(readySpy).toHaveBeenCalledWith('gpt');
+    expect(mockDriver.sendMessage).toHaveBeenCalledWith('hello');
+    expect(mockDriver.navigateToConversation.mock.invocationCallOrder[0]).toBeLessThan(
+      readySpy.mock.invocationCallOrder[0]
+    );
+    expect(readySpy.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDriver.sendMessage.mock.invocationCallOrder[0]
+    );
+  });
+});
+
 describe('QwenDriver 运行态问题回归', () => {
   it('应跳过“正在思考”占位文本并返回真实回复', async () => {
     const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
@@ -409,6 +572,24 @@ describe('Driver URL 验证', () => {
 
     expect(driver.isValidConversationUrl('https://chat.deepseek.com/a/chat/s/abc123')).toBe(true);
     expect(driver.isValidConversationUrl('https://chat.deepseek.com/')).toBe(false);
+  });
+
+  it('Kimi 停止按钮策略应关闭（回退内容稳定检测）', async () => {
+    const { KimiDriver } = await import('../../src/web-driver/drivers/KimiDriver');
+    const mockPage = {
+      goto: jest.fn(),
+      url: jest.fn(),
+      waitForSelector: jest.fn(),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+    } as any;
+
+    const driver = new KimiDriver(mockPage);
+    expect((driver as any).getStopButtonSelector()).toBeNull();
   });
 
   it('Kimi URL 验证', async () => {
