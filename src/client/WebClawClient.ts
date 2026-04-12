@@ -16,6 +16,7 @@ export class WebClawClient {
       baseUrl: config.baseUrl.replace(/\/$/, ''),
       model: config.model,
       system: config.system ?? '',
+      tools: config.tools ?? [],
       timeoutMs: config.timeoutMs ?? 180000,
       sessionId: config.sessionId ?? this.buildDefaultSessionId(),
       traceEnabled: config.traceEnabled ?? true,
@@ -78,6 +79,7 @@ export class WebClawClient {
     const body: OpenAIRequestBody = {
       model: this.config.model,
       messages: requestMessages,
+      tools: this.config.tools,
       stream: false,
     };
 
@@ -90,6 +92,7 @@ export class WebClawClient {
       request_roles: requestMessages.map((m) => m.role),
       user_content_preview: this.preview(userContent),
       system_enabled: Boolean(this.config.system),
+      tools_count: this.config.tools.length,
     });
 
     let responseData: OpenAIResponseBody;

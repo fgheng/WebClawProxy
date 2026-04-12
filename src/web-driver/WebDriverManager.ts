@@ -165,8 +165,7 @@ export class WebDriverManager {
     await this.ensureBrowser();
     const driver = await this.getOrCreateDriver(site);
 
-    // 1. 检查登录状态
-    await this.ensureLoggedIn(site, driver);
+    // 登录态检查已由服务启动预检承担；初始化流程不再重复判断
 
     // 2. 新建对话
     await driver.createNewConversation();

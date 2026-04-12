@@ -8,6 +8,8 @@ export interface ClientConfig {
     model: string;
     /** 系统提示词（可选） */
     system?: string;
+    /** 工具定义（可选） */
+    tools?: unknown[];
     /** 请求超时（ms） */
     timeoutMs?: number;
     /** 客户端会话标识（用于问题排查） */
@@ -44,6 +46,7 @@ export interface AssistantResponse {
 export interface OpenAIRequestBody {
     model: string;
     messages: ChatMessage[];
+    tools?: unknown[];
     stream?: boolean;
 }
 /**

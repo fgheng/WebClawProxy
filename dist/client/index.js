@@ -7,7 +7,7 @@
  *   npm run client                        # 默认配置（localhost:3000，gpt-4o 模型）
  *   npm run client -- --model deepseek-chat
  *   npm run client -- --url http://localhost:3000
- *   npm run client -- --model gpt-4o --system "你是一个 TypeScript 专家"
+ *   npm run client -- --model gpt-4o --system-file ./prompts/system.txt --tools-file ./prompts/tools.json
  *   npm run client -- --session-id my-client-001 --trace
  *   npm run client -- --help
  */
@@ -60,7 +60,8 @@ WebClawProxy CLI 客户端
 选项：
   --url <地址>            服务地址（默认：http://localhost:3000）
   --model <模型名>        使用的模型（默认：gpt-4o）
-  --system <提示词>       系统提示词（可选）
+  --system-file <路径>    系统提示词文件（文本文件，内容为字符串）
+  --tools-file <路径>     工具定义文件（JSON，格式：{"tools": []}）
   --timeout <秒数>        请求超时秒数（默认：180）
   --session-id <ID>       客户端会话标识（用于链路排查）
   --trace                 开启客户端链路日志（默认开启）
@@ -71,7 +72,7 @@ WebClawProxy CLI 客户端
 示例：
   npm run client
   npm run client -- --model deepseek-chat
-  npm run client -- --model gpt-4o --system "你是一个 Python 专家"
+  npm run client -- --model gpt-4o --system-file ./prompts/system.txt --tools-file ./prompts/tools.json
   npm run client -- --url http://192.168.1.100:3000 --model qwen-max
   npm run client -- --session-id debug-session-001 --trace
 
@@ -102,6 +103,30 @@ function getArg(flag) {
 function hasFlag(flag) {
     return args.includes(flag);
 }
+function readSystemPromptFromFile(filePath) {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+    if (!fs.existsSync(absPath)) {
+        throw new Error(`系统提示词文件不存在: ${absPath}`);
+    }
+    return fs.readFileSync(absPath, 'utf-8');
+}
+function readToolsFromFile(filePath) {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+    if (!fs.existsSync(absPath)) {
+        throw new Error(`工具文件不存在: ${absPath}`);
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+    }
+    catch (err) {
+        throw new Error(`工具文件不是合法 JSON: ${absPath}，${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.tools)) {
+        throw new Error(`工具文件格式错误: ${absPath}，要求格式为 {"tools": []}`);
+    }
+    return parsed.tools;
+}
 function buildDefaultSessionId() {
     const now = Date.now();
     const rand = Math.random().toString(36).slice(2, 8);
@@ -124,11 +149,20 @@ catch {
 const traceEnabled = hasFlag('--no-trace') ? false : true;
 const previewArg = getArg('--trace-preview');
 const previewChars = previewArg ? Number(previewArg) : 180;
+const systemFilePath = getArg('--system-file');
+const toolsFilePath = getArg('--tools-file');
+if (getArg('--system')) {
+    console.error('参数 --system 已废弃，请改用 --system-file <路径>');
+    process.exit(1);
+}
+const systemPrompt = systemFilePath ? readSystemPromptFromFile(systemFilePath) : undefined;
+const tools = toolsFilePath ? readToolsFromFile(toolsFilePath) : undefined;
 // 构建客户端配置
 const config = {
     baseUrl: getArg('--url') ?? `http://localhost:${defaultPort}`,
     model: getArg('--model') ?? 'gpt-4o',
-    system: getArg('--system'),
+    system: systemPrompt,
+    tools,
     timeoutMs: getArg('--timeout') ? parseInt(getArg('--timeout'), 10) * 1000 : 180000,
     sessionId: getArg('--session-id') ?? buildDefaultSessionId(),
     traceEnabled,
