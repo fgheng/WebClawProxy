@@ -99,15 +99,18 @@ export class DataManager {
     this.config = {
       rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
       models: customConfig?.models ?? getModelMapFromConfig(),
-      jsonTemplate: customConfig?.jsonTemplate ?? config.defaults?.json_template ?? '',
+      responseSchemaTemplate:
+        customConfig?.responseSchemaTemplate ??
+        config.defaults?.response_schema_template ??
+        '',
       initPromptTemplate:
         customConfig?.initPromptTemplate ??
         config.defaults?.init_prompt_template ??
-        '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{json_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+        '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
       currentTemplate:
         customConfig?.currentTemplate ??
         config.defaults?.current_template ??
-        '请按照下面的模板回答，不要重复用户问题或额外解释\n{{json_template}}\n\n---\n{{current}}',
+        '请按照下面的模板回答，不要重复用户问题或额外解释\n{{response_schema_template}}\n\n---\n{{current}}',
       userMessageTemplate:
         customConfig?.userMessageTemplate ??
         config.defaults?.user_message_template ??
@@ -115,7 +118,7 @@ export class DataManager {
       formatOnlyRetryTemplate:
         customConfig?.formatOnlyRetryTemplate ??
         config.defaults?.format_only_retry_template ??
-        '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{json_template}}',
+        '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{response_schema_template}}',
       sessionIndexMaxEntries:
         customConfig?.sessionIndexMaxEntries ??
         config.session_index?.max_entries ??
@@ -343,14 +346,14 @@ export class DataManager {
     return buildToolsPrompt(this.tools);
   }
 
-  get_json_template(): string {
-    return this.config.jsonTemplate ?? '';
+  get_response_schema_template(): string {
+    return this.config.responseSchemaTemplate ?? '';
   }
 
   get_init_prompt(): string {
     return buildInitPrompt({
       template: this.config.initPromptTemplate!,
-      jsonTemplate: this.config.jsonTemplate!,
+      responseSchemaTemplate: this.config.responseSchemaTemplate!,
       systemPrompt: this.get_system_prompt(),
       toolsPrompt: this.get_tools_prompt(),
       historyPrompt: this.get_history_prompt(),
@@ -369,7 +372,7 @@ export class DataManager {
 
     return buildInitPrompt({
       template: this.config.initPromptTemplate!,
-      jsonTemplate: this.config.jsonTemplate!,
+      responseSchemaTemplate: this.config.responseSchemaTemplate!,
       systemPrompt: this.get_system_prompt(),
       toolsPrompt: this.get_tools_prompt(),
       historyPrompt: buildHistoryPrompt(historyForInit),
@@ -401,7 +404,7 @@ export class DataManager {
   get_current_prompt_with_template(): string {
     return buildCurrentPromptWithTemplate({
       template: this.config.currentTemplate!,
-      jsonTemplate: this.config.jsonTemplate!,
+      responseSchemaTemplate: this.config.responseSchemaTemplate!,
       currentPrompt: this.get_current_prompt(),
     });
   }
@@ -409,8 +412,8 @@ export class DataManager {
   get_format_only_retry_prompt(): string {
     const template =
       this.config.formatOnlyRetryTemplate ??
-      '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{json_template}}';
-    return template.replace('{{json_template}}', this.config.jsonTemplate ?? '');
+      '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{response_schema_template}}';
+    return template.replace('{{response_schema_template}}', this.config.responseSchemaTemplate ?? '');
   }
 
   /**

@@ -92,10 +92,10 @@ async function runTests() {
         GPT: ['gpt-4', 'gpt-4o', 'gpt-5', 'gpt-5.1', 'gpt-5.2'],
         DEEPSEEK: ['deepseek-chat', 'deepseek-r1'],
       },
-      jsonTemplate: '{"result": "ok"}',
+      responseSchemaTemplate: '{"result": "ok"}',
       initPromptTemplate:
-        '按以下json格式回复:\n{{json_template}}\n\n系统提示:\n{{system_prompt}}\n\n工具:\n{{tools_prompt}}\n\n历史:\n{{history_prompt}}',
-      currentTemplate: '按模板回答:\n{{json_template}}\n\n---\n{{current}}',
+        '按以下json格式回复:\n{{response_schema_template}}\n\n系统提示:\n{{system_prompt}}\n\n工具:\n{{tools_prompt}}\n\n历史:\n{{history_prompt}}',
+      currentTemplate: '按模板回答:\n{{response_schema_template}}\n\n---\n{{current}}',
     });
 
   // ============================

@@ -554,7 +554,7 @@ function splitPromptByLimit(prompt, maxChars) {
     }
     return chunks.filter((c) => c.length > 0);
 }
-function buildChunkPrompt(chunk, chunkIndex, chunkTotal) {
+function buildChunkPrompt(chunk, chunkIndex, chunkTotal, responseSchemaTemplate) {
     if (chunkTotal <= 1)
         return chunk;
     const seq = `${chunkIndex + 1}/${chunkTotal}`;
@@ -584,6 +584,8 @@ function buildChunkPrompt(chunk, chunkIndex, chunkTotal) {
         wrappedChunk,
         allEndMarker,
         '以上分段输入全部结束。请基于全部分段内容进行正式回答。',
+        '严格按照以下格式输出，不能有额外的解释',
+        responseSchemaTemplate,
     ].join('\n');
 }
 function shouldUseFormatOnlyRetry(options) {
@@ -725,6 +727,7 @@ async function chatCompletionsHandler(req, res, next) {
             }
         }
         // ===== Step 6: 发送当前消息 =====
+        const responseSchemaTemplate = dm.get_response_schema_template();
         const currentPrompt = dm.get_current_prompt_for_web_send();
         const providerInputCharLimit = getProviderInputCharLimitByModel(internalReq.model);
         const promptChunks = splitPromptByLimit(currentPrompt, providerInputCharLimit);
@@ -767,12 +770,12 @@ async function chatCompletionsHandler(req, res, next) {
         try {
             if (isChunkedInput) {
                 for (let i = 0; i < promptChunks.length - 1; i++) {
-                    const chunkPrompt = buildChunkPrompt(promptChunks[i], i, promptChunks.length);
+                    const chunkPrompt = buildChunkPrompt(promptChunks[i], i, promptChunks.length, responseSchemaTemplate);
                     await webDriver.sendOnly(site, sessionUrl, chunkPrompt);
                 }
             }
             const finalChunkIndex = promptChunks.length - 1;
-            const finalPrompt = buildChunkPrompt(promptChunks[finalChunkIndex], finalChunkIndex, promptChunks.length);
+            const finalPrompt = buildChunkPrompt(promptChunks[finalChunkIndex], finalChunkIndex, promptChunks.length, responseSchemaTemplate);
             chatResult = await webDriver.chat(site, sessionUrl, finalPrompt);
         }
         catch (err) {

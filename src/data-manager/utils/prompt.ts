@@ -131,15 +131,15 @@ export function buildToolsPrompt(tools: Tool[]): string {
  */
 export function buildInitPrompt(options: {
   template: string;
-  jsonTemplate: string;
+  responseSchemaTemplate: string;
   systemPrompt: string;
   toolsPrompt: string;
   historyPrompt: string;
 }): string {
-  const { template, jsonTemplate, systemPrompt, toolsPrompt, historyPrompt } = options;
+  const { template, responseSchemaTemplate, systemPrompt, toolsPrompt, historyPrompt } = options;
 
   return template
-    .replace('{{json_template}}', jsonTemplate)
+    .replace('{{response_schema_template}}', responseSchemaTemplate)
     .replace('{{system_prompt}}', systemPrompt)
     .replace('{{tools_prompt}}', toolsPrompt || '（无可用工具）')
     .replace('{{history_prompt}}', historyPrompt || '（无历史记录）');
@@ -150,13 +150,13 @@ export function buildInitPrompt(options: {
  */
 export function buildCurrentPromptWithTemplate(options: {
   template: string;
-  jsonTemplate: string;
+  responseSchemaTemplate: string;
   currentPrompt: string;
 }): string {
-  const { template, jsonTemplate, currentPrompt } = options;
+  const { template, responseSchemaTemplate, currentPrompt } = options;
 
   return template
-    .replace('{{json_template}}', jsonTemplate)
+    .replace('{{response_schema_template}}', responseSchemaTemplate)
     .replace('{{current}}', currentPrompt);
 }
 

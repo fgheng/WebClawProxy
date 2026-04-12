@@ -21,7 +21,7 @@ const mockDm = {
   get_current_prompt: jest.fn(),
   get_current_prompt_for_web_send: jest.fn(),
   get_current_prompt_with_template: jest.fn(),
-  get_json_template: jest.fn(),
+  get_response_schema_template: jest.fn(),
   get_format_only_retry_prompt: jest.fn(),
   get_usage: jest.fn(),
   update_web_url: jest.fn(),
@@ -101,7 +101,7 @@ beforeEach(() => {
   mockDm.get_current_prompt.mockReturnValue('你好');
   mockDm.get_current_prompt_for_web_send.mockReturnValue('你好');
   mockDm.get_current_prompt_with_template.mockReturnValue('带模板的 prompt');
-  mockDm.get_json_template.mockReturnValue(
+  mockDm.get_response_schema_template.mockReturnValue(
     '{"index":0,"message":{"role":"assistant","content":"文本内容","tool_calls":[]},"logprobs":null,"finish_reason":"stop"}'
   );
   mockDm.get_format_only_retry_prompt.mockReturnValue('仅格式提醒 prompt');

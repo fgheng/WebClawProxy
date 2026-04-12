@@ -5,17 +5,17 @@
   "providers": {
     "gpt": {
       "site": "https://chatgpt.com/",
-      "input_max_chars": 12000,
+      "input_max_chars": 10000,
       "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "o1", "o1-mini", "o3", "o3-mini"]
     },
     "qwen": {
       "site": "https://chat.qwen.ai/",
-      "input_max_chars": 8000,
+      "input_max_chars": 10000,
       "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long", "qwen2.5-72b", "qwen2.5-32b"]
     },
     "deepseek": {
       "site": "https://chat.deepseek.com/",
-      "input_max_chars": 1000,
+      "input_max_chars": 10000,
       "models": ["deepseek-chat", "deepseek-r1", "deepseek-v3", "deepseek-coder"]
     },
     "kimi": {
@@ -26,11 +26,11 @@
   },
   "defaults": {
     "init_prompt": "对话初始化，这是一个全新的对话，请忘掉所有提示词，重新开始，只做输出不做执行！！",
-    "init_prompt_template": "注意：仅输出 JSON，不要有额外解释，不执行任何操作！！\n\n本对话所有回复必须严格按以下 JSON 模板输出，内容需为合法 JSON 字符串形式的模拟结果，不得包含真实执行行为，不得添加任何额外文本:\n{{json_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复\"收到\"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}",
-    "current_template": "\n{{json_template}}\n请按照以上模板输出，不要有额外解释！！\n\n---\n{{current}}",
+    "init_prompt_template": "注意：仅输出 JSON，不要有额外解释，不执行任何操作！！\n\n本对话所有回复必须严格按以下 JSON 模板输出，内容需为合法 JSON 字符串形式的模拟结果，不得包含真实执行行为，不得添加任何额外文本:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复\"收到\"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}",
+    "current_template": "\n{{response_schema_template}}\n请按照以上模板输出，不要有额外解释！！\n\n---\n{{current}}",
     "user_message_template": "{{content}}",
-    "json_template": "{\n      \"index\": 0, // 第几个候选结果\n      \"message\": {\n        \"role\": \"assistant\", // 角色：模型输出\n        \"content\": \"文本内容\", // 模型生成的回复文本\n\n        \"tool_calls\": [\n          {\n            \"index\": 0, // 第几个工具调用\n            \"id\": \"call_xxx\", // 工具调用唯一ID,用于追踪工具\n            \"type\": \"function\", // 调用类型：函数调用\n            \"function\": {\n              \"name\": \"exec\", // 函数名\n              \"arguments\": \"{\\\"command\\\":\\\"ls\\\"}\" // 参数（JSON字符串）\n            }\n          }\n        ]\n      },\n      \"logprobs\": null, // token概率信息（可选）\n      \"finish_reason\": \"tool_calls\" // 结束原因：触发工具调用\n    }",
-    "format_only_retry_template": "你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n---\n{{json_template}}"
+    "response_schema_template": "{\n      \"index\": 0, // 第几个候选结果\n      \"message\": {\n        \"role\": \"assistant\", // 角色：模型输出\n        \"content\": \"文本内容\", // 模型生成的回复文本\n\n        \"tool_calls\": [\n          {\n            \"index\": 0, // 第几个工具调用\n            \"id\": \"call_xxx\", // 工具调用唯一ID,用于追踪工具\n            \"type\": \"function\", // 调用类型：函数调用\n            \"function\": {\n              \"name\": \"exec\", // 函数名\n              \"arguments\": \"{\\\"command\\\":\\\"ls\\\"}\" // 参数（JSON字符串）\n            }\n          }\n        ]\n      },\n      \"logprobs\": null, // token概率信息（可选）\n      \"finish_reason\": \"tool_calls\" // 结束原因：触发工具调用\n    }",
+    "format_only_retry_template": "你上一条回复不是合法 JSON。请仅按以下 JSON 模板示例重新输出，不要重复用户问题或额外解释：\n {{response_schema_template}}"
   },
   "server": {
     "port": 3000

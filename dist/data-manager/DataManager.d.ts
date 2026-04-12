@@ -62,6 +62,7 @@ export declare class DataManager {
     get_history_prompt(): string;
     get_current_prompt(): string;
     get_tools_prompt(): string;
+    get_response_schema_template(): string;
     get_init_prompt(): string;
     /**
      * 初始化新 web 会话时使用的提示词：

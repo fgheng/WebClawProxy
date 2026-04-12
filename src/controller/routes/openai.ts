@@ -620,7 +620,7 @@ function buildChunkPrompt(
   chunk: string,
   chunkIndex: number,
   chunkTotal: number,
-  jsonTemplate: string
+  responseSchemaTemplate: string
 ): string {
   if (chunkTotal <= 1) return chunk;
 
@@ -656,7 +656,7 @@ function buildChunkPrompt(
     allEndMarker,
     '以上分段输入全部结束。请基于全部分段内容进行正式回答。',
     '严格按照以下格式输出，不能有额外的解释',
-    jsonTemplate,
+    responseSchemaTemplate,
   ].join('\n');
 }
 
@@ -818,7 +818,7 @@ export async function chatCompletionsHandler(
     }
 
     // ===== Step 6: 发送当前消息 =====
-    const jsonTemplate = dm.get_json_template();
+    const responseSchemaTemplate = dm.get_response_schema_template();
     const currentPrompt = dm.get_current_prompt_for_web_send();
     const providerInputCharLimit = getProviderInputCharLimitByModel(internalReq.model);
     const promptChunks = splitPromptByLimit(currentPrompt, providerInputCharLimit);
@@ -864,7 +864,7 @@ export async function chatCompletionsHandler(
     try {
       if (isChunkedInput) {
         for (let i = 0; i < promptChunks.length - 1; i++) {
-          const chunkPrompt = buildChunkPrompt(promptChunks[i], i, promptChunks.length, jsonTemplate);
+          const chunkPrompt = buildChunkPrompt(promptChunks[i], i, promptChunks.length, responseSchemaTemplate);
           await webDriver.sendOnly(site, sessionUrl, chunkPrompt);
         }
       }
@@ -874,7 +874,7 @@ export async function chatCompletionsHandler(
         promptChunks[finalChunkIndex],
         finalChunkIndex,
         promptChunks.length,
-        jsonTemplate
+        responseSchemaTemplate
       );
       chatResult = await webDriver.chat(site, sessionUrl, finalPrompt);
     } catch (err) {

@@ -159,11 +159,11 @@ async function runMockTests() {
   });
 
   await runTest('格式化 OpenAI 响应', () => {
-    const resp = protocol.format({
-      content: '你好！有什么可以帮你？',
-      model: 'gpt-5.2',
-      usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
-    }) as any;
+    const resp = protocol.format(
+      'gpt-5.2',
+      { content: '你好！有什么可以帮你？' },
+      { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 }
+    ) as any;
     if (!resp.id || !resp.choices || resp.choices[0].message.content !== '你好！有什么可以帮你？') {
       throw new Error('响应格式不正确');
     }
@@ -181,7 +181,7 @@ async function runMockTests() {
         GPT: ['gpt-4', 'gpt-4o', 'gpt-5', 'gpt-5.1', 'gpt-5.2'],
         DEEPSEEK: ['deepseek-chat', 'deepseek-r1'],
       },
-      jsonTemplate: '{"answer": "test"}',
+      responseSchemaTemplate: '{"answer": "test"}',
     });
     if (!dm.HASH_KEY || !dm.DATA_PATH) throw new Error('HASH_KEY 或 DATA_PATH 为空');
     console.log(`    ${DIM}DATA_PATH: ${dm.DATA_PATH}${RESET}`);
@@ -221,14 +221,14 @@ async function runMockTests() {
 
   await runTest('get_init_prompt() 包含所有部分', () => {
     const p = dm!.get_init_prompt();
-    if (!p.includes('{"answer": "test"}')) throw new Error('缺少 json_template');
+    if (!p.includes('{"answer": "test"}')) throw new Error('缺少 response_schema_template');
     if (!p.includes('<|system|>')) throw new Error('缺少 system_prompt');
     console.log(`    ${DIM}init prompt 长度: ${p.length} 字符${RESET}`);
   });
 
   await runTest('get_current_prompt_with_template() 格式正确', () => {
     const p = dm!.get_current_prompt_with_template();
-    if (!p.includes('{"answer": "test"}')) throw new Error('缺少 json_template');
+    if (!p.includes('{"answer": "test"}')) throw new Error('缺少 response_schema_template');
   });
 
   await runTest('update_current() 更新当前消息', () => {
@@ -259,7 +259,7 @@ async function runMockTests() {
     const testDm = new DataManager(req, {
       rootDir: tmpDir,
       models: { DEEPSEEK: ['deepseek-chat'], GPT: ['gpt-4o'] },
-      jsonTemplate: '{"result": "..."}',
+      responseSchemaTemplate: '{"result": "..."}',
     });
     await testDm.save_data();
 

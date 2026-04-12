@@ -151,7 +151,7 @@ new DataManager(internalReq, customConfig?)
 
 ## 6.5 `get_init_prompt()`
 模板变量：
-- `{{json_template}}`
+- `{{response_schema_template}}`
 - `{{system_prompt}}`
 - `{{tools_prompt}}`
 - `{{history_prompt}}`
@@ -160,7 +160,7 @@ new DataManager(internalReq, customConfig?)
 
 ## 6.6 `get_current_prompt_with_template()`
 模板变量：
-- `{{json_template}}`
+- `{{response_schema_template}}`
 - `{{current}}`
 
 来源：`defaults.current_template`

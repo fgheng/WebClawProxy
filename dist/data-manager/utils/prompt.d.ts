@@ -45,7 +45,7 @@ export declare function buildToolsPrompt(tools: Tool[]): string;
  */
 export declare function buildInitPrompt(options: {
     template: string;
-    jsonTemplate: string;
+    responseSchemaTemplate: string;
     systemPrompt: string;
     toolsPrompt: string;
     historyPrompt: string;
@@ -55,7 +55,7 @@ export declare function buildInitPrompt(options: {
  */
 export declare function buildCurrentPromptWithTemplate(options: {
     template: string;
-    jsonTemplate: string;
+    responseSchemaTemplate: string;
     currentPrompt: string;
 }): string;
 /**

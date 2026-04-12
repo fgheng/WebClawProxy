@@ -127,9 +127,9 @@ function buildToolsPrompt(tools) {
  * 使用模板替换各个占位符
  */
 function buildInitPrompt(options) {
-    const { template, jsonTemplate, systemPrompt, toolsPrompt, historyPrompt } = options;
+    const { template, responseSchemaTemplate, systemPrompt, toolsPrompt, historyPrompt } = options;
     return template
-        .replace('{{json_template}}', jsonTemplate)
+        .replace('{{response_schema_template}}', responseSchemaTemplate)
         .replace('{{system_prompt}}', systemPrompt)
         .replace('{{tools_prompt}}', toolsPrompt || '（无可用工具）')
         .replace('{{history_prompt}}', historyPrompt || '（无历史记录）');
@@ -138,9 +138,9 @@ function buildInitPrompt(options) {
  * 构造带模板的 current prompt
  */
 function buildCurrentPromptWithTemplate(options) {
-    const { template, jsonTemplate, currentPrompt } = options;
+    const { template, responseSchemaTemplate, currentPrompt } = options;
     return template
-        .replace('{{json_template}}', jsonTemplate)
+        .replace('{{response_schema_template}}', responseSchemaTemplate)
         .replace('{{current}}', currentPrompt);
 }
 /**

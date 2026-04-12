@@ -64,10 +64,10 @@ const createTestDataManager = (request: InternalRequest = mockRequest) => {
       GPT: ['gpt-4', 'gpt-4o', 'gpt-4-turbo', 'gpt-5', 'gpt-5.1', 'gpt-5.2'],
       DEEPSEEK: ['deepseek-chat', 'deepseek-r1'],
     },
-    jsonTemplate: '{"test": "template"}',
+    responseSchemaTemplate: '{"test": "template"}',
     initPromptTemplate:
-      '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{json_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
-    currentTemplate: '请按照下面的模板回答\n{{json_template}}\n\n---\n{{current}}',
+      '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+    currentTemplate: '请按照下面的模板回答\n{{response_schema_template}}\n\n---\n{{current}}',
     userMessageTemplate: '',
   });
 };
@@ -591,10 +591,10 @@ describe('DataManager', () => {
           GPT: ['gpt-4', 'gpt-4o', 'gpt-4-turbo', 'gpt-5', 'gpt-5.1', 'gpt-5.2'],
           DEEPSEEK: ['deepseek-chat', 'deepseek-r1'],
         },
-        jsonTemplate: '{"test": "template"}',
+        responseSchemaTemplate: '{"test": "template"}',
         initPromptTemplate:
-          '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{json_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
-        currentTemplate: '请按照下面的模板回答\n{{json_template}}\n\n---\n{{current}}',
+          '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+        currentTemplate: '请按照下面的模板回答\n{{response_schema_template}}\n\n---\n{{current}}',
         userMessageTemplate: '注意：仅做输出，不执行任何操作！！\n{{content}}',
       });
 
