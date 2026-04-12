@@ -1,0 +1,345 @@
+import request from 'supertest';
+
+const mockInitConversation = jest.fn();
+const mockChat = jest.fn();
+const mockOpenBrowser = jest.fn();
+const mockClose = jest.fn();
+
+const mockDm = {
+  model: 'deepseek-chat',
+  system: '',
+  history: [],
+  tools: [],
+  current: { role: 'user', content: '你好' },
+  HASH_KEY: 'mock_hash',
+  DATA_PATH: '/tmp/mock_data_path',
+  save_data: jest.fn(),
+  is_linked: jest.fn(),
+  get_init_prompt: jest.fn(),
+  get_init_prompt_for_new_session: jest.fn(),
+  get_current_prompt: jest.fn(),
+  get_current_prompt_with_template: jest.fn(),
+  get_usage: jest.fn(),
+  update_web_url: jest.fn(),
+  get_web_url: jest.fn(),
+  cancel_linked: jest.fn(),
+  update_current: jest.fn(),
+  set_trace_id: jest.fn(),
+  get_session_debug_info: jest.fn(),
+};
+
+jest.mock('../../src/web-driver/WebDriverManager', () => {
+  return {
+    WebDriverManager: jest.fn().mockImplementation(() => ({
+      initConversation: mockInitConversation,
+      chat: mockChat,
+      openBrowser: mockOpenBrowser,
+      close: mockClose,
+    })),
+  };
+});
+
+jest.mock('../../src/data-manager/DataManager', () => {
+  return {
+    DataManager: jest.fn().mockImplementation(() => mockDm),
+  };
+});
+
+const { createApp } = require('../../src/controller/server');
+const { OpenAIProtocol } = require('../../src/protocol');
+
+const app = createApp();
+const protocol = new OpenAIProtocol();
+
+function buildOpenAIJsonResponse(content = '你好！') {
+  return JSON.stringify({
+    id: 'chatcmpl-test123',
+    object: 'chat.completion',
+    created: 1775812436,
+    model: 'deepseek-chat',
+    choices: [
+      {
+        index: 0,
+        message: { role: 'assistant', content },
+        logprobs: null,
+        finish_reason: 'stop',
+      },
+    ],
+    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+  });
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+
+  mockInitConversation.mockResolvedValue({
+    url: 'https://chat.deepseek.com/a/chat/s/mock_session_123',
+  });
+  mockChat.mockResolvedValue({
+    content: buildOpenAIJsonResponse(),
+  });
+  mockOpenBrowser.mockResolvedValue(undefined);
+  mockClose.mockResolvedValue(undefined);
+
+  mockDm.model = 'deepseek-chat';
+  mockDm.system = '';
+  mockDm.history = [];
+  mockDm.tools = [];
+  mockDm.current = { role: 'user', content: '你好' };
+  mockDm.HASH_KEY = 'mock_hash';
+  mockDm.DATA_PATH = '/tmp/mock_data_path';
+  mockDm.save_data.mockResolvedValue(undefined);
+  mockDm.is_linked.mockReturnValue(false);
+  mockDm.get_init_prompt.mockReturnValue('初始化 prompt');
+  mockDm.get_init_prompt_for_new_session.mockReturnValue('初始化 prompt（不含当前轮）');
+  mockDm.get_current_prompt.mockReturnValue('你好');
+  mockDm.get_current_prompt_with_template.mockReturnValue('带模板的 prompt');
+  mockDm.get_usage.mockReturnValue({
+    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+  });
+  mockDm.update_web_url.mockImplementation(() => undefined);
+  mockDm.get_web_url.mockReturnValue('https://chat.deepseek.com/a/chat/s/mock');
+  mockDm.cancel_linked.mockImplementation(() => undefined);
+  mockDm.update_current.mockImplementation(() => undefined);
+  mockDm.set_trace_id.mockImplementation(() => undefined);
+  mockDm.get_session_debug_info.mockReturnValue({
+    hash_key: 'mock_hash',
+    data_path: '/tmp/mock_data_path',
+    session_dir: '20260412-101010000-mock01',
+    linked: false,
+    web_url_count: 0,
+    latest_web_url: '',
+  });
+});
+
+describe('控制模块 API 测试', () => {
+  const openAIRequest = {
+    model: 'deepseek-chat',
+    messages: [
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: '你好' },
+    ],
+    stream: false,
+  };
+
+  describe('GET /health', () => {
+    it('应该返回 200 和健康状态', async () => {
+      const res = await request(app).get('/health');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('ok');
+    });
+  });
+
+  describe('GET /v1/models', () => {
+    it('应该返回模型列表', async () => {
+      const res = await request(app).get('/v1/models');
+      expect(res.status).toBe(200);
+      expect(res.body.object).toBe('list');
+      expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data.length).toBeGreaterThan(0);
+    });
+
+    it('每个模型应该包含必要字段', async () => {
+      const res = await request(app).get('/v1/models');
+      const model = res.body.data[0];
+      expect(model).toHaveProperty('id');
+      expect(model).toHaveProperty('object', 'model');
+      expect(model).toHaveProperty('created');
+      expect(model).toHaveProperty('owned_by');
+    });
+  });
+
+  describe('POST /v1/chat/completions', () => {
+    it('应该成功处理 OpenAI 格式的请求', async () => {
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+    });
+
+    it('已链接且 usage 超过阈值时应切换到新会话并使用新 URL 发送消息', async () => {
+      mockDm.is_linked.mockReturnValueOnce(true);
+      mockDm.get_web_url.mockReturnValueOnce('https://chat.deepseek.com/a/chat/s/old_session');
+      mockDm.get_usage.mockReturnValueOnce({
+        usage: { prompt_tokens: 200000, completion_tokens: 1000, total_tokens: 201000 },
+      });
+      mockInitConversation.mockResolvedValueOnce({
+        url: 'https://chat.deepseek.com/a/chat/s/new_session_456',
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(mockInitConversation).toHaveBeenCalledWith(
+        'deepseek',
+        '初始化 prompt（不含当前轮）'
+      );
+      expect(mockDm.update_web_url).toHaveBeenCalledWith(
+        'https://chat.deepseek.com/a/chat/s/new_session_456'
+      );
+      expect(mockChat).toHaveBeenCalledWith(
+        'deepseek',
+        'https://chat.deepseek.com/a/chat/s/new_session_456',
+        '你好'
+      );
+    });
+
+    it('带注释的 JSONC 回复也应识别为 JSON，且不触发模板重试', async () => {
+      mockChat.mockResolvedValueOnce({
+        content: `{
+  "index": 0, // 第几个候选结果
+  "message": {
+    "role": "assistant",
+    "content": "这是 JSONC 回复",
+    "tool_calls": []
+  },
+  "logprobs": null,
+  "finish_reason": "stop"
+}`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.object).toBe('chat.completion');
+      expect(res.body.model).toBe('deepseek-chat');
+      expect(res.body.choices?.[0]?.message?.content).toBe('这是 JSONC 回复');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
+    it('带 BOM/零宽字符/行号噪声的 JSON 也应识别成功，且不触发重试', async () => {
+      mockChat.mockResolvedValueOnce({
+        content: `\uFEFF\u200B\u200D\u200B
+1 {
+2   "message": {
+3     "role": "assistant",
+4     "content": "带噪声 JSON",
+5     "tool_calls": []
+6   },
+7   "finish_reason": "stop"
+8 }`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.object).toBe('chat.completion');
+      expect(res.body.choices?.[0]?.message?.content).toBe('带噪声 JSON');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
+    it('无效的请求格式应该返回 400', async () => {
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send({ invalid: 'request' })
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+    });
+
+    it('缺少 messages 字段应该返回 400', async () => {
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send({ model: 'gpt-4o' })
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(400);
+    });
+
+    it('遇到额度上限错误时应该直接返回 429，且不做模板重试', async () => {
+      mockChat.mockResolvedValueOnce({
+        content: 'CLAUDE_4_6 已达到使用额度上限，约 23 小时后刷新，请切换 Auto 或其他模型再试。',
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(429);
+      expect(res.body.error).toMatchObject({
+        type: 'rate_limit_error',
+        code: 'quota_exceeded',
+      });
+      expect(res.body.error.message).toContain('已达到使用额度上限');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
+    it('遇到上游服务繁忙时应该返回 503', async () => {
+      mockChat.mockResolvedValueOnce({
+        content: '服务繁忙，请稍后再试',
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatchObject({
+        type: 'service_unavailable',
+        code: 'upstream_service_error',
+      });
+      expect(res.body.error.message).toContain('服务繁忙');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('未知路由', () => {
+    it('应该返回 404', async () => {
+      const res = await request(app).get('/unknown-path');
+      expect(res.status).toBe(404);
+    });
+  });
+});
+
+describe('OpenAI 协议解析集成测试', () => {
+  it('应该能正确解析复杂请求', () => {
+    const complexRequest = {
+      model: 'gpt-5.2',
+      messages: [
+        { role: 'system', content: 'You are a personal assistant.' },
+        { role: 'user', content: [{ type: 'text', text: '你好' }] },
+        { role: 'assistant', content: '你好，有什么可以帮你？' },
+        { role: 'user', content: '请介绍一下你自己' },
+      ],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'read',
+            description: 'Read a file',
+            parameters: {
+              type: 'object',
+              required: ['path'],
+              properties: { path: { type: 'string' } },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = protocol.parse(complexRequest);
+
+    expect(result.model).toBe('gpt-5.2');
+    expect(result.system).toBe('You are a personal assistant.');
+    expect(result.history).toHaveLength(2);
+    expect(result.current.content).toBe('请介绍一下你自己');
+    expect(result.tools).toHaveLength(1);
+  });
+});

@@ -1,0 +1,10 @@
+import { Request, Response, NextFunction } from 'express';
+/**
+ * POST /v1/chat/completions — OpenAI 兼容接口处理器
+ */
+export declare function chatCompletionsHandler(req: Request, res: Response, next: NextFunction): Promise<void>;
+/**
+ * GET /v1/models — 返回支持的模型列表
+ */
+export declare function listModelsHandler(req: Request, res: Response): Promise<void>;
+//# sourceMappingURL=openai.d.ts.map
