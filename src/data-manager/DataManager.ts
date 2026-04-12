@@ -49,6 +49,15 @@ function findModelCategory(
   return model.toLowerCase().replace(/[^a-z0-9]/g, '_');
 }
 
+function getModelMapFromConfig(): Record<string, string[]> {
+  const providers = (config.providers ?? {}) as Record<string, { models?: string[] }>;
+  const mapped: Record<string, string[]> = {};
+  for (const [providerKey, provider] of Object.entries(providers)) {
+    mapped[providerKey.toUpperCase()] = provider.models ?? [];
+  }
+  return mapped;
+}
+
 /**
  * DataManager — 数据管理核心类
  */
@@ -76,7 +85,7 @@ export class DataManager {
 
     this.config = {
       rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
-      models: customConfig?.models ?? config.models ?? {},
+      models: customConfig?.models ?? getModelMapFromConfig(),
       jsonTemplate: customConfig?.jsonTemplate ?? config.defaults?.json_template ?? '',
       initPromptTemplate:
         customConfig?.initPromptTemplate ??

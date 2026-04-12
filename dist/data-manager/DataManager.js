@@ -55,6 +55,14 @@ function findModelCategory(model, modelMap) {
     // 如果找不到，返回 model 名称本身（兜底）
     return model.toLowerCase().replace(/[^a-z0-9]/g, '_');
 }
+function getModelMapFromConfig() {
+    const providers = (config.providers ?? {});
+    const mapped = {};
+    for (const [providerKey, provider] of Object.entries(providers)) {
+        mapped[providerKey.toUpperCase()] = provider.models ?? [];
+    }
+    return mapped;
+}
 /**
  * DataManager — 数据管理核心类
  */
@@ -70,7 +78,7 @@ class DataManager {
         this.current = request.current;
         this.config = {
             rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
-            models: customConfig?.models ?? config.models ?? {},
+            models: customConfig?.models ?? getModelMapFromConfig(),
             jsonTemplate: customConfig?.jsonTemplate ?? config.defaults?.json_template ?? '',
             initPromptTemplate: customConfig?.initPromptTemplate ??
                 config.defaults?.init_prompt_template ??

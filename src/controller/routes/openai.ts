@@ -16,33 +16,42 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 const protocol = new OpenAIProtocol();
 const webDriver = new WebDriverManager();
 
+type ProviderConfig = {
+  site?: string;
+  models?: string[];
+};
+
+function getProviderConfigMap(): Record<string, ProviderConfig> {
+  return (config.providers ?? {}) as Record<string, ProviderConfig>;
+}
+
+function getConfiguredSiteKeys(): SiteKey[] {
+  return Object.keys(getProviderConfigMap()) as SiteKey[];
+}
+
 export async function preflightWebDriverSites(): Promise<void> {
-  const siteKeys = Object.keys(config.sites ?? {}) as SiteKey[];
+  const siteKeys = getConfiguredSiteKeys();
   if (siteKeys.length === 0) return;
   await webDriver.preflightConfiguredSites(siteKeys);
 }
 
 export async function openConfiguredWebDriverSites(): Promise<void> {
-  const siteKeys = Object.keys(config.sites ?? {}) as SiteKey[];
+  const siteKeys = getConfiguredSiteKeys();
   if (siteKeys.length === 0) return;
   await webDriver.openConfiguredSites(siteKeys);
 }
 
 /**
  * 根据模型名称推断使用哪个网站
- * 优先查找配置文件中的 models 映射，再根据大类选择 site
+ * 优先使用 providers 映射（site + models 同源），并兼容旧配置。
  */
 function inferSiteFromModel(model: string): SiteKey {
-  const models: Record<string, string[]> = config.models ?? {};
+  const providers = getProviderConfigMap();
 
-  for (const [category, modelList] of Object.entries(models)) {
+  for (const [siteKey, provider] of Object.entries(providers)) {
+    const modelList = provider.models ?? [];
     if (modelList.some((m: string) => m.toLowerCase() === model.toLowerCase())) {
-      const cat = category.toLowerCase();
-      // 大类到 SiteKey 的映射
-      if (cat === 'gpt') return 'gpt';
-      if (cat === 'deepseek') return 'deepseek';
-      if (cat === 'qwen') return 'qwen';
-      if (cat === 'kimi') return 'kimi';
+      return siteKey as SiteKey;
     }
   }
 
@@ -872,9 +881,9 @@ export async function listModelsHandler(
   req: Request,
   res: Response
 ): Promise<void> {
-  const models: Record<string, string[]> = config.models ?? {};
-  const modelList = Object.values(models)
-    .flat()
+  const providers = getProviderConfigMap();
+  const modelList = Object.values(providers)
+    .flatMap((provider) => provider.models ?? [])
     .map((id: string) => ({
       id,
       object: 'model',

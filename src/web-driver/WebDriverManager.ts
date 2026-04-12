@@ -36,7 +36,26 @@ chromium.use(StealthPlugin());
 const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
-const SITE_URLS: Record<SiteKey, string> = config.sites;
+type ProviderConfig = {
+  site?: string;
+  models?: string[];
+};
+
+function getSiteUrlsFromConfig(): Record<SiteKey, string> {
+  const providers = (config.providers ?? {}) as Record<string, ProviderConfig>;
+  const fromProviders: Partial<Record<SiteKey, string>> = {};
+  for (const [key, provider] of Object.entries(providers)) {
+    if (key === 'gpt' || key === 'qwen' || key === 'deepseek' || key === 'kimi') {
+      const site = (provider?.site ?? '').trim();
+      if (site) {
+        fromProviders[key] = site;
+      }
+    }
+  }
+  return fromProviders as Record<SiteKey, string>;
+}
+
+const SITE_URLS: Record<SiteKey, string> = getSiteUrlsFromConfig();
 
 type ProbeStatus = 'logged_in' | 'not_logged_in' | 'unknown';
 

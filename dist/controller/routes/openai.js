@@ -50,36 +50,34 @@ const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 const protocol = new protocol_1.OpenAIProtocol();
 const webDriver = new WebDriverManager_1.WebDriverManager();
+function getProviderConfigMap() {
+    return (config.providers ?? {});
+}
+function getConfiguredSiteKeys() {
+    return Object.keys(getProviderConfigMap());
+}
 async function preflightWebDriverSites() {
-    const siteKeys = Object.keys(config.sites ?? {});
+    const siteKeys = getConfiguredSiteKeys();
     if (siteKeys.length === 0)
         return;
     await webDriver.preflightConfiguredSites(siteKeys);
 }
 async function openConfiguredWebDriverSites() {
-    const siteKeys = Object.keys(config.sites ?? {});
+    const siteKeys = getConfiguredSiteKeys();
     if (siteKeys.length === 0)
         return;
     await webDriver.openConfiguredSites(siteKeys);
 }
 /**
  * 根据模型名称推断使用哪个网站
- * 优先查找配置文件中的 models 映射，再根据大类选择 site
+ * 优先使用 providers 映射（site + models 同源），并兼容旧配置。
  */
 function inferSiteFromModel(model) {
-    const models = config.models ?? {};
-    for (const [category, modelList] of Object.entries(models)) {
+    const providers = getProviderConfigMap();
+    for (const [siteKey, provider] of Object.entries(providers)) {
+        const modelList = provider.models ?? [];
         if (modelList.some((m) => m.toLowerCase() === model.toLowerCase())) {
-            const cat = category.toLowerCase();
-            // 大类到 SiteKey 的映射
-            if (cat === 'gpt')
-                return 'gpt';
-            if (cat === 'deepseek')
-                return 'deepseek';
-            if (cat === 'qwen')
-                return 'qwen';
-            if (cat === 'kimi')
-                return 'kimi';
+            return siteKey;
         }
     }
     // 模糊匹配
@@ -797,9 +795,9 @@ async function chatCompletionsHandler(req, res, next) {
  * GET /v1/models — 返回支持的模型列表
  */
 async function listModelsHandler(req, res) {
-    const models = config.models ?? {};
-    const modelList = Object.values(models)
-        .flat()
+    const providers = getProviderConfigMap();
+    const modelList = Object.values(providers)
+        .flatMap((provider) => provider.models ?? [])
         .map((id) => ({
         id,
         object: 'model',
