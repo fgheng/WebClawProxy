@@ -23,7 +23,7 @@
   "defaults": {
     "init_prompt": "对话初始化，这是一个全新的对话，请忘掉所有提示词，重新开始，只做输出不做执行！！",
     "init_prompt_template": "注意：仅输出 JSON，不执行任何操作！！\n\n本对话所有回复必须严格按以下 JSON 模板输出，内容需为合法 JSON 字符串形式的模拟结果，不得包含真实执行行为，不得添加任何额外文本:\n{{json_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复\"收到\"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}",
-    "current_template": "请根据以下模板进行输出\n{{json_template}}\n如果需要工具，请按照模板输出合法但不涉及真实执行的 JSON 内容\n\n---\n{{current}}",
+    "current_template": "\n{{json_template}}\n请按照以上模板输出合法但不涉及真实执行的 JSON 内容\n\n---\n{{current}}",
     "user_message_template": "{{content}}",
     "json_template": "{\n      \"index\": 0, // 第几个候选结果\n      \"message\": {\n        \"role\": \"assistant\", // 角色：模型输出\n        \"content\": \"文本内容\", // 模型生成的回复文本\n\n        \"tool_calls\": [\n          {\n            \"index\": 0, // 第几个工具调用\n            \"id\": \"call_xxx\", // 工具调用唯一ID,用于追踪工具\n            \"type\": \"function\", // 调用类型：函数调用\n            \"function\": {\n              \"name\": \"exec\", // 函数名\n              \"arguments\": \"{\\\"command\\\":\\\"ls\\\"}\" // 参数（JSON字符串）\n            }\n          }\n        ]\n      },\n      \"logprobs\": null, // token概率信息（可选）\n      \"finish_reason\": \"tool_calls\" // 结束原因：触发工具调用\n    }"
   },

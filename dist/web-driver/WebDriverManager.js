@@ -490,6 +490,38 @@ class WebDriverManager {
             deepseek: 'textarea, [contenteditable="true"]',
             kimi: 'textarea, [contenteditable="true"][class*="input"]',
         };
+        const readinessProfileBySite = {
+            gpt: {
+                maxWaitMs: 5000,
+                requiredStableRounds: 2,
+                intervalMs: 250,
+                finalBufferMs: 250,
+                requireUrlStability: true,
+            },
+            qwen: {
+                maxWaitMs: 5000,
+                requiredStableRounds: 2,
+                intervalMs: 250,
+                finalBufferMs: 250,
+                requireUrlStability: true,
+            },
+            deepseek: {
+                maxWaitMs: 5000,
+                requiredStableRounds: 2,
+                intervalMs: 250,
+                finalBufferMs: 250,
+                requireUrlStability: true,
+            },
+            // Kimi 初始化输入框可交互后即可发送，避免 URL 稳定等待导致初始提示词写入慢
+            kimi: {
+                maxWaitMs: 1800,
+                requiredStableRounds: 1,
+                intervalMs: 120,
+                finalBufferMs: 80,
+                requireUrlStability: false,
+            },
+        };
+        const profile = readinessProfileBySite[site];
         // 1) 等待文档事件（若 API 可用）
         try {
             await page.waitForLoadState?.('domcontentloaded', { timeout: 4000 });
@@ -497,13 +529,12 @@ class WebDriverManager {
         catch {
             // 忽略，继续走稳定性判断
         }
-        // 2) URL 稳定 + 输入框可交互联合判定
-        // 要求连续两轮满足，避免路由切换/水合阶段刚好命中一次
+        // 2) 页面可发送判定（URL 稳定 + 输入框可交互）
         let lastUrl = '';
         let stableRounds = 0;
         const start = Date.now();
         const inputSelector = inputSelectorBySite[site];
-        while (Date.now() - start < 5000 && stableRounds < 2) {
+        while (Date.now() - start < profile.maxWaitMs && stableRounds < profile.requiredStableRounds) {
             const currentUrl = page.url?.() ?? '';
             const inputReady = await page
                 .evaluate(([selector]) => {
@@ -519,17 +550,20 @@ class WebDriverManager {
                 return Boolean(visible && notDisabled);
             }, [inputSelector])
                 .catch(() => false);
-            if (currentUrl && currentUrl === lastUrl && inputReady) {
+            const ready = profile.requireUrlStability
+                ? Boolean(currentUrl && currentUrl === lastUrl && inputReady)
+                : Boolean(inputReady);
+            if (ready) {
                 stableRounds++;
             }
             else {
                 stableRounds = 0;
                 lastUrl = currentUrl;
             }
-            await new Promise((r) => setTimeout(r, 250));
+            await new Promise((r) => setTimeout(r, profile.intervalMs));
         }
         // 3) 最后缓冲，给前端框架渲染一个小窗口
-        await new Promise((r) => setTimeout(r, 250));
+        await new Promise((r) => setTimeout(r, profile.finalBufferMs));
     }
     async getOrCreateDriver(site) {
         if (!this.driverMap.has(site)) {

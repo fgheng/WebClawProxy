@@ -9,6 +9,7 @@ export declare class KimiDriver extends BaseDriver {
     isValidConversationUrl(url: string): boolean;
     protected getStopButtonSelector(): string | null;
     protected getResponseAreaSelector(): string | null;
+    protected getLatestResponseText(responseSelector: string): Promise<string>;
     private dismissDialogs;
 }
 //# sourceMappingURL=KimiDriver.d.ts.map

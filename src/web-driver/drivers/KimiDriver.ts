@@ -29,16 +29,22 @@ const SELECTORS = {
     '[class*="generate-stop"]',
   ].join(', '),
 
-  // 响应区域：使用更精确的 Kimi 特有 class，缩小匹配范围
-  // 优先匹配带有 data-role 属性或 assistant 语义的容器
+  // 响应区域：优先 assistant 语义，补充 Kimi 新版 segment 结构
+  // 注意：Kimi 实站存在“assistant 节点通过 segment 承载，且回复完成后才出现动作按钮组”的形态
   responseArea: [
     '[data-role="assistant"]',
     '[data-message-role="assistant"]',
+    '[data-author-role="assistant"]',
     '[class*="kimi-message"][class*="assistant"]',
     '[class*="chat-message"][class*="assistant"]',
-    // Kimi markdown 渲染容器
-    '[class*="markdown-body"]',
     '[class*="message-content"][class*="assistant"]',
+    // Kimi 新版常见 segment 形态（放在后面做兜底）
+    '[class*="segment"][class*="assistant"]',
+    '[class*="segment-assistant"]',
+    '[class*="segment"]',
+    // markdown 渲染容器
+    '[class*="markdown-body"]',
+    '[class*="markdown"]',
   ].join(', '),
 };
 
@@ -214,6 +220,59 @@ export class KimiDriver extends BaseDriver {
 
   protected getResponseAreaSelector(): string | null {
     return SELECTORS.responseArea;
+  }
+
+  protected async getLatestResponseText(responseSelector: string): Promise<string> {
+    return this.page.evaluate(([selector]: [string]) => {
+      const nodes = Array.from(
+        (globalThis as any).document.querySelectorAll(selector as string)
+      ) as any[];
+      if (nodes.length === 0) return '';
+
+      const getText = (el: any): string => {
+        const mdEl = el.querySelector(
+          '[class*="markdown"], [class*="message-content"], [class*="content"]'
+        );
+        const raw = (mdEl ? mdEl.textContent : el.textContent) || '';
+        return String(raw).replace(/\s+/g, ' ').trim();
+      };
+
+      const isLikelyUserNode = (el: any): boolean => {
+        const cls = String(el.className || '').toLowerCase();
+        const role = String(
+          el.getAttribute?.('data-role') ||
+            el.getAttribute?.('data-message-role') ||
+            el.getAttribute?.('data-author-role') ||
+            ''
+        ).toLowerCase();
+
+        if (role === 'user' || role === 'human') return true;
+        if (role === 'assistant') return false;
+
+        return (
+          cls.includes('user') ||
+          cls.includes('human') ||
+          cls.includes('self') ||
+          cls.includes('mine')
+        );
+      };
+
+      // 第一轮：优先找“非用户节点”的最后一个非空内容
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const node = nodes[i];
+        if (isLikelyUserNode(node)) continue;
+        const text = getText(node);
+        if (text.length > 0) return text;
+      }
+
+      // 第二轮兜底：若无法区分角色，退化为最后一个非空节点
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const text = getText(nodes[i]);
+        if (text.length > 0) return text;
+      }
+
+      return '';
+    }, [responseSelector] as [string]);
   }
 
   private async dismissDialogs(): Promise<void> {
