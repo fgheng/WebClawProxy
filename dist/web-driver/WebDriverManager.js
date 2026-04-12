@@ -168,8 +168,7 @@ class WebDriverManager {
     async chat(site, sessionUrl, message) {
         await this.ensureBrowser();
         const driver = await this.getOrCreateDriver(site);
-        // 1. 检查登录状态
-        await this.ensureLoggedIn(site, driver);
+        // 登录态检查在服务启动预检阶段完成，chat 路径不再重复检查
         // 2. 验证 session URL 有效性
         if (!driver.isValidConversationUrl(sessionUrl)) {
             throw new types_1.WebDriverError(types_1.WebDriverErrorCode.INVALID_SESSION_URL, `session URL 无效: ${sessionUrl}，请重新调用 initConversation 获取新链接`);

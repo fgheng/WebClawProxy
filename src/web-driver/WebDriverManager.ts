@@ -208,8 +208,7 @@ export class WebDriverManager {
     await this.ensureBrowser();
     const driver = await this.getOrCreateDriver(site);
 
-    // 1. 检查登录状态
-    await this.ensureLoggedIn(site, driver);
+    // 登录态检查在服务启动预检阶段完成，chat 路径不再重复检查
 
     // 2. 验证 session URL 有效性
     if (!driver.isValidConversationUrl(sessionUrl)) {
