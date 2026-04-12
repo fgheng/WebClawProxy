@@ -208,9 +208,8 @@ export class KimiDriver extends BaseDriver {
   }
 
   protected getStopButtonSelector(): string | null {
-    // Kimi 的“停止”按钮样式波动较大，易误判导致等待卡住
-    // 这里禁用 stop 策略，统一走内容稳定性检测
-    return null;
+    // 允许 Kimi 参与 stop 信号判定；若 stop 信号不可靠，基类会自动回退内容稳定性策略
+    return SELECTORS.stopButton;
   }
 
   protected getResponseAreaSelector(): string | null {

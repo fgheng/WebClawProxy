@@ -155,12 +155,16 @@ export abstract class BaseDriver implements IWebDriver {
     }
 
     // 只有在出现过停止按钮时，才等待其消失
-    await this.page.waitForSelector(stopSelector, {
-      state: 'hidden',
-      timeout: this.responseTimeoutMs,
-    });
-
-    return stopObserved;
+    // 若按钮长时间不消失（站点抖动/误匹配），回退到内容稳定策略，避免卡死
+    try {
+      await this.page.waitForSelector(stopSelector, {
+        state: 'hidden',
+        timeout: Math.min(this.responseTimeoutMs, 15000),
+      });
+      return stopObserved;
+    } catch {
+      return false;
+    }
   }
 
   /**

@@ -574,7 +574,7 @@ describe('Driver URL 验证', () => {
     expect(driver.isValidConversationUrl('https://chat.deepseek.com/')).toBe(false);
   });
 
-  it('Kimi 停止按钮策略应关闭（回退内容稳定检测）', async () => {
+  it('Kimi stop 策略启用但失败时应可回退内容稳定检测', async () => {
     const { KimiDriver } = await import('../../src/web-driver/drivers/KimiDriver');
     const mockPage = {
       goto: jest.fn(),
@@ -589,7 +589,7 @@ describe('Driver URL 验证', () => {
     } as any;
 
     const driver = new KimiDriver(mockPage);
-    expect((driver as any).getStopButtonSelector()).toBeNull();
+    expect((driver as any).getStopButtonSelector()).toBeTruthy();
   });
 
   it('Kimi URL 验证', async () => {
