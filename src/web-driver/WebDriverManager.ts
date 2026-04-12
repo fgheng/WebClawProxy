@@ -226,22 +226,20 @@ export class WebDriverManager {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     if (hint) {
-      const script = `
-        (function(message) {
-          var overlay = document.createElement('div');
-          overlay.id = '__webclaw_hint__';
-          overlay.style.cssText = [
-            'position:fixed', 'top:20px', 'left:50%', 'transform:translateX(-50%)',
-            'background:rgba(0,0,0,0.85)', 'color:#fff', 'padding:16px 24px',
-            'border-radius:8px', 'font-size:16px', 'font-family:sans-serif',
-            'z-index:999999', 'max-width:80%', 'text-align:center',
-            'box-shadow:0 4px 20px rgba(0,0,0,0.3)'
-          ].join(';');
-          overlay.textContent = message;
-          document.body.appendChild(overlay);
-        })(arguments[0]);
-      `;
-      await page.evaluate(script, hint);
+      await page.evaluate((message: string) => {
+        const doc = (globalThis as any).document;
+        var overlay = doc.createElement('div');
+        overlay.id = '__webclaw_hint__';
+        overlay.style.cssText = [
+          'position:fixed', 'top:20px', 'left:50%', 'transform:translateX(-50%)',
+          'background:rgba(0,0,0,0.85)', 'color:#fff', 'padding:16px 24px',
+          'border-radius:8px', 'font-size:16px', 'font-family:sans-serif',
+          'z-index:999999', 'max-width:80%', 'text-align:center',
+          'box-shadow:0 4px 20px rgba(0,0,0,0.3)'
+        ].join(';');
+        overlay.textContent = message;
+        doc.body.appendChild(overlay);
+      }, hint);
     }
   }
 
