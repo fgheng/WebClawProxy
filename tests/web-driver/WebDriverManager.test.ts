@@ -85,6 +85,91 @@ describe('WebDriverManager', () => {
   });
 });
 
+describe('LoginProbe 策略引擎', () => {
+  let manager: WebDriverManager;
+
+  beforeEach(() => {
+    manager = new WebDriverManager({ headless: true });
+    jest.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await manager.close();
+  });
+
+  it('阈值边界：score 等于阈值时应命中 logged_in', async () => {
+    const config = {
+      thresholds: { logged_in: 2.5, not_logged_in: -1.5 },
+      stability: { required_consistent_rounds: 2, poll_interval_ms: 1 },
+      positiveSignals: [
+        { id: 'p1', kind: 'selector_exists', selector: '.a', weight: 1.0 },
+        { id: 'p2', kind: 'selector_exists', selector: '.b', weight: 1.5 },
+      ],
+      negativeSignals: [] as any[],
+    };
+
+    jest.spyOn(manager as any, 'evaluateSignal').mockResolvedValue(true);
+    const mockPage = { url: jest.fn().mockReturnValue('https://chatgpt.com/') } as any;
+
+    const result = await (manager as any).probeLoginStatusOnce('gpt', mockPage, config);
+    expect(result.score).toBe(2.5);
+    expect(result.status).toBe('logged_in');
+  });
+
+  it('防抖：连续稳定轮次不足时，应继续重试直到稳定', async () => {
+    const config = {
+      thresholds: { logged_in: 2.0, not_logged_in: -1.5 },
+      stability: { required_consistent_rounds: 2, poll_interval_ms: 1 },
+      positiveSignals: [] as any[],
+      negativeSignals: [] as any[],
+    };
+
+    const seq: Array<'unknown' | 'logged_in' | 'not_logged_in'> = ['unknown', 'logged_in', 'logged_in'];
+    let idx = 0;
+    jest.spyOn(manager as any, 'probeLoginStatusOnce').mockImplementation(async () => ({
+      status: seq[Math.min(idx++, seq.length - 1)],
+      score: 0,
+      reasons: [],
+    }));
+
+    const mockPage = {} as any;
+    const result = await (manager as any).probeLoginStatusWithStability('qwen', mockPage, config);
+
+    expect(result.status).toBe('logged_in');
+    expect((manager as any).probeLoginStatusOnce).toHaveBeenCalledTimes(3);
+  });
+
+  it('信号命中日志：应包含 +正信号 和 -负信号', async () => {
+    const config = {
+      thresholds: { logged_in: 1.0, not_logged_in: -2.0 },
+      stability: { required_consistent_rounds: 1, poll_interval_ms: 1 },
+      positiveSignals: [
+        { id: 'pos_sidebar', kind: 'selector_exists', selector: '.sidebar', weight: 1.2 },
+      ],
+      negativeSignals: [
+        { id: 'neg_login_btn', kind: 'text_visible', texts: ['登录'], weight: 0.8 },
+      ],
+    };
+
+    jest.spyOn(manager as any, 'evaluateSignal').mockImplementation(async (_page: any, signal: any) => {
+      if (signal.id === 'pos_sidebar') return true;
+      if (signal.id === 'neg_login_btn') return true;
+      return false;
+    });
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const mockPage = { url: jest.fn().mockReturnValue('https://chat.deepseek.com/') } as any;
+
+    const result = await (manager as any).probeLoginStatusOnce('deepseek', mockPage, config);
+
+    expect(result.reasons).toContain('+pos_sidebar');
+    expect(result.reasons).toContain('-neg_login_btn');
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[LoginProbe][deepseek]'));
+
+    logSpy.mockRestore();
+  });
+});
+
 describe('WebDriverError', () => {
   it('应该正确创建错误实例', () => {
     const err = new WebDriverError(
