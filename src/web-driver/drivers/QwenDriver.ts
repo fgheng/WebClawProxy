@@ -75,9 +75,47 @@ export class QwenDriver extends BaseDriver {
       }
 
       // Qwen 支持未登录匿名聊天，不能用“非 /login 页面”判断已登录。
-      // 必须检测到明确的账号态 UI（头像/账户信息）才算登录成功。
-      await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 1500, state: 'visible' });
-      return true;
+      // 优先检测账号态 UI（头像/账户信息）等强信号。
+      try {
+        await this.page.waitForSelector(SELECTORS.loginIndicator, {
+          timeout: 1500,
+          state: 'visible',
+        });
+        return true;
+      } catch {
+        // 兜底判定 1：若输入框可见，说明页面已可正常对话（避免误触发反复登录引导）
+        try {
+          await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 800, state: 'visible' });
+          return true;
+        } catch {
+          // 进入兜底判定 2
+        }
+
+        // 兜底判定 2：如果页面存在明显“登录入口”，视为未登录；否则视为已登录。
+        const hasLoginEntry = await this.page.evaluate(() => {
+          const g = globalThis as any;
+          const doc = g.document as any;
+          const isVisible = (el: any) => {
+            const style = g.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+          };
+
+          const nodes = Array.from(doc.querySelectorAll('a,button,[role="button"],span,div')) as any[];
+          return nodes.some((node) => {
+            if (!isVisible(node)) return false;
+            const text = (node.textContent || '').trim().toLowerCase();
+            if (!text) return false;
+            return /登录|log\s*in|sign\s*in/.test(text);
+          });
+        });
+
+        if (typeof hasLoginEntry !== 'boolean') {
+          return false;
+        }
+
+        return !hasLoginEntry;
+      }
     } catch {
       return false;
     }

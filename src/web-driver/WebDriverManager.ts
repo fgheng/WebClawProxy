@@ -545,7 +545,11 @@ export class WebDriverManager {
           if (i === 2) {
             const page = this.pageMap.get(site);
             if (page) {
-              await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+              const pageUrl = page.url();
+              const shouldRefresh = /\/login|\/signin|passport|aliyun\.com/i.test(pageUrl);
+              if (shouldRefresh) {
+                await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+              }
             }
           }
 
@@ -577,12 +581,16 @@ export class WebDriverManager {
       await new Promise((r) => setTimeout(r, checkInterval));
       checkCount++;
       try {
-        // Qwen 登录后页面有时不会立即反映账号态，每 5 次探测轻量刷新一次主页
+        // Qwen 登录后页面有时不会立即反映账号态；仅在明确处于登录页态时才轻量刷新
         if (site === 'qwen' && checkCount % 5 === 0) {
           const page = this.pageMap.get(site);
           if (page) {
-            await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            await new Promise((r) => setTimeout(r, 300));
+            const pageUrl = page.url();
+            const shouldRefresh = /\/login|\/signin|passport|aliyun\.com/i.test(pageUrl);
+            if (shouldRefresh) {
+              await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+              await new Promise((r) => setTimeout(r, 300));
+            }
           }
         }
 
