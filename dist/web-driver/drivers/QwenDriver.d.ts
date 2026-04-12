@@ -1,6 +1,8 @@
 import { Page } from 'playwright';
 import { BaseDriver } from './BaseDriver';
 export declare class QwenDriver extends BaseDriver {
+    private lastAssistantResponseText;
+    private pendingResponseBaseCount;
     constructor(page: Page, options?: ConstructorParameters<typeof BaseDriver>[2]);
     /**
      * 检查是否已登录
@@ -14,5 +16,12 @@ export declare class QwenDriver extends BaseDriver {
     protected getStopButtonSelector(): string | null;
     protected getResponseAreaSelector(): string | null;
     private dismissDialogs;
+    private getAssistantMessageCount;
+    private getInputText;
+    private waitForDispatch;
+    private tryPrimarySend;
+    private tryFallbackSend;
+    private fillInputRobustly;
+    private isThinkingPlaceholder;
 }
 //# sourceMappingURL=QwenDriver.d.ts.map

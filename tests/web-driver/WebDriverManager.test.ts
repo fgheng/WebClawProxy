@@ -282,6 +282,92 @@ describe('WebDriverError', () => {
   });
 });
 
+describe('QwenDriver 运行态问题回归', () => {
+  it('应跳过“正在思考”占位文本并返回真实回复', async () => {
+    const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
+
+    const thinkingEl = {
+      evaluate: jest.fn().mockResolvedValue('正在思考'),
+    };
+    const finalEl = {
+      evaluate: jest.fn().mockResolvedValue('这是最终回答'),
+    };
+
+    const mockPage = {
+      $$: jest
+        .fn()
+        .mockResolvedValueOnce([thinkingEl])
+        .mockResolvedValueOnce([finalEl]),
+      waitForSelector: jest.fn().mockRejectedValue(new Error('not visible')),
+      evaluate: jest.fn().mockResolvedValue(''),
+      keyboard: { press: jest.fn() },
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/c/abc'),
+      goto: jest.fn(),
+      click: jest.fn(),
+      fill: jest.fn(),
+    } as any;
+
+    const driver = new QwenDriver(mockPage, { responseTimeoutMs: 2000 });
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+
+    const content = await driver.extractResponse();
+    expect(content).toBe('这是最终回答');
+  });
+
+  it('输入框未清空时不应在 sendMessage 阶段直接抛错', async () => {
+    const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
+
+    const mockPage = {
+      $$: jest.fn().mockResolvedValue([]),
+      waitForSelector: jest
+        .fn()
+        // 输入框可见（sendMessage 起始检查）
+        .mockResolvedValueOnce({})
+        // 发送按钮不可见
+        .mockRejectedValue(new Error('not visible')),
+      evaluate: jest.fn().mockResolvedValue('原问题仍在输入框'),
+      keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/c/abc'),
+      goto: jest.fn(),
+      click: jest.fn(),
+      fill: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
+    const driver = new QwenDriver(mockPage, { responseTimeoutMs: 2000 });
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+
+    await expect(driver.sendMessage('原问题仍在输入框')).resolves.toBeUndefined();
+  });
+
+  it('当未检测到新回复时应抛出提取失败', async () => {
+    const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
+
+    const oldEl = {
+      evaluate: jest.fn().mockResolvedValue('上一轮回复'),
+    };
+
+    const mockPage = {
+      $$: jest.fn().mockResolvedValue([oldEl]),
+      waitForSelector: jest.fn().mockRejectedValue(new Error('not visible')),
+      evaluate: jest.fn().mockResolvedValue(''),
+      keyboard: { press: jest.fn() },
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/c/abc'),
+      goto: jest.fn(),
+      click: jest.fn(),
+      fill: jest.fn(),
+    } as any;
+
+    const driver = new QwenDriver(mockPage, { responseTimeoutMs: 80 });
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+    (driver as any).lastAssistantResponseText = '上一轮回复';
+    (driver as any).pendingResponseBaseCount = 1;
+
+    await expect(driver.extractResponse()).rejects.toMatchObject({
+      code: 'RESPONSE_EXTRACTION_FAILED',
+    });
+  });
+});
+
 describe('Driver URL 验证', () => {
   // 直接测试驱动类的 isValidConversationUrl 方法（通过类实例化测试）
   it('ChatGPT URL 验证', async () => {

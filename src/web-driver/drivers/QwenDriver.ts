@@ -15,6 +15,13 @@ const SELECTORS = {
   newChatButtonAlt: 'button[class*="new"], [data-testid*="new"]',
   inputArea: 'textarea, [contenteditable="true"]',
   sendButton: 'button[class*="send"], button[type="submit"]',
+  assistantMessage: [
+    '[data-role="assistant"]',
+    '[data-message-role="assistant"]',
+    '[data-author-role="assistant"]',
+    '[class*="message"][class*="assistant"]',
+    '[class*="chat-message"][class*="assistant"]',
+  ].join(', '),
 
   // 停止按钮：使用精确选择器组合，避免 button[class*="stop"] 误匹配无关元素
   stopButton: [
@@ -47,6 +54,9 @@ const SELECTORS = {
 };
 
 export class QwenDriver extends BaseDriver {
+  private lastAssistantResponseText = '';
+  private pendingResponseBaseCount = 0;
+
   constructor(page: Page, options: ConstructorParameters<typeof BaseDriver>[2] = {}) {
     super(page, 'https://chat.qwen.ai/', options);
   }
@@ -112,16 +122,27 @@ export class QwenDriver extends BaseDriver {
   async sendMessage(text: string): Promise<void> {
     try {
       await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
-      await this.page.fill(SELECTORS.inputArea, text);
-      await this.sleep(300);
 
-      // 尝试点击发送按钮
-      try {
-        await this.page.waitForSelector(SELECTORS.sendButton, { timeout: 3000, state: 'visible' });
-        await this.page.click(SELECTORS.sendButton);
-      } catch {
-        // 备用：按 Enter 发送
-        await this.page.keyboard.press('Enter');
+      const beforeCount = await this.getAssistantMessageCount();
+      this.pendingResponseBaseCount = beforeCount;
+
+      await this.fillInputRobustly(text);
+      await this.sleep(200);
+
+      // 首轮发送尝试：点击发送按钮 -> Enter
+      await this.tryPrimarySend();
+
+      let dispatched = await this.waitForDispatch(text, beforeCount, 2500);
+
+      // 二次兜底：Ctrl/Cmd+Enter，再确认一次
+      if (!dispatched) {
+        await this.tryFallbackSend();
+        dispatched = await this.waitForDispatch(text, beforeCount, 2000);
+      }
+
+      // 注意：Qwen 某些版本发送后输入框不会立即清空，不能在此直接判失败
+      if (!dispatched) {
+        console.warn('[QwenDriver] dispatch confirmation not observed immediately, continue to response waiting');
       }
     } catch (err) {
       if (err instanceof WebDriverError) throw err;
@@ -135,43 +156,65 @@ export class QwenDriver extends BaseDriver {
 
   async extractResponse(): Promise<string> {
     try {
-      // 优先通过 data-role 属性精确定位助手消息（最可靠）
-      let responseElements = await this.page.$$(
-        '[data-role="assistant"], [data-message-role="assistant"], [data-author-role="assistant"]'
+      const deadline = Date.now() + Math.min(this.responseTimeoutMs, 30000);
+
+      while (Date.now() < deadline) {
+        // 优先通过 data-role 属性精确定位助手消息（最可靠）
+        let responseElements = await this.page.$$(SELECTORS.assistantMessage);
+
+        // 备用：通过 responseArea 选择器
+        if (responseElements.length === 0) {
+          responseElements = await this.page.$$(SELECTORS.responseArea);
+        }
+
+        if (responseElements.length === 0) {
+          await this.sleep(300);
+          continue;
+        }
+
+        const currentCount = responseElements.length;
+        const latestFirst = [...responseElements].reverse();
+
+        let picked = '';
+        for (const candidate of latestFirst) {
+          const content = await candidate.evaluate((el: any) => {
+            // 过滤思维链（通常在 details 或特定 class 中）
+            const thinkEls = el.querySelectorAll('details, [class*="think"], [class*="reasoning"]');
+            thinkEls.forEach((e: any) => e.remove());
+
+            // 优先取 markdown 渲染区域
+            const mdEl = el.querySelector('[class*="markdown"], [class*="content"]');
+            const raw = mdEl ? mdEl.textContent || '' : el.textContent || '';
+            return raw.replace(/\s+/g, ' ').trim();
+          });
+
+          if (!content) continue;
+          if (this.isThinkingPlaceholder(content)) continue;
+          picked = content;
+          break;
+        }
+
+        // 还没产出最终回复，继续等
+        if (!picked) {
+          await this.sleep(400);
+          continue;
+        }
+
+        // 防止拿到上一轮旧回复
+        if (currentCount <= this.pendingResponseBaseCount && picked === this.lastAssistantResponseText) {
+          await this.sleep(300);
+          continue;
+        }
+
+        this.lastAssistantResponseText = picked;
+        this.pendingResponseBaseCount = currentCount;
+        return picked;
+      }
+
+      throw new WebDriverError(
+        WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
+        'Qwen 尚未产出可用最终回复（可能仍在思考或发送未生效）'
       );
-
-      // 备用：通过 responseArea 选择器
-      if (responseElements.length === 0) {
-        responseElements = await this.page.$$(SELECTORS.responseArea);
-      }
-
-      if (responseElements.length === 0) {
-        throw new WebDriverError(
-          WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
-          'Qwen 未找到响应元素'
-        );
-      }
-
-      const lastResponse = responseElements[responseElements.length - 1];
-      const content = await lastResponse.evaluate((el: any) => {
-        // 过滤思维链（通常在 details 或特定 class 中）
-        const thinkEls = el.querySelectorAll('details, [class*="think"], [class*="reasoning"]');
-        thinkEls.forEach((e: any) => e.remove());
-
-        // 优先取 markdown 渲染区域
-        const mdEl = el.querySelector('[class*="markdown"], [class*="content"]');
-        if (mdEl) return mdEl.textContent?.trim() || '';
-        return el.textContent?.trim() || '';
-      });
-
-      if (!content) {
-        throw new WebDriverError(
-          WebDriverErrorCode.RESPONSE_EXTRACTION_FAILED,
-          'Qwen 响应内容为空'
-        );
-      }
-
-      return content;
     } catch (err) {
       if (err instanceof WebDriverError) throw err;
       throw new WebDriverError(
@@ -201,5 +244,123 @@ export class QwenDriver extends BaseDriver {
     } catch {
       // 忽略
     }
+  }
+
+  private async getAssistantMessageCount(): Promise<number> {
+    const primary = await this.page.$$(SELECTORS.assistantMessage);
+    if (primary.length > 0) return primary.length;
+    const fallback = await this.page.$$(SELECTORS.responseArea);
+    return fallback.length;
+  }
+
+  private async getInputText(): Promise<string> {
+    return this.page.evaluate(([selector]: [string]) => {
+      const el = (globalThis as any).document.querySelector(selector as string);
+      if (!el) return '';
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'TEXTAREA' || tag === 'INPUT') return (el.value || '').trim();
+      return (el.textContent || '').trim();
+    }, [SELECTORS.inputArea] as [string]);
+  }
+
+  private async waitForDispatch(text: string, beforeCount: number, timeoutMs: number): Promise<boolean> {
+    const start = Date.now();
+    const normalizedText = text.replace(/\s+/g, ' ').trim();
+
+    while (Date.now() - start < timeoutMs) {
+      await this.sleep(200);
+
+      const currentInput = (await this.getInputText()).replace(/\s+/g, ' ').trim();
+      const currentCount = await this.getAssistantMessageCount();
+      const stopVisible = await this.page
+        .waitForSelector(SELECTORS.stopButton, { timeout: 250, state: 'visible' })
+        .then(() => true)
+        .catch(() => false);
+
+      if (stopVisible || currentCount > beforeCount) {
+        return true;
+      }
+
+      // 输入框内容发生变化，也视为发送动作已触发
+      if (normalizedText && currentInput !== normalizedText) {
+        return true;
+      }
+    }
+
+    const finalInput = (await this.getInputText()).replace(/\s+/g, ' ').trim();
+    return normalizedText ? finalInput !== normalizedText : false;
+  }
+
+  private async tryPrimarySend(): Promise<void> {
+    try {
+      await this.page.waitForSelector(SELECTORS.sendButton, { timeout: 2000, state: 'visible' });
+      await this.page.click(SELECTORS.sendButton);
+      return;
+    } catch {
+      // ignore
+    }
+
+    try {
+      await this.page.keyboard.press('Enter');
+    } catch {
+      // ignore
+    }
+  }
+
+  private async tryFallbackSend(): Promise<void> {
+    try {
+      await this.page.keyboard.press('Control+Enter');
+    } catch {
+      // ignore
+    }
+
+    try {
+      await this.page.keyboard.press('Meta+Enter');
+    } catch {
+      // ignore
+    }
+
+    try {
+      await this.page.keyboard.press('Enter');
+    } catch {
+      // ignore
+    }
+  }
+
+  private async fillInputRobustly(text: string): Promise<void> {
+    await this.page.fill(SELECTORS.inputArea, text);
+
+    // 某些 contenteditable 场景下 fill 后不会触发框架监听，补发 input/change 事件
+    await this.page.evaluate(([selector, value]: [string, string]) => {
+      const el = (globalThis as any).document.querySelector(selector as string);
+      if (!el) return;
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'TEXTAREA' || tag === 'INPUT') {
+        (el as any).value = value;
+      } else {
+        (el as any).textContent = value;
+      }
+      el.dispatchEvent(new (globalThis as any).Event('input', { bubbles: true }));
+      el.dispatchEvent(new (globalThis as any).Event('change', { bubbles: true }));
+    }, [SELECTORS.inputArea, text] as [string, string]);
+  }
+
+  private isThinkingPlaceholder(content: string): boolean {
+    const normalized = content.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!normalized) return true;
+
+    const exactPlaceholders = new Set([
+      '正在思考',
+      '思考中',
+      'thinking',
+      'thinking...',
+      'thinking…',
+      '正在思考中',
+    ]);
+
+    if (exactPlaceholders.has(normalized)) return true;
+    if (/^正在思考[\.。…]*$/.test(content.trim())) return true;
+    if (/^思考中[\.。…]*$/.test(content.trim())) return true;
+    return false;
   }
 }
