@@ -461,6 +461,42 @@ describe('DataManager', () => {
       expect(dm.get_web_url()).toBe('');
     });
 
+    it('前缀 hash 不应复用旧会话：旧会话推进后，新的同首句请求应创建新会话', async () => {
+      const req1: InternalRequest = {
+        model: 'gpt-4o',
+        system: 'You are a helpful assistant.',
+        history: [],
+        tools: [],
+        current: { role: 'user', content: 'user_content1' },
+      };
+
+      const dm1 = createTestDataManager(req1);
+      await dm1.save_data();
+      dm1.update_web_url('https://chat.deepseek.com/a/chat/s/old-session');
+      const firstSessionPath = dm1.DATA_PATH;
+
+      // 推进到新 hash（u1 -> u1,u2）
+      dm1.update_current({ role: 'assistant', content: 'assistant_reply1' });
+      await dm1.save_data();
+      dm1.update_current({ role: 'user', content: 'user_content2' });
+      await dm1.save_data();
+
+      const req2: InternalRequest = {
+        model: 'gpt-4o',
+        system: 'You are a helpful assistant.',
+        history: [],
+        tools: [],
+        current: { role: 'user', content: 'user_content1' },
+      };
+
+      const dm2 = createTestDataManager(req2);
+      await dm2.save_data();
+
+      expect(dm2.get_web_url()).toBe('');
+      expect(dm2.is_linked()).toBe(false);
+      expect(dm2.DATA_PATH).not.toBe(firstSessionPath);
+    });
+
     it('update_web_url 后应该能通过 get_web_url 获取到', async () => {
       const dm = createTestDataManager();
       await dm.save_data();

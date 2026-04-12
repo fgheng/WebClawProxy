@@ -19,10 +19,11 @@ export declare class DataManager {
     set_trace_id(traceId: string): void;
     /**
      * 计算 hash key 并更新 DATA_PATH。
-     * 使用“索引映射模式”：目录由首次会话创建日期生成，hash 演进复用同一 session_dir。
+     * 索引策略：每个 session 仅保留 latest_hash，不保留历史 hash 的可匹配入口。
      */
     update_hash_key(options?: {
         inheritFromHash?: string;
+        forceNewSession?: boolean;
     }): void;
     /**
      * 判断当前 hash 是否已与 Web 建立链接（由 session-index 决定）
@@ -34,15 +35,15 @@ export declare class DataManager {
      */
     save_data(): Promise<void>;
     /**
-     * 获取最新 Web session URL（同一 hash 可映射多个 web_url，取最后一个）
+     * 获取最新 Web session URL（同一 session 可映射多个 web_url，取最后一个）
      */
     get_web_url(): string;
     /**
-     * 追加新的 Web URL 到当前 hash 映射列表，并标记 linked
+     * 追加新的 Web URL 到当前 session 映射列表，并标记 linked
      */
     update_web_url(url: string): void;
     /**
-     * 取消当前 hash 的链接状态（保留历史 web_urls）
+     * 取消当前 hash 对应 session 的链接状态（保留历史 web_urls）
      */
     cancel_linked(): void;
     update_current(current: Message): void;
@@ -90,13 +91,14 @@ export declare class DataManager {
     private resolveDataPath;
     private generateSessionDirName;
     private loadSessionIndex;
+    private normalizeSessionIndex;
     private saveSessionIndex;
     private pruneSessionIndex;
-    private defaultSessionIndexEntry;
-    private ensureHashIndexEntry;
-    private getSessionIndexEntry;
-    private updateSessionIndexEntry;
-    private inheritSessionIndex;
+    private defaultSessionEntry;
+    private getSessionDirByHash;
+    private getSessionEntryByHash;
+    private bindLatestHash;
+    private updateSessionEntryByHash;
     private logDataTrace;
 }
 //# sourceMappingURL=DataManager.d.ts.map

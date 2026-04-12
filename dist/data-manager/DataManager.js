@@ -114,7 +114,7 @@ class DataManager {
     }
     /**
      * 计算 hash key 并更新 DATA_PATH。
-     * 使用“索引映射模式”：目录由首次会话创建日期生成，hash 演进复用同一 session_dir。
+     * 索引策略：每个 session 仅保留 latest_hash，不保留历史 hash 的可匹配入口。
      */
     update_hash_key(options) {
         const newHashKey = (0, hash_1.computeHashKey)(this.system, this.history, this.tools);
@@ -127,18 +127,11 @@ class DataManager {
             inherit_from: options?.inheritFromHash ?? '-',
         });
         this.HASH_KEY = newHashKey;
-        this.ensureHashIndexEntry(newHashKey);
         const inheritFromHash = options?.inheritFromHash;
-        if (inheritFromHash && inheritFromHash !== newHashKey) {
-            this.inheritSessionIndex(inheritFromHash, newHashKey);
-        }
-        else if (oldHashKey && oldHashKey !== newHashKey) {
-            // 默认也做一次继承，确保 hash 演进链不断
-            this.inheritSessionIndex(oldHashKey, newHashKey);
-        }
-        const entry = this.getSessionIndexEntry(newHashKey);
-        const sessionDir = entry?.session_dir ?? this.generateSessionDirName();
+        this.bindLatestHash(newHashKey, inheritFromHash && inheritFromHash !== newHashKey ? inheritFromHash : undefined, Boolean(options?.forceNewSession));
+        const sessionDir = this.getSessionDirByHash(newHashKey) ?? this.generateSessionDirName();
         this.DATA_PATH = this.resolveDataPath(sessionDir);
+        const entry = this.getSessionEntryByHash(newHashKey);
         this.logDataTrace('update_hash_key_done', {
             old_hash: oldHashKey || '-',
             hash_key: this.HASH_KEY,
@@ -152,7 +145,7 @@ class DataManager {
      * 判断当前 hash 是否已与 Web 建立链接（由 session-index 决定）
      */
     is_linked() {
-        const entry = this.getSessionIndexEntry(this.HASH_KEY);
+        const entry = this.getSessionEntryByHash(this.HASH_KEY);
         if (!entry)
             return false;
         return entry.linked && entry.web_urls.length > 0;
@@ -163,6 +156,7 @@ class DataManager {
      */
     async save_data() {
         const oldHash = this.HASH_KEY;
+        const hadUserHistoryBefore = this.history.some((msg) => msg.role === 'user');
         this.logDataTrace('save_data_start', {
             old_hash: oldHash || '-',
             history_count_before: this.history.length,
@@ -173,8 +167,13 @@ class DataManager {
         if (this.current && !this.isSameAsHistoryTail(this.current)) {
             this.history = [...this.history, this.current];
         }
-        // history 变化后，推进 hash 到新键，并继承会话索引（包含 session_dir）
-        this.update_hash_key({ inheritFromHash: oldHash });
+        // history 变化后推进到新 hash。
+        // 仅在“原始 history 已包含 user”场景继承 oldHash；
+        // 若原始 history 为空（首轮），强制新建 session，避免同首句命中旧会话。
+        this.update_hash_key({
+            inheritFromHash: hadUserHistoryBefore ? oldHash : undefined,
+            forceNewSession: !hadUserHistoryBefore,
+        });
         // 在稳定 session_dir 下全量落盘
         this.ensureDataPath();
         fs.writeFileSync(path.join(this.DATA_PATH, 'system'), this.system, 'utf-8');
@@ -188,10 +187,10 @@ class DataManager {
         });
     }
     /**
-     * 获取最新 Web session URL（同一 hash 可映射多个 web_url，取最后一个）
+     * 获取最新 Web session URL（同一 session 可映射多个 web_url，取最后一个）
      */
     get_web_url() {
-        const entry = this.getSessionIndexEntry(this.HASH_KEY);
+        const entry = this.getSessionEntryByHash(this.HASH_KEY);
         if (!entry || entry.web_urls.length === 0) {
             this.logDataTrace('get_web_url_empty', {
                 hash_key: this.HASH_KEY,
@@ -209,7 +208,7 @@ class DataManager {
         return latest;
     }
     /**
-     * 追加新的 Web URL 到当前 hash 映射列表，并标记 linked
+     * 追加新的 Web URL 到当前 session 映射列表，并标记 linked
      */
     update_web_url(url) {
         const normalized = (url ?? '').trim();
@@ -219,7 +218,7 @@ class DataManager {
             hash_key: this.HASH_KEY,
             incoming_url: normalized,
         });
-        this.updateSessionIndexEntry(this.HASH_KEY, (prev) => {
+        this.updateSessionEntryByHash(this.HASH_KEY, (prev) => {
             const nextUrls = [...prev.web_urls, normalized];
             return {
                 ...prev,
@@ -228,7 +227,7 @@ class DataManager {
                 updated_at: new Date().toISOString(),
             };
         });
-        const entry = this.getSessionIndexEntry(this.HASH_KEY);
+        const entry = this.getSessionEntryByHash(this.HASH_KEY);
         this.logDataTrace('update_web_url_done', {
             hash_key: this.HASH_KEY,
             linked: Boolean(entry?.linked),
@@ -237,10 +236,10 @@ class DataManager {
         });
     }
     /**
-     * 取消当前 hash 的链接状态（保留历史 web_urls）
+     * 取消当前 hash 对应 session 的链接状态（保留历史 web_urls）
      */
     cancel_linked() {
-        this.updateSessionIndexEntry(this.HASH_KEY, (prev) => ({
+        this.updateSessionEntryByHash(this.HASH_KEY, (prev) => ({
             ...prev,
             linked: false,
             updated_at: new Date().toISOString(),
@@ -253,11 +252,11 @@ class DataManager {
      * 会话链路可观测信息（用于 controller 调试日志）
      */
     get_session_debug_info() {
-        const entry = this.getSessionIndexEntry(this.HASH_KEY);
+        const entry = this.getSessionEntryByHash(this.HASH_KEY);
         return {
             hash_key: this.HASH_KEY,
             data_path: this.DATA_PATH,
-            session_dir: entry?.session_dir ?? path.basename(this.DATA_PATH || ''),
+            session_dir: this.getSessionDirByHash(this.HASH_KEY) ?? path.basename(this.DATA_PATH || ''),
             linked: Boolean(entry?.linked),
             web_url_count: entry?.web_urls.length ?? 0,
             latest_web_url: entry && entry.web_urls.length > 0
@@ -396,20 +395,59 @@ class DataManager {
     loadSessionIndex() {
         const indexPath = this.getSessionIndexPath();
         if (!fs.existsSync(indexPath)) {
-            return { hashes: {} };
+            return { sessions: {}, latest_hash_to_session: {} };
         }
         try {
             const raw = fs.readFileSync(indexPath, 'utf-8').trim();
             if (!raw)
-                return { hashes: {} };
+                return { sessions: {}, latest_hash_to_session: {} };
             const parsed = JSON.parse(raw);
-            return {
-                hashes: parsed?.hashes ?? {},
-            };
+            return this.normalizeSessionIndex(parsed);
         }
         catch {
-            return { hashes: {} };
+            return { sessions: {}, latest_hash_to_session: {} };
         }
+    }
+    normalizeSessionIndex(parsed) {
+        if (parsed.sessions &&
+            parsed.latest_hash_to_session) {
+            const normalized = {
+                sessions: { ...parsed.sessions },
+                latest_hash_to_session: { ...parsed.latest_hash_to_session },
+            };
+            return this.pruneSessionIndex(normalized);
+        }
+        // 兼容旧结构：{ hashes: Record<hash, { session_dir, ... }> }
+        const legacy = parsed;
+        const hashes = legacy.hashes ?? {};
+        const sessions = {};
+        const latest_hash_to_session = {};
+        const items = Object.entries(hashes).sort((a, b) => {
+            const ta = Date.parse(a[1].updated_at || a[1].created_at || '1970-01-01T00:00:00.000Z');
+            const tb = Date.parse(b[1].updated_at || b[1].created_at || '1970-01-01T00:00:00.000Z');
+            return ta - tb;
+        });
+        for (const [hash, entry] of items) {
+            const sessionDir = entry.session_dir || this.generateSessionDirName();
+            const prev = sessions[sessionDir];
+            const mergedUrls = prev ? [...prev.web_urls] : [];
+            for (const url of entry.web_urls ?? []) {
+                if (!mergedUrls.includes(url))
+                    mergedUrls.push(url);
+            }
+            if (prev?.latest_hash && prev.latest_hash !== hash) {
+                delete latest_hash_to_session[prev.latest_hash];
+            }
+            sessions[sessionDir] = {
+                latest_hash: hash,
+                web_urls: mergedUrls,
+                linked: Boolean(entry.linked) || Boolean(prev?.linked),
+                created_at: prev?.created_at || entry.created_at || new Date().toISOString(),
+                updated_at: entry.updated_at || new Date().toISOString(),
+            };
+            latest_hash_to_session[hash] = sessionDir;
+        }
+        return this.pruneSessionIndex({ sessions, latest_hash_to_session });
     }
     saveSessionIndex(index) {
         const pruned = this.pruneSessionIndex(index);
@@ -418,7 +456,7 @@ class DataManager {
         fs.writeFileSync(indexPath, JSON.stringify(pruned, null, 2), 'utf-8');
         this.logDataTrace('save_session_index', {
             index_path: indexPath,
-            hash_count: Object.keys(pruned.hashes).length,
+            session_count: Object.keys(pruned.sessions).length,
             max_entries: this.config.sessionIndexMaxEntries,
         });
     }
@@ -426,7 +464,7 @@ class DataManager {
         const max = this.config.sessionIndexMaxEntries;
         if (!max || max <= 0)
             return index;
-        const entries = Object.entries(index.hashes);
+        const entries = Object.entries(index.sessions);
         if (entries.length <= max)
             return index;
         entries.sort((a, b) => {
@@ -435,96 +473,97 @@ class DataManager {
             return tb - ta;
         });
         const kept = entries.slice(0, max);
-        const hashes = {};
-        for (const [k, v] of kept) {
-            hashes[k] = v;
+        const sessions = {};
+        const keptSessionSet = new Set();
+        for (const [sessionDir, entry] of kept) {
+            sessions[sessionDir] = entry;
+            keptSessionSet.add(sessionDir);
         }
-        return { hashes };
+        const latest_hash_to_session = {};
+        for (const [hash, sessionDir] of Object.entries(index.latest_hash_to_session)) {
+            if (keptSessionSet.has(sessionDir) && sessions[sessionDir]?.latest_hash === hash) {
+                latest_hash_to_session[hash] = sessionDir;
+            }
+        }
+        return { sessions, latest_hash_to_session };
     }
-    defaultSessionIndexEntry(sessionDir) {
+    defaultSessionEntry(latestHash, base) {
         const nowIso = new Date().toISOString();
         return {
-            session_dir: sessionDir ?? this.generateSessionDirName(),
-            web_urls: [],
-            linked: false,
-            created_at: nowIso,
+            latest_hash: latestHash,
+            web_urls: base?.web_urls ?? [],
+            linked: base?.linked ?? false,
+            created_at: base?.created_at ?? nowIso,
+            updated_at: base?.updated_at ?? nowIso,
+        };
+    }
+    getSessionDirByHash(hash) {
+        const index = this.loadSessionIndex();
+        return index.latest_hash_to_session[hash];
+    }
+    getSessionEntryByHash(hash) {
+        const index = this.loadSessionIndex();
+        const sessionDir = index.latest_hash_to_session[hash];
+        if (!sessionDir)
+            return undefined;
+        return index.sessions[sessionDir];
+    }
+    bindLatestHash(newHash, inheritFromHash, forceNewSession = false) {
+        const index = this.loadSessionIndex();
+        const nowIso = new Date().toISOString();
+        let targetSessionDir;
+        if (inheritFromHash) {
+            targetSessionDir = index.latest_hash_to_session[inheritFromHash];
+            if (targetSessionDir) {
+                delete index.latest_hash_to_session[inheritFromHash];
+            }
+        }
+        if (!targetSessionDir && !forceNewSession) {
+            targetSessionDir = index.latest_hash_to_session[newHash];
+        }
+        if (!targetSessionDir) {
+            targetSessionDir = this.generateSessionDirName();
+        }
+        const prev = index.sessions[targetSessionDir] ?? this.defaultSessionEntry(newHash);
+        if (prev.latest_hash && prev.latest_hash !== newHash) {
+            delete index.latest_hash_to_session[prev.latest_hash];
+        }
+        index.sessions[targetSessionDir] = {
+            ...prev,
+            latest_hash: newHash,
             updated_at: nowIso,
+            created_at: prev.created_at || nowIso,
         };
-    }
-    ensureHashIndexEntry(hash) {
-        const index = this.loadSessionIndex();
-        if (!index.hashes[hash]) {
-            index.hashes[hash] = this.defaultSessionIndexEntry();
-            this.saveSessionIndex(index);
-            this.logDataTrace('ensure_hash_index_entry_created', {
-                hash_key: hash,
-                session_dir: index.hashes[hash].session_dir,
-            });
-            return;
-        }
-        this.logDataTrace('ensure_hash_index_entry_exists', {
-            hash_key: hash,
-            session_dir: index.hashes[hash].session_dir,
-            linked: index.hashes[hash].linked,
-            web_url_count: index.hashes[hash].web_urls.length,
+        index.latest_hash_to_session[newHash] = targetSessionDir;
+        this.saveSessionIndex(index);
+        this.logDataTrace('bind_latest_hash_done', {
+            new_hash: newHash,
+            inherited_from: inheritFromHash ?? '-',
+            force_new_session: forceNewSession,
+            session_dir: targetSessionDir,
+            linked: index.sessions[targetSessionDir].linked,
+            web_url_count: index.sessions[targetSessionDir].web_urls.length,
         });
     }
-    getSessionIndexEntry(hash) {
+    updateSessionEntryByHash(hash, updater) {
         const index = this.loadSessionIndex();
-        return index.hashes[hash];
-    }
-    updateSessionIndexEntry(hash, updater) {
-        const index = this.loadSessionIndex();
-        const prev = index.hashes[hash] ?? this.defaultSessionIndexEntry();
+        const nowIso = new Date().toISOString();
+        let sessionDir = index.latest_hash_to_session[hash];
+        if (!sessionDir) {
+            sessionDir = this.generateSessionDirName();
+            index.latest_hash_to_session[hash] = sessionDir;
+            index.sessions[sessionDir] = this.defaultSessionEntry(hash);
+        }
+        const prev = index.sessions[sessionDir] ?? this.defaultSessionEntry(hash);
         const next = updater(prev);
-        index.hashes[hash] = {
+        index.sessions[sessionDir] = {
             ...next,
-            session_dir: next.session_dir || prev.session_dir || this.generateSessionDirName(),
-            created_at: next.created_at || prev.created_at || new Date().toISOString(),
-            updated_at: next.updated_at || new Date().toISOString(),
+            latest_hash: hash,
+            created_at: next.created_at || prev.created_at || nowIso,
+            updated_at: next.updated_at || nowIso,
         };
+        index.latest_hash_to_session[hash] = sessionDir;
         this.saveSessionIndex(index);
-    }
-    inheritSessionIndex(fromHash, toHash) {
-        if (!fromHash || !toHash || fromHash === toHash)
-            return;
-        const index = this.loadSessionIndex();
-        const fromEntry = index.hashes[fromHash];
-        if (!fromEntry) {
-            if (!index.hashes[toHash]) {
-                index.hashes[toHash] = this.defaultSessionIndexEntry();
-            }
-            this.saveSessionIndex(index);
-            this.logDataTrace('inherit_session_index_miss_from_hash', {
-                from_hash: fromHash,
-                to_hash: toHash,
-                to_session_dir: index.hashes[toHash].session_dir,
-            });
-            return;
-        }
-        const toEntry = index.hashes[toHash] ?? this.defaultSessionIndexEntry(fromEntry.session_dir);
-        const mergedUrls = [...toEntry.web_urls];
-        for (const url of fromEntry.web_urls) {
-            if (!mergedUrls.includes(url)) {
-                mergedUrls.push(url);
-            }
-        }
-        index.hashes[toHash] = {
-            session_dir: fromEntry.session_dir,
-            web_urls: mergedUrls,
-            linked: toEntry.linked || fromEntry.linked,
-            created_at: fromEntry.created_at,
-            updated_at: new Date().toISOString(),
-        };
-        this.saveSessionIndex(index);
-        this.logDataTrace('inherit_session_index_done', {
-            from_hash: fromHash,
-            to_hash: toHash,
-            session_dir: fromEntry.session_dir,
-            from_linked: fromEntry.linked,
-            to_linked: index.hashes[toHash].linked,
-            merged_url_count: mergedUrls.length,
-        });
     }
     logDataTrace(stage, payload) {
         try {
