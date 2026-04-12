@@ -69,6 +69,7 @@ export declare class WebDriverManager {
      */
     private getOrCreateDriver;
     private ensureLoggedIn;
+    private clearLoginHintOverlay;
     private loadLoginProbeConfig;
     private probeLoginStatusWithStability;
     private probeLoginStatusOnce;

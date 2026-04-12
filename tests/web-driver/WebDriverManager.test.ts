@@ -170,6 +170,77 @@ describe('LoginProbe 策略引擎', () => {
   });
 });
 
+describe('ensureLoggedIn 提示层清理', () => {
+  let manager: WebDriverManager;
+
+  beforeEach(() => {
+    manager = new WebDriverManager({ headless: true });
+    jest.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await manager.close();
+  });
+
+  it('策略判定登录成功后，应清理提示层', async () => {
+    const mockPage = {
+      evaluate: jest.fn().mockResolvedValue(undefined),
+      url: jest.fn().mockReturnValue('https://chatgpt.com/'),
+    } as any;
+
+    (manager as any).pageMap.set('gpt', mockPage);
+
+    jest.spyOn(manager as any, 'loadLoginProbeConfig').mockReturnValue({
+      thresholds: { logged_in: 1, not_logged_in: -1 },
+      stability: { required_consistent_rounds: 1, poll_interval_ms: 1 },
+      positiveSignals: [],
+      negativeSignals: [],
+    });
+
+    jest.spyOn(manager as any, 'probeLoginStatusWithStability').mockResolvedValue({
+      status: 'logged_in',
+      score: 2,
+      reasons: ['+ready'],
+    });
+
+    const mockDriver = { isLoggedIn: jest.fn().mockResolvedValue(false) } as any;
+
+    await (manager as any).ensureLoggedIn('gpt', mockDriver);
+
+    expect(mockPage.evaluate).toHaveBeenCalled();
+    expect(mockDriver.isLoggedIn).not.toHaveBeenCalled();
+  });
+
+  it('兜底判定登录成功后，应清理提示层', async () => {
+    const mockPage = {
+      evaluate: jest.fn().mockResolvedValue(undefined),
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/'),
+    } as any;
+
+    (manager as any).pageMap.set('qwen', mockPage);
+
+    jest.spyOn(manager as any, 'loadLoginProbeConfig').mockReturnValue({
+      thresholds: { logged_in: 1, not_logged_in: -1 },
+      stability: { required_consistent_rounds: 1, poll_interval_ms: 1 },
+      positiveSignals: [],
+      negativeSignals: [],
+    });
+
+    jest.spyOn(manager as any, 'probeLoginStatusWithStability').mockResolvedValue({
+      status: 'unknown',
+      score: 0,
+      reasons: [],
+    });
+
+    const mockDriver = { isLoggedIn: jest.fn().mockResolvedValue(true) } as any;
+
+    await (manager as any).ensureLoggedIn('qwen', mockDriver);
+
+    expect(mockDriver.isLoggedIn).toHaveBeenCalledTimes(1);
+    expect(mockPage.evaluate).toHaveBeenCalled();
+  });
+});
+
 describe('WebDriverError', () => {
   it('应该正确创建错误实例', () => {
     const err = new WebDriverError(

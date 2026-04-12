@@ -551,12 +551,14 @@ export class WebDriverManager {
     const probeConfig = this.loadLoginProbeConfig(site);
     const stableProbe = await this.probeLoginStatusWithStability(site, page, probeConfig);
     if (stableProbe.status === 'logged_in') {
+      await this.clearLoginHintOverlay(page);
       return;
     }
 
     // 保留原站点驱动判定作为兜底（兼容配置尚未覆盖的站点细节）
     const fallbackLoggedIn = await driver.isLoggedIn();
     if (fallbackLoggedIn) {
+      await this.clearLoginHintOverlay(page);
       return;
     }
 
@@ -577,6 +579,7 @@ export class WebDriverManager {
       const roundProbe = await this.probeLoginStatusWithStability(site, latestPage, probeConfig);
       if (roundProbe.status === 'logged_in') {
         console.log(`[WebDriver] ${site} 登录成功（策略判定）`);
+        await this.clearLoginHintOverlay(latestPage);
         return;
       }
 
@@ -584,6 +587,7 @@ export class WebDriverManager {
         const fallback = await driver.isLoggedIn();
         if (fallback) {
           console.log(`[WebDriver] ${site} 登录成功（驱动兜底判定）`);
+          await this.clearLoginHintOverlay(latestPage);
           return;
         }
       } catch {
@@ -595,6 +599,18 @@ export class WebDriverManager {
       WebDriverErrorCode.NOT_LOGGED_IN,
       `等待登录超时（5分钟），请重新尝试`
     );
+  }
+
+  private async clearLoginHintOverlay(page: Page): Promise<void> {
+    try {
+      await page.evaluate(() => {
+        const doc = (globalThis as any).document;
+        const existed = doc?.getElementById?.('__webclaw_hint__');
+        if (existed) existed.remove();
+      });
+    } catch {
+      // 清理提示层失败不影响主流程
+    }
   }
 
   private loadLoginProbeConfig(site: SiteKey): LoginProbeConfig {
