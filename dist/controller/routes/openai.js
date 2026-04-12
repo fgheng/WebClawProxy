@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.preflightWebDriverSites = preflightWebDriverSites;
 exports.chatCompletionsHandler = chatCompletionsHandler;
 exports.listModelsHandler = listModelsHandler;
 const protocol_1 = require("../../protocol");
@@ -40,6 +41,7 @@ const DataManager_1 = require("../../data-manager/DataManager");
 const WebDriverManager_1 = require("../../web-driver/WebDriverManager");
 const types_1 = require("../../web-driver/types");
 const types_2 = require("../../protocol/types");
+const logger_1 = require("../logger");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 // 加载配置
@@ -47,6 +49,12 @@ const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 const protocol = new protocol_1.OpenAIProtocol();
 const webDriver = new WebDriverManager_1.WebDriverManager();
+async function preflightWebDriverSites() {
+    const siteKeys = Object.keys(config.sites ?? {});
+    if (siteKeys.length === 0)
+        return;
+    await webDriver.preflightConfiguredSites(siteKeys);
+}
 /**
  * 根据模型名称推断使用哪个网站
  * 优先查找配置文件中的 models 映射，再根据大类选择 site
@@ -91,7 +99,7 @@ function normalizeJsonLike(input) {
     const trimmed = input.trim();
     if (!trimmed)
         return null;
-    const normalizedInput = normalizeJsonArtifacts(trimmed);
+    const normalizedInput = repairMalformedToolCallArguments(normalizeJsonArtifacts(trimmed));
     // 先尝试严格 JSON
     try {
         const obj = JSON.parse(normalizedInput);
@@ -111,22 +119,47 @@ function normalizeJsonLike(input) {
         return null;
     }
 }
+function repairMalformedToolCallArguments(text) {
+    // 兼容部分模型输出："arguments": "{"path":"downloads/player.txt"}"
+    // 这种写法内部引号未转义，属于非法 JSON；这里做定向修复。
+    return text.replace(/("arguments"\s*:\s*)"\{([\s\S]*?)\}"/g, (_all, prefix, inner) => {
+        // 已经是合法转义（如 {\"path\":\"a\"}）时不再二次处理
+        if (/\\"/.test(inner)) {
+            return _all;
+        }
+        const raw = `{${inner}}`;
+        const escaped = raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return `${prefix}"${escaped}"`;
+    });
+}
 /**
  * 清理常见网页渲染噪声，提升 JSON 识别稳定性
  */
 function normalizeJsonArtifacts(text) {
-    const noBomAndInvisible = text.replace(/^\uFEFF/, '').replace(/[\u200B-\u200D\uFEFF]/g, '');
+    const noBomAndInvisible = text
+        .replace(/^\uFEFF/, '')
+        .replace(/[\u200B-\u200D\uFEFF\u2060]/g, '')
+        .replace(/[\u00A0\u202F]/g, ' ');
     // 兼容“代码块行号”场景（如: "12  \"key\": \"value\"")
     const withoutLineNumbers = noBomAndInvisible
         .split('\n')
         .map((line) => line.replace(/^\s*\d+\s+(?=[\[{\]}",\-\w])/, ''))
         .join('\n');
+    // 清理常见代码块噪声行（不影响 JSON 字符串内容）
+    const withoutUiNoise = withoutLineNumbers
+        .split('\n')
+        .filter((line) => !/^\s*(copy code|复制代码|jsonc?|javascript|js|typescript|ts)\s*$/i.test(line.trim()))
+        .join('\n');
     // 统一常见全角标点/引号（部分站点 markdown 渲染会出现）
-    return withoutLineNumbers
+    return withoutUiNoise
         .replace(/[“”]/g, '"')
         .replace(/[‘’]/g, "'")
         .replace(/，/g, ',')
-        .replace(/：/g, ':');
+        .replace(/：/g, ':')
+        .replace(/｛/g, '{')
+        .replace(/｝/g, '}')
+        .replace(/［/g, '[')
+        .replace(/］/g, ']');
 }
 /**
  * 移除 JSONC 注释（保留字符串内部内容）
@@ -282,10 +315,10 @@ function extractJson(content) {
     const candidates = [];
     // 1) 整体内容
     candidates.push(content);
-    // 2) code fence（可能多个）
-    const codeBlocks = content.match(/```(?:json|jsonc)?\s*\n?([\s\S]*?)\n?```/gi) || [];
+    // 2) code fence（可能多个，语言标记不限）
+    const codeBlocks = content.match(/```[^\n`]*\s*\n?([\s\S]*?)\n?```/g) || [];
     for (const block of codeBlocks) {
-        const m = block.match(/```(?:json|jsonc)?\s*\n?([\s\S]*?)\n?```/i);
+        const m = block.match(/```[^\n`]*\s*\n?([\s\S]*?)\n?```/);
         if (m?.[1])
             candidates.push(m[1]);
     }
@@ -427,6 +460,10 @@ async function chatCompletionsHandler(req, res, next) {
             remote_ip: req.ip,
             session_header: req.headers['x-session-id'] ?? '',
         });
+        (0, logger_1.logDebug)('chat_completions_request_body', {
+            trace_id: traceId,
+            body_preview: JSON.stringify(requestBody ?? {}).slice(0, 5000),
+        });
         // ===== Step 1: 解析协议 =====
         let internalReq;
         try {
@@ -449,6 +486,7 @@ async function chatCompletionsHandler(req, res, next) {
         const dm = new DataManager_1.DataManager(internalReq);
         dm.set_trace_id(traceId);
         logSessionTrace('init_dm', dm, traceId);
+        const initPrompt = dm.get_init_prompt_for_new_session();
         // ===== Step 3: 保存数据 =====
         await dm.save_data();
         logSessionTrace('after_save_request', dm, traceId);
@@ -458,7 +496,6 @@ async function chatCompletionsHandler(req, res, next) {
         let sessionUrl;
         const initializeConversationAndBind = async () => {
             logSessionTrace('before_init_conversation', dm, traceId);
-            const initPrompt = dm.get_init_prompt();
             let initResult;
             try {
                 initResult = await webDriver.initConversation(site, initPrompt);
@@ -579,7 +616,8 @@ async function chatCompletionsHandler(req, res, next) {
         const maxRetries = 2;
         let retryCount = 0;
         while (!parsedJson && !upstreamError && retryCount < maxRetries) {
-            console.log(`[Controller] 模型未返回 JSON 格式，重新发送（第 ${retryCount + 1} 次）...`);
+            console.log(`[Controller] 模型未返回 JSON 格式，重新发送（第 ${retryCount + 1} 次）... ` +
+                `preview=${responseContent.slice(0, 160).replace(/\s+/g, ' ')}`);
             const templatePrompt = dm.get_current_prompt_with_template();
             try {
                 const retryResult = await webDriver.chat(site, sessionUrl, templatePrompt);
@@ -597,38 +635,48 @@ async function chatCompletionsHandler(req, res, next) {
             logRequestTrace(traceId, 'upstream_error_detected', upstreamError);
             return;
         }
-        // ===== Step 8: 更新 DataManager =====
-        const assistantMessage = {
-            role: 'assistant',
-            content: parsedJson ?? responseContent,
-        };
-        dm.update_current(assistantMessage);
-        await dm.save_data();
-        logSessionTrace('after_save_assistant', dm, traceId);
-        // ===== Step 9: 构造并返回响应 =====
-        // 统一通过 protocol.format 返回 OpenAI 格式
+        // ===== Step 8: 更新 DataManager 与响应载荷（共用同一个解析对象） =====
+        let parsedChoiceObj = null;
         let messagePayload = {
             content: responseContent,
         };
         if (parsedJson) {
             try {
                 const jsonResponse = JSON.parse(parsedJson);
-                messagePayload = {
-                    content: jsonResponse?.choices?.[0]?.message?.content ??
-                        jsonResponse?.message?.content ??
-                        jsonResponse?.content ??
-                        responseContent,
-                    tool_calls: jsonResponse?.choices?.[0]?.message?.tool_calls ??
-                        jsonResponse?.message?.tool_calls ??
-                        jsonResponse?.tool_calls,
-                    finish_reason: jsonResponse?.choices?.[0]?.finish_reason ??
-                        jsonResponse?.finish_reason,
-                };
+                parsedChoiceObj = jsonResponse?.choices?.[0] ?? jsonResponse;
+                if (parsedChoiceObj?.message && typeof parsedChoiceObj.message === 'object') {
+                    dm.update_current(parsedChoiceObj.message);
+                    messagePayload = {
+                        content: parsedChoiceObj.message.content ?? responseContent,
+                        tool_calls: parsedChoiceObj.message.tool_calls,
+                        finish_reason: parsedChoiceObj.finish_reason,
+                    };
+                }
+                else {
+                    dm.update_current({
+                        role: 'assistant',
+                        content: responseContent,
+                    });
+                }
             }
             catch {
                 // JSON 解析失败，回退到纯文本包装
+                dm.update_current({
+                    role: 'assistant',
+                    content: responseContent,
+                });
             }
         }
+        else {
+            dm.update_current({
+                role: 'assistant',
+                content: responseContent,
+            });
+        }
+        await dm.save_data();
+        logSessionTrace('after_save_assistant', dm, traceId);
+        // ===== Step 9: 构造并返回响应 =====
+        // 统一通过 protocol.format 返回 OpenAI 格式（与 DataManager 共用同源解析对象）
         const formattedResponse = protocol.format(internalReq.model, messagePayload, dm.get_usage().usage);
         logRequestTrace(traceId, 'response_ready', {
             model: internalReq.model,
@@ -637,6 +685,10 @@ async function chatCompletionsHandler(req, res, next) {
             prompt_tokens: formattedResponse.usage?.prompt_tokens ?? 0,
             completion_tokens: formattedResponse.usage?.completion_tokens ?? 0,
             total_tokens: formattedResponse.usage?.total_tokens ?? 0,
+        });
+        (0, logger_1.logDebug)('chat_completions_response_payload', {
+            trace_id: traceId,
+            response_preview: JSON.stringify(formattedResponse).slice(0, 5000),
         });
         res.json(formattedResponse);
     }

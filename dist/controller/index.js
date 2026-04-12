@@ -36,10 +36,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const server_1 = require("./server");
+const openai_1 = require("./routes/openai");
+const logger_1 = require("./logger");
 // 加载配置
 const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : (config.server?.port ?? 3000);
+(0, logger_1.initServiceLogger)();
 const app = (0, server_1.createApp)();
 app.listen(PORT, () => {
     console.log(`
@@ -54,6 +57,14 @@ app.listen(PORT, () => {
 ║  GET  /health                            ║
 ╚══════════════════════════════════════════╝
   `);
+    // 启动后先执行站点登录预检（不阻塞服务端口监听）
+    void (0, openai_1.preflightWebDriverSites)()
+        .then(() => {
+        console.log('[Startup] 站点登录预检完成');
+    })
+        .catch((err) => {
+        console.warn('[Startup] 站点登录预检失败，请按提示在浏览器登录：', err instanceof Error ? err.message : err);
+    });
 });
 exports.default = app;
 //# sourceMappingURL=index.js.map

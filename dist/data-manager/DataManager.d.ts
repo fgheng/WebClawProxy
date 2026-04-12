@@ -62,6 +62,12 @@ export declare class DataManager {
     get_current_prompt(): string;
     get_tools_prompt(): string;
     get_init_prompt(): string;
+    /**
+     * 初始化新 web 会话时使用的提示词：
+     * 若 history 尾部恰好是 current（常见于 save_data 已将 current 合并进 history），
+     * 则剔除该尾部，避免“当前轮消息”污染 init_prompt 的历史区块。
+     */
+    get_init_prompt_for_new_session(): string;
     get_usage(): {
         usage: {
             prompt_tokens: number;
@@ -80,6 +86,7 @@ export declare class DataManager {
     private generateSessionDirName;
     private loadSessionIndex;
     private saveSessionIndex;
+    private pruneSessionIndex;
     private defaultSessionIndexEntry;
     private ensureHashIndexEntry;
     private getSessionIndexEntry;

@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createApp = createApp;
 const express_1 = __importDefault(require("express"));
 const openai_1 = require("./routes/openai");
+const logger_1 = require("./logger");
 /**
  * 创建并配置 Express 应用
  */
@@ -17,6 +18,17 @@ function createApp() {
     // 请求日志
     app.use((req, _res, next) => {
         console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+        (0, logger_1.logDebug)('http_request', {
+            method: req.method,
+            path: req.path,
+            query: req.query,
+            headers: {
+                'x-trace-id': req.headers['x-trace-id'] ?? '',
+                'x-session-id': req.headers['x-session-id'] ?? '',
+                authorization_present: Boolean(req.headers.authorization),
+            },
+            body_preview: JSON.stringify(req.body ?? {}).slice(0, 2000),
+        });
         next();
     });
     // CORS（支持各种 AI 客户端）

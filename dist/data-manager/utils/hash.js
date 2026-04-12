@@ -52,14 +52,15 @@ function computeSystemHash(system) {
 }
 /**
  * 计算 history 列表的 rolling hash
- * 逐条累积：hash = sha256(hash + canonicalize(message))
+ * 仅纳入 role=user 的消息：hash = sha256(hash + canonicalize(message))
  */
 function computeHistoryHash(history) {
-    if (history.length === 0) {
+    const userMessages = history.filter((msg) => msg.role === 'user');
+    if (userMessages.length === 0) {
         return sha256Short('');
     }
     let rollingHash = '';
-    for (const msg of history) {
+    for (const msg of userMessages) {
         const canonical = canonicalizeMessage(msg);
         rollingHash = sha256Short(rollingHash + canonical);
     }

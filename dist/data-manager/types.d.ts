@@ -11,6 +11,8 @@ export interface DataManagerConfig {
     jsonTemplate?: string;
     initPromptTemplate?: string;
     currentTemplate?: string;
+    /** session-index 最多保留的 hash 条目数（按 updated_at 取最近） */
+    sessionIndexMaxEntries?: number;
 }
 /**
  * 模型分类信息

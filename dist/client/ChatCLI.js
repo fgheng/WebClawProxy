@@ -287,6 +287,19 @@ class ChatCLI {
         console.log((0, display_1.colorize)('  └────────────────────────────────────────────────', 'magenta'));
         console.log();
     }
+    printToolCalls(toolCalls) {
+        if (!toolCalls || toolCalls.length === 0)
+            return;
+        console.log((0, display_1.colorize)('  ┌─ ', 'yellow') +
+            (0, display_1.colorize)('TOOL_CALLS', 'brightYellow', 'bold') +
+            (0, display_1.colorize)(' ───────────────────────────────────────', 'yellow'));
+        const text = JSON.stringify(toolCalls, null, 2);
+        for (const line of text.split('\n')) {
+            console.log((0, display_1.colorize)('  │ ', 'yellow') + (0, display_1.colorize)(line, 'brightYellow'));
+        }
+        console.log((0, display_1.colorize)('  └────────────────────────────────────────────────', 'yellow'));
+        console.log();
+    }
     printErrorMessage(message) {
         console.log();
         console.log((0, display_1.colorize)('  ✗ 错误：', 'red', 'bold') + (0, display_1.colorize)(message, 'red'));
@@ -302,7 +315,8 @@ class ChatCLI {
             this.roundCount++;
             console.log((0, display_1.colorize)(`  第 ${this.roundCount} 轮`, 'gray') +
                 (0, display_1.colorize)(' ──────────────────────────────────────────────', 'gray'));
-            this.printAssistantMessage(response, this.client.getConfig().model);
+            this.printAssistantMessage(response.content, this.client.getConfig().model);
+            this.printToolCalls(response.tool_calls);
         }
         catch (err) {
             this.stopSpinner();

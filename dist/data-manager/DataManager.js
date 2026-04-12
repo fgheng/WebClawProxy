@@ -78,6 +78,9 @@ class DataManager {
             currentTemplate: customConfig?.currentTemplate ??
                 config.defaults?.current_template ??
                 '请按照下面的模板回答\n{{json_template}}\n\n---\n{{current}}',
+            sessionIndexMaxEntries: customConfig?.sessionIndexMaxEntries ??
+                config.session_index?.max_entries ??
+                120,
         };
         this.ROOT_DIR = path.resolve(this.config.rootDir);
         this.modelCategory = findModelCategory(this.model, this.config.models);
@@ -272,6 +275,23 @@ class DataManager {
             historyPrompt: this.get_history_prompt(),
         });
     }
+    /**
+     * 初始化新 web 会话时使用的提示词：
+     * 若 history 尾部恰好是 current（常见于 save_data 已将 current 合并进 history），
+     * 则剔除该尾部，避免“当前轮消息”污染 init_prompt 的历史区块。
+     */
+    get_init_prompt_for_new_session() {
+        const historyForInit = this.isSameAsHistoryTail(this.current)
+            ? this.history.slice(0, -1)
+            : this.history;
+        return (0, prompt_1.buildInitPrompt)({
+            template: this.config.initPromptTemplate,
+            jsonTemplate: this.config.jsonTemplate,
+            systemPrompt: this.get_system_prompt(),
+            toolsPrompt: this.get_tools_prompt(),
+            historyPrompt: (0, prompt_1.buildHistoryPrompt)(historyForInit),
+        });
+    }
     get_usage() {
         const promptText = this.get_init_prompt();
         const completionText = JSON.stringify(this.current ?? {});
@@ -371,13 +391,34 @@ class DataManager {
         }
     }
     saveSessionIndex(index) {
+        const pruned = this.pruneSessionIndex(index);
         const indexPath = this.getSessionIndexPath();
         fs.mkdirSync(path.dirname(indexPath), { recursive: true });
-        fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+        fs.writeFileSync(indexPath, JSON.stringify(pruned, null, 2), 'utf-8');
         this.logDataTrace('save_session_index', {
             index_path: indexPath,
-            hash_count: Object.keys(index.hashes).length,
+            hash_count: Object.keys(pruned.hashes).length,
+            max_entries: this.config.sessionIndexMaxEntries,
         });
+    }
+    pruneSessionIndex(index) {
+        const max = this.config.sessionIndexMaxEntries;
+        if (!max || max <= 0)
+            return index;
+        const entries = Object.entries(index.hashes);
+        if (entries.length <= max)
+            return index;
+        entries.sort((a, b) => {
+            const ta = Date.parse(a[1].updated_at || a[1].created_at || '1970-01-01T00:00:00.000Z');
+            const tb = Date.parse(b[1].updated_at || b[1].created_at || '1970-01-01T00:00:00.000Z');
+            return tb - ta;
+        });
+        const kept = entries.slice(0, max);
+        const hashes = {};
+        for (const [k, v] of kept) {
+            hashes[k] = v;
+        }
+        return { hashes };
     }
     defaultSessionIndexEntry(sessionDir) {
         const nowIso = new Date().toISOString();

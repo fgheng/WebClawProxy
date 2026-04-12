@@ -46,6 +46,7 @@ export declare class WebDriverManager {
      * @param hint 提示信息（可选）
      */
     openBrowser(url: string, hint?: string): Promise<void>;
+    preflightConfiguredSites(sites?: SiteKey[]): Promise<void>;
     /**
      * 关闭浏览器，释放资源
      */
@@ -67,10 +68,11 @@ export declare class WebDriverManager {
      * 获取或创建指定 site 的 Driver
      */
     private getOrCreateDriver;
-    /**
-     * 确保用户已登录，如果没有登录则弹出浏览器等待登录
-     */
     private ensureLoggedIn;
+    private loadLoginProbeConfig;
+    private probeLoginStatusWithStability;
+    private probeLoginStatusOnce;
+    private evaluateSignal;
     /**
      * 等待对话 URL 从主页变成具体对话链接
      */

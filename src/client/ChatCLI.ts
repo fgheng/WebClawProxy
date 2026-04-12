@@ -1,6 +1,6 @@
 import * as readline from 'readline';
 import { WebClawClient } from './WebClawClient';
-import { ClientConfig, ChatMessage } from './types';
+import { ClientConfig, ChatMessage, AssistantResponse } from './types';
 import {
   colorize,
   printSeparator,
@@ -318,6 +318,24 @@ export class ChatCLI {
     console.log();
   }
 
+  private printToolCalls(toolCalls: unknown[]): void {
+    if (!toolCalls || toolCalls.length === 0) return;
+
+    console.log(
+      colorize('  ┌─ ', 'yellow') +
+      colorize('TOOL_CALLS', 'brightYellow', 'bold') +
+      colorize(' ───────────────────────────────────────', 'yellow')
+    );
+
+    const text = JSON.stringify(toolCalls, null, 2);
+    for (const line of text.split('\n')) {
+      console.log(colorize('  │ ', 'yellow') + colorize(line, 'brightYellow'));
+    }
+
+    console.log(colorize('  └────────────────────────────────────────────────', 'yellow'));
+    console.log();
+  }
+
   private printErrorMessage(message: string): void {
     console.log();
     console.log(colorize('  ✗ 错误：', 'red', 'bold') + colorize(message, 'red'));
@@ -331,7 +349,7 @@ export class ChatCLI {
     this.startSpinner('正在等待模型响应...');
 
     try {
-      const response = await this.client.sendMessage(userInput);
+      const response: AssistantResponse = await this.client.sendMessage(userInput);
       this.stopSpinner();
       this.roundCount++;
 
@@ -340,7 +358,8 @@ export class ChatCLI {
         colorize(' ──────────────────────────────────────────────', 'gray')
       );
 
-      this.printAssistantMessage(response, this.client.getConfig().model);
+      this.printAssistantMessage(response.content, this.client.getConfig().model);
+      this.printToolCalls(response.tool_calls);
     } catch (err) {
       this.stopSpinner();
       this.printErrorMessage((err as Error).message);

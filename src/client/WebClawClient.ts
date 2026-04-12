@@ -1,6 +1,6 @@
 import * as https from 'https';
 import * as http from 'http';
-import { ClientConfig, OpenAIRequestBody, OpenAIResponseBody, ChatMessage } from './types';
+import { ClientConfig, OpenAIRequestBody, OpenAIResponseBody, ChatMessage, AssistantResponse } from './types';
 
 /**
  * WebClawProxy 客户端 API 层
@@ -62,9 +62,9 @@ export class WebClawClient {
   }
 
   /**
-   * 发送用户消息，返回助手回复内容
+   * 发送用户消息，返回助手回复（文本与工具调用分离）
    */
-  async sendMessage(userContent: string): Promise<string> {
+  async sendMessage(userContent: string): Promise<AssistantResponse> {
     const traceId = this.buildTraceId();
 
     this.messages.push({ role: 'user', content: userContent });
@@ -104,19 +104,24 @@ export class WebClawClient {
       throw err;
     }
 
-    const assistantContent = this.extractContent(responseData, traceId);
-    this.messages.push({ role: 'assistant', content: assistantContent });
+    const assistant = this.extractAssistantResponse(responseData, traceId);
+    this.messages.push({
+      role: 'assistant',
+      content: assistant.content,
+      tool_calls: assistant.tool_calls.length > 0 ? assistant.tool_calls : undefined,
+    });
 
     this.logTrace('response_parsed', {
       trace_id: traceId,
       session_id: this.config.sessionId,
-      assistant_preview: this.preview(assistantContent),
-      finish_reason: responseData.choices?.[0]?.finish_reason ?? '',
-      usage: responseData.usage ?? {},
+      assistant_preview: this.preview(assistant.content),
+      tool_call_count: assistant.tool_calls.length,
+      finish_reason: assistant.finish_reason,
+      usage: assistant.usage,
       history_count_after: this.messages.length,
     });
 
-    return assistantContent;
+    return assistant;
   }
 
   async listModels(): Promise<string[]> {
@@ -251,7 +256,7 @@ export class WebClawClient {
     });
   }
 
-  private extractContent(response: OpenAIResponseBody, traceId: string): string {
+  private extractAssistantResponse(response: OpenAIResponseBody, traceId: string): AssistantResponse {
     if (response.error) {
       throw new Error(`服务错误: ${response.error.message ?? JSON.stringify(response.error)}`);
     }
@@ -266,20 +271,22 @@ export class WebClawClient {
       throw new Error('响应 choices[0] 中没有 message 字段');
     }
 
-    if (typeof message.content === 'string' && message.content) {
-      return message.content;
-    }
+    const content = typeof message.content === 'string' ? message.content : '';
+    const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
 
-    if (message.tool_calls && message.tool_calls.length > 0) {
-      const text = JSON.stringify(message.tool_calls, null, 2);
+    if (toolCalls.length > 0) {
       this.logTrace('tool_calls_response', {
         trace_id: traceId,
-        tool_call_count: message.tool_calls.length,
+        tool_call_count: toolCalls.length,
       });
-      return text;
     }
 
-    return message.content ?? '';
+    return {
+      content,
+      tool_calls: toolCalls,
+      finish_reason: choice.finish_reason ?? '',
+      usage: response.usage ?? {},
+    };
   }
 
   private buildDefaultSessionId(): string {

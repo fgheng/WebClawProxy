@@ -5,6 +5,7 @@ import { WebDriverManager } from '../../web-driver/WebDriverManager';
 import { SiteKey } from '../../web-driver/types';
 import { WebDriverError, WebDriverErrorCode } from '../../web-driver/types';
 import { ProtocolParseError } from '../../protocol/types';
+import { logDebug } from '../logger';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -488,6 +489,10 @@ export async function chatCompletionsHandler(
       remote_ip: req.ip,
       session_header: (req.headers['x-session-id'] as string | undefined) ?? '',
     });
+    logDebug('chat_completions_request_body', {
+      trace_id: traceId,
+      body_preview: JSON.stringify(requestBody ?? {}).slice(0, 5000),
+    });
 
     // ===== Step 1: 解析协议 =====
     let internalReq;
@@ -738,6 +743,10 @@ export async function chatCompletionsHandler(
       prompt_tokens: formattedResponse.usage?.prompt_tokens ?? 0,
       completion_tokens: formattedResponse.usage?.completion_tokens ?? 0,
       total_tokens: formattedResponse.usage?.total_tokens ?? 0,
+    });
+    logDebug('chat_completions_response_payload', {
+      trace_id: traceId,
+      response_preview: JSON.stringify(formattedResponse).slice(0, 5000),
     });
 
     res.json(formattedResponse);

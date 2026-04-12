@@ -2,12 +2,15 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { createApp } from './server';
 import { preflightWebDriverSites } from './routes/openai';
+import { initServiceLogger } from './logger';
 
 // 加载配置
 const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : (config.server?.port ?? 3000);
+
+initServiceLogger();
 
 const app = createApp();
 

@@ -5,7 +5,7 @@ import { Message, Tool } from '../../protocol/types';
 export declare function computeSystemHash(system: string): string;
 /**
  * 计算 history 列表的 rolling hash
- * 逐条累积：hash = sha256(hash + canonicalize(message))
+ * 仅纳入 role=user 的消息：hash = sha256(hash + canonicalize(message))
  */
 export declare function computeHistoryHash(history: Message[]): string;
 /**

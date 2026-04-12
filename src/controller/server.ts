@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { chatCompletionsHandler, listModelsHandler } from './routes/openai';
+import { logDebug } from './logger';
 
 /**
  * 创建并配置 Express 应用
@@ -14,6 +15,17 @@ export function createApp() {
   // 请求日志
   app.use((req: Request, _res: Response, next: NextFunction) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+    logDebug('http_request', {
+      method: req.method,
+      path: req.path,
+      query: req.query,
+      headers: {
+        'x-trace-id': req.headers['x-trace-id'] ?? '',
+        'x-session-id': req.headers['x-session-id'] ?? '',
+        authorization_present: Boolean(req.headers.authorization),
+      },
+      body_preview: JSON.stringify(req.body ?? {}).slice(0, 2000),
+    });
     next();
   });
 

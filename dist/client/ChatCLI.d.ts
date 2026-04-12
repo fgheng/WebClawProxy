@@ -20,6 +20,7 @@ export declare class ChatCLI {
     private stopSpinner;
     private printUserMessage;
     private printAssistantMessage;
+    private printToolCalls;
     private printErrorMessage;
     private sendMessage;
     private getPromptString;

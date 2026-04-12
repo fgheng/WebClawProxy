@@ -24,6 +24,21 @@ export interface ClientConfig {
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  tool_calls?: unknown[];
+}
+
+/**
+ * 客户端解析后的助手回复
+ */
+export interface AssistantResponse {
+  content: string;
+  tool_calls: unknown[];
+  finish_reason: string;
+  usage: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 /**
