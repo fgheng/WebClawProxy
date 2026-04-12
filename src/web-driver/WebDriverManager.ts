@@ -152,15 +152,15 @@ export class WebDriverManager {
     // 3. 发送初始化提示词
     await driver.sendMessage(prompt);
 
-    // 4. 等待 URL 从主页变为对话链接（URL 变化说明对话已建立）
-    const url = await this.waitForConversationUrl(driver, site);
-
-    // 5. 等待模型完成对初始化提示词的回复
-    //    这一步非常重要：确保初始化提示词被模型完整接收并回复后
-    //    才返回 sessionUrl，避免 chat() 过早跳入页面导致上下文丢失
-    console.log(`[WebDriver] 等待 ${site} 初始化回复完成...`);
-    await driver.waitForResponse();
-    console.log(`[WebDriver] ${site} 初始化回复已完成`);
+    // 4 & 5 并行等待：避免先等 URL 导致错过“模型开始输出”时机
+    const [url] = await Promise.all([
+      this.waitForConversationUrl(driver, site),
+      (async () => {
+        console.log(`[WebDriver] 等待 ${site} 初始化回复完成...`);
+        await driver.waitForResponse();
+        console.log(`[WebDriver] ${site} 初始化回复已完成`);
+      })(),
+    ]);
 
     return { url };
   }

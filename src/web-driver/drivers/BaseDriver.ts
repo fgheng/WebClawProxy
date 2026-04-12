@@ -212,19 +212,26 @@ export abstract class BaseDriver implements IWebDriver {
     // 说明：在某些站点，响应区域里会先有上一轮内容；必须先观察到变化，避免误判为本轮已完成
     const startWait = Date.now();
     let baselineContent = '';
+    let baselineCount = 0;
     let lastContent = '';
     let hasObservedChange = false;
+    let hasObservedNonEmpty = false;
 
     try {
-      baselineContent = await this.page.evaluate(
+      const baseline = await this.page.evaluate(
         ([sel]: [string]) => {
           const nodes = (globalThis as any).document.querySelectorAll(sel as string);
-          const el = nodes.length > 0 ? nodes[nodes.length - 1] : null;
-          return el ? (el.textContent || '').trim() : '';
+          const count = nodes.length;
+          const el = count > 0 ? nodes[count - 1] : null;
+          const content = el ? (el.textContent || '').trim() : '';
+          return { count, content };
         },
         [responseSelector] as [string]
       );
-      lastContent = baselineContent;
+      baselineCount = baseline.count;
+      baselineContent = baseline.content;
+      lastContent = baseline.content;
+      hasObservedNonEmpty = baseline.content.length > 0;
     } catch {
       baselineContent = '';
       lastContent = '';
@@ -233,19 +240,34 @@ export abstract class BaseDriver implements IWebDriver {
     while (Date.now() - startWait < 30000) {
       await this.sleep(500);
       try {
-        const current = await this.page.evaluate(
+        const snapshot = await this.page.evaluate(
           ([sel]: [string]) => {
             const nodes = (globalThis as any).document.querySelectorAll(sel as string);
-            const el = nodes.length > 0 ? nodes[nodes.length - 1] : null;
-            return el ? (el.textContent || '').trim() : '';
+            const count = nodes.length;
+            const el = count > 0 ? nodes[count - 1] : null;
+            const content = el ? (el.textContent || '').trim() : '';
+            return { count, content };
           },
           [responseSelector] as [string]
         );
 
-        if (current.length > 0 && current !== baselineContent) {
+        const current = snapshot.content;
+        if (current.length > 0) {
+          hasObservedNonEmpty = true;
+        }
+
+        if (
+          (current.length > 0 && current !== baselineContent)
+          || snapshot.count > baselineCount
+        ) {
           hasObservedChange = true;
           lastContent = current;
           break;
+        }
+
+        // 记录最新内容，供后续稳定性判定使用（即使未观察到“变化”）
+        if (current.length > 0) {
+          lastContent = current;
         }
       } catch {
         // 继续等待
@@ -253,10 +275,14 @@ export abstract class BaseDriver implements IWebDriver {
     }
 
     if (!hasObservedChange) {
-      throw new WebDriverError(
-        WebDriverErrorCode.RESPONSE_TIMEOUT,
-        '未观察到模型开始输出新响应'
-      );
+      // 某些站点在本方法开始前已完成首轮输出，此时可能观察不到“变化”，
+      // 但若已存在非空内容，则直接进入稳定性判定，避免误报超时。
+      if (!hasObservedNonEmpty) {
+        throw new WebDriverError(
+          WebDriverErrorCode.RESPONSE_TIMEOUT,
+          '未观察到模型开始输出新响应'
+        );
+      }
     }
 
     // Step 3: 稳定性计数（间隔 1500ms，连续 3 次相同即认为完成）
