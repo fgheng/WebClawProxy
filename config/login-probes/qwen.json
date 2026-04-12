@@ -1,0 +1,42 @@
+{
+  "positiveSignals": [
+    {
+      "id": "qwen_sidebar_visible",
+      "kind": "selector_visible",
+      "selector": "aside, [class*='sidebar'], [class*='left-panel']",
+      "weight": 1.2
+    },
+    {
+      "id": "qwen_history_exists",
+      "kind": "selector_exists",
+      "selector": "[class*='history'] li, [class*='conversation-list'] li, [data-testid*='conversation']",
+      "weight": 1.4
+    },
+    {
+      "id": "qwen_user_menu",
+      "kind": "selector_visible",
+      "selector": "[class*='avatar'], [class*='user-info'], [data-testid*='user']",
+      "weight": 1.3
+    },
+    {
+      "id": "qwen_input_ready",
+      "kind": "selector_visible",
+      "selector": "textarea, [contenteditable='true']",
+      "weight": 0.8
+    }
+  ],
+  "negativeSignals": [
+    {
+      "id": "qwen_login_btn",
+      "kind": "text_visible",
+      "texts": ["登录", "log in", "sign in"],
+      "weight": 1.7
+    },
+    {
+      "id": "qwen_login_url",
+      "kind": "url_regex",
+      "pattern": "/login|/signin|passport|aliyun",
+      "weight": 2.2
+    }
+  ]
+}

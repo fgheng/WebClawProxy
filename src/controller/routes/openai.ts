@@ -15,6 +15,12 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 const protocol = new OpenAIProtocol();
 const webDriver = new WebDriverManager();
 
+export async function preflightWebDriverSites(): Promise<void> {
+  const siteKeys = Object.keys(config.sites ?? {}) as SiteKey[];
+  if (siteKeys.length === 0) return;
+  await webDriver.preflightConfiguredSites(siteKeys);
+}
+
 /**
  * 根据模型名称推断使用哪个网站
  * 优先查找配置文件中的 models 映射，再根据大类选择 site

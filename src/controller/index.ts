@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { createApp } from './server';
+import { preflightWebDriverSites } from './routes/openai';
 
 // 加载配置
 const configPath = path.join(process.cwd(), 'config', 'default.json');
@@ -23,6 +24,15 @@ app.listen(PORT, () => {
 ║  GET  /health                            ║
 ╚══════════════════════════════════════════╝
   `);
+
+  // 启动后先执行站点登录预检（不阻塞服务端口监听）
+  void preflightWebDriverSites()
+    .then(() => {
+      console.log('[Startup] 站点登录预检完成');
+    })
+    .catch((err) => {
+      console.warn('[Startup] 站点登录预检失败，请按提示在浏览器登录：', err instanceof Error ? err.message : err);
+    });
 });
 
 export default app;

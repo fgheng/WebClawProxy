@@ -5,7 +5,6 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Browser, BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 
 import {
   SiteKey,
@@ -14,7 +13,6 @@ import {
   WebDriverManagerOptions,
   WebDriverError,
   WebDriverErrorCode,
-  IWebDriver,
 } from './types';
 import { BaseDriver } from './drivers/BaseDriver';
 import { ChatGPTDriver } from './drivers/ChatGPTDriver';
@@ -39,6 +37,45 @@ const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
 const SITE_URLS: Record<SiteKey, string> = config.sites;
+
+type ProbeStatus = 'logged_in' | 'not_logged_in' | 'unknown';
+
+type ProbeSignalKind = 'selector_exists' | 'selector_visible' | 'text_visible' | 'url_regex';
+
+interface LoginProbeSignal {
+  id: string;
+  kind: ProbeSignalKind;
+  selector?: string;
+  texts?: string[];
+  pattern?: string;
+  weight: number;
+}
+
+interface LoginProbeConfig {
+  thresholds: {
+    logged_in: number;
+    not_logged_in: number;
+  };
+  stability: {
+    required_consistent_rounds: number;
+    poll_interval_ms: number;
+  };
+  positiveSignals: LoginProbeSignal[];
+  negativeSignals: LoginProbeSignal[];
+}
+
+interface LoginProbeConfigPatch {
+  thresholds?: Partial<LoginProbeConfig['thresholds']>;
+  stability?: Partial<LoginProbeConfig['stability']>;
+  positiveSignals?: LoginProbeSignal[];
+  negativeSignals?: LoginProbeSignal[];
+}
+
+interface LoginProbeResult {
+  status: ProbeStatus;
+  score: number;
+  reasons: string[];
+}
 
 /**
  * 获取用户数据目录路径（持久化目录，保留 Cookie/登录状态）
@@ -212,26 +249,51 @@ export class WebDriverManager {
   async openBrowser(url: string, hint?: string): Promise<void> {
     await this.ensureBrowser();
 
-    const page = await this.context!.newPage();
+    const targetHost = new URL(url).host;
+    const reusablePage = [
+      ...Array.from(this.pageMap.values()),
+      ...((this.context as BrowserContext).pages?.() ?? []),
+    ].find((p) => {
+      try {
+        return new URL(p.url()).host === targetHost;
+      } catch {
+        return false;
+      }
+    });
+
+    const page = reusablePage ?? await this.context!.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     if (hint) {
-      const script = `
-        (function(message) {
-          var overlay = document.createElement('div');
-          overlay.id = '__webclaw_hint__';
-          overlay.style.cssText = [
-            'position:fixed', 'top:20px', 'left:50%', 'transform:translateX(-50%)',
-            'background:rgba(0,0,0,0.85)', 'color:#fff', 'padding:16px 24px',
-            'border-radius:8px', 'font-size:16px', 'font-family:sans-serif',
-            'z-index:999999', 'max-width:80%', 'text-align:center',
-            'box-shadow:0 4px 20px rgba(0,0,0,0.3)'
-          ].join(';');
-          overlay.textContent = message;
-          document.body.appendChild(overlay);
-        })(arguments[0]);
-      `;
-      await page.evaluate(script, hint);
+      await page.evaluate((message: string) => {
+        const doc = (globalThis as any).document;
+        const existed = doc.getElementById('__webclaw_hint__');
+        if (existed) existed.remove();
+
+        var overlay = doc.createElement('div');
+        overlay.id = '__webclaw_hint__';
+        overlay.style.cssText = [
+          'position:fixed', 'top:20px', 'left:50%', 'transform:translateX(-50%)',
+          'background:rgba(0,0,0,0.85)', 'color:#fff', 'padding:16px 24px',
+          'border-radius:8px', 'font-size:16px', 'font-family:sans-serif',
+          'z-index:999999', 'max-width:80%', 'text-align:center',
+          'box-shadow:0 4px 20px rgba(0,0,0,0.3)'
+        ].join(';');
+        overlay.textContent = message;
+        doc.body.appendChild(overlay);
+      }, hint);
+    }
+  }
+
+  async preflightConfiguredSites(sites?: SiteKey[]): Promise<void> {
+    await this.ensureBrowser();
+    const targetSites = sites ?? (Object.keys(SITE_URLS) as SiteKey[]);
+
+    for (const site of targetSites) {
+      const driver = await this.getOrCreateDriver(site);
+      console.log(`[WebDriver] 启动预检：${site}`);
+      await this.ensureLoggedIn(site, driver);
+      console.log(`[WebDriver] 启动预检通过：${site}`);
     }
   }
 
@@ -480,37 +542,240 @@ export class WebDriverManager {
     return this.driverMap.get(site)!;
   }
 
-  /**
-   * 确保用户已登录，如果没有登录则弹出浏览器等待登录
-   */
   private async ensureLoggedIn(site: SiteKey, driver: BaseDriver): Promise<void> {
-    const loggedIn = await driver.isLoggedIn();
-    if (!loggedIn) {
-      const siteUrl = SITE_URLS[site];
-      const hint = `请在浏览器中登录 ${siteUrl}，登录完成后系统将自动继续。`;
-      console.log(`[WebDriver] ${hint}`);
+    const page = this.pageMap.get(site);
+    if (!page) {
+      throw new WebDriverError(WebDriverErrorCode.BROWSER_NOT_INITIALIZED, `站点页面未初始化: ${site}`);
+    }
 
-      // 打开浏览器并显示提示
-      await this.openBrowser(siteUrl, hint);
+    const probeConfig = this.loadLoginProbeConfig(site);
+    const stableProbe = await this.probeLoginStatusWithStability(site, page, probeConfig);
+    if (stableProbe.status === 'logged_in') {
+      return;
+    }
 
-      // 轮询检测登录状态（最多等 5 分钟）
-      const maxWait = 5 * 60 * 1000;
-      const checkInterval = 3000;
-      const startTime = Date.now();
+    // 保留原站点驱动判定作为兜底（兼容配置尚未覆盖的站点细节）
+    const fallbackLoggedIn = await driver.isLoggedIn();
+    if (fallbackLoggedIn) {
+      return;
+    }
 
-      while (Date.now() - startTime < maxWait) {
-        await new Promise((r) => setTimeout(r, checkInterval));
-        const isNowLoggedIn = await driver.isLoggedIn();
-        if (isNowLoggedIn) {
-          console.log(`[WebDriver] ${site} 登录成功`);
-          return;
-        }
+    const siteUrl = SITE_URLS[site];
+    const hint = `请在浏览器中登录 ${siteUrl}，登录完成后系统将自动继续。`;
+    console.log(`[WebDriver] ${hint}`);
+
+    await this.openBrowser(siteUrl, hint);
+
+    const maxWait = 5 * 60 * 1000;
+    const checkInterval = Math.max(500, probeConfig.stability.poll_interval_ms);
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, checkInterval));
+
+      const latestPage = this.pageMap.get(site) ?? page;
+      const roundProbe = await this.probeLoginStatusWithStability(site, latestPage, probeConfig);
+      if (roundProbe.status === 'logged_in') {
+        console.log(`[WebDriver] ${site} 登录成功（策略判定）`);
+        return;
       }
 
-      throw new WebDriverError(
-        WebDriverErrorCode.NOT_LOGGED_IN,
-        `等待登录超时（5分钟），请重新尝试`
-      );
+      try {
+        const fallback = await driver.isLoggedIn();
+        if (fallback) {
+          console.log(`[WebDriver] ${site} 登录成功（驱动兜底判定）`);
+          return;
+        }
+      } catch {
+        // 忽略单次兜底异常，继续轮询
+      }
+    }
+
+    throw new WebDriverError(
+      WebDriverErrorCode.NOT_LOGGED_IN,
+      `等待登录超时（5分钟），请重新尝试`
+    );
+  }
+
+  private loadLoginProbeConfig(site: SiteKey): LoginProbeConfig {
+    const probeDir = path.join(process.cwd(), 'config', 'login-probes');
+    const commonPath = path.join(probeDir, 'common.json');
+    const sitePath = path.join(probeDir, `${site}.json`);
+
+    const defaultConfig: LoginProbeConfig = {
+      thresholds: {
+        logged_in: 2.5,
+        not_logged_in: -1.5,
+      },
+      stability: {
+        required_consistent_rounds: 2,
+        poll_interval_ms: 2000,
+      },
+      positiveSignals: [
+        { id: 'sidebar_visible', kind: 'selector_visible', selector: 'aside, [class*="sidebar"]', weight: 1.0 },
+        {
+          id: 'history_list_exists',
+          kind: 'selector_exists',
+          selector: '[class*="history"] li, [class*="conversation-list"] li',
+          weight: 1.5,
+        },
+        { id: 'input_ready', kind: 'selector_visible', selector: 'textarea, [contenteditable="true"]', weight: 0.8 },
+      ],
+      negativeSignals: [
+        { id: 'login_button_visible', kind: 'text_visible', texts: ['登录', 'log in', 'sign in'], weight: 1.5 },
+        { id: 'login_url', kind: 'url_regex', pattern: '/login|/signin|passport|auth', weight: 2.0 },
+      ],
+    };
+
+    const readPatch = (filePath: string): LoginProbeConfigPatch | null => {
+      try {
+        if (!fs.existsSync(filePath)) return null;
+        return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as LoginProbeConfigPatch;
+      } catch {
+        return null;
+      }
+    };
+
+    const commonPatch = readPatch(commonPath);
+    const sitePatch = readPatch(sitePath);
+
+    const merged = {
+      ...defaultConfig,
+      ...(commonPatch ?? {}),
+      ...(sitePatch ?? {}),
+      thresholds: {
+        ...defaultConfig.thresholds,
+        ...(commonPatch?.thresholds ?? {}),
+        ...(sitePatch?.thresholds ?? {}),
+      },
+      stability: {
+        ...defaultConfig.stability,
+        ...(commonPatch?.stability ?? {}),
+        ...(sitePatch?.stability ?? {}),
+      },
+      positiveSignals:
+        sitePatch?.positiveSignals
+        ?? commonPatch?.positiveSignals
+        ?? defaultConfig.positiveSignals,
+      negativeSignals:
+        sitePatch?.negativeSignals
+        ?? commonPatch?.negativeSignals
+        ?? defaultConfig.negativeSignals,
+    };
+
+    return merged;
+  }
+
+  private async probeLoginStatusWithStability(
+    site: SiteKey,
+    page: Page,
+    config: LoginProbeConfig
+  ): Promise<LoginProbeResult> {
+    const rounds = Math.max(1, config.stability.required_consistent_rounds);
+    const maxRounds = Math.max(rounds * 2, rounds + 1);
+
+    let lastStatus: ProbeStatus | null = null;
+    let stableCount = 0;
+    let lastResult: LoginProbeResult = { status: 'unknown', score: 0, reasons: [] };
+
+    for (let i = 0; i < maxRounds; i++) {
+      const result = await this.probeLoginStatusOnce(site, page, config);
+      lastResult = result;
+
+      if (result.status === lastStatus) {
+        stableCount++;
+      } else {
+        lastStatus = result.status;
+        stableCount = 1;
+      }
+
+      if (stableCount >= rounds) {
+        return result;
+      }
+
+      if (i < maxRounds - 1) {
+        await new Promise((r) => setTimeout(r, Math.max(300, config.stability.poll_interval_ms)));
+      }
+    }
+
+    return lastResult;
+  }
+
+  private async probeLoginStatusOnce(
+    site: SiteKey,
+    page: Page,
+    config: LoginProbeConfig
+  ): Promise<LoginProbeResult> {
+    let score = 0;
+    const reasons: string[] = [];
+
+    for (const signal of config.positiveSignals) {
+      const hit = await this.evaluateSignal(page, signal);
+      if (hit) {
+        score += signal.weight;
+        reasons.push(`+${signal.id}`);
+      }
+    }
+
+    for (const signal of config.negativeSignals) {
+      const hit = await this.evaluateSignal(page, signal);
+      if (hit) {
+        score -= signal.weight;
+        reasons.push(`-${signal.id}`);
+      }
+    }
+
+    let status: ProbeStatus = 'unknown';
+    if (score >= config.thresholds.logged_in) {
+      status = 'logged_in';
+    } else if (score <= config.thresholds.not_logged_in) {
+      status = 'not_logged_in';
+    }
+
+    console.log(
+      `[LoginProbe][${site}] status=${status} score=${score.toFixed(2)} reasons=${reasons.join(',') || '-'} url=${page.url()}`
+    );
+
+    return { status, score, reasons };
+  }
+
+  private async evaluateSignal(page: Page, signal: LoginProbeSignal): Promise<boolean> {
+    try {
+      return await page.evaluate((s: LoginProbeSignal) => {
+        const g = globalThis as any;
+        const doc = g.document as any;
+        const getVisible = (selector: string): any[] => {
+          const nodes = Array.from(doc.querySelectorAll(selector)) as any[];
+          return nodes.filter((node) => {
+            const style = g.getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+          });
+        };
+
+        switch (s.kind) {
+          case 'selector_exists':
+            return !!(s.selector && doc.querySelector(s.selector));
+          case 'selector_visible':
+            return !!(s.selector && getVisible(s.selector).length > 0);
+          case 'text_visible': {
+            const texts = (s.texts ?? []).map((t) => t.toLowerCase());
+            if (texts.length === 0) return false;
+            const nodes = getVisible('a,button,[role="button"],span,div');
+            return nodes.some((node) => {
+              const text = (node.textContent || '').trim().toLowerCase();
+              return text && texts.some((t) => text.includes(t));
+            });
+          }
+          case 'url_regex':
+            if (!s.pattern) return false;
+            return new RegExp(s.pattern, 'i').test(g.location?.href || '');
+          default:
+            return false;
+        }
+      }, signal as any);
+    } catch {
+      return false;
     }
   }
 

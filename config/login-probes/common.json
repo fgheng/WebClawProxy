@@ -1,0 +1,44 @@
+{
+  "thresholds": {
+    "logged_in": 2.5,
+    "not_logged_in": -1.5
+  },
+  "stability": {
+    "required_consistent_rounds": 2,
+    "poll_interval_ms": 2000
+  },
+  "positiveSignals": [
+    {
+      "id": "sidebar_visible",
+      "kind": "selector_visible",
+      "selector": "aside, nav[class*='sidebar'], [class*='sidebar']",
+      "weight": 1.0
+    },
+    {
+      "id": "history_list_exists",
+      "kind": "selector_exists",
+      "selector": "[class*='history'] li, [data-testid*='conversation'], [class*='conversation-list'] li",
+      "weight": 1.5
+    },
+    {
+      "id": "input_ready",
+      "kind": "selector_visible",
+      "selector": "textarea, [contenteditable='true']",
+      "weight": 0.8
+    }
+  ],
+  "negativeSignals": [
+    {
+      "id": "login_button_visible",
+      "kind": "text_visible",
+      "texts": ["登录", "log in", "sign in"],
+      "weight": 1.5
+    },
+    {
+      "id": "login_url",
+      "kind": "url_regex",
+      "pattern": "/login|/signin|passport|auth",
+      "weight": 2.0
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "positiveSignals": [
+    {
+      "id": "deepseek_sidebar_visible",
+      "kind": "selector_visible",
+      "selector": "aside, [class*='sidebar'], [class*='left-panel']",
+      "weight": 1.2
+    },
+    {
+      "id": "deepseek_history_exists",
+      "kind": "selector_exists",
+      "selector": "[class*='history'] li, [class*='conversation-list'] li",
+      "weight": 1.4
+    },
+    {
+      "id": "deepseek_user_menu",
+      "kind": "selector_visible",
+      "selector": "[class*='avatar'], [class*='user-info'], [class*='account']",
+      "weight": 1.2
+    },
+    {
+      "id": "deepseek_input_ready",
+      "kind": "selector_visible",
+      "selector": "textarea, [contenteditable='true']",
+      "weight": 0.8
+    }
+  ],
+  "negativeSignals": [
+    {
+      "id": "deepseek_login_btn",
+      "kind": "text_visible",
+      "texts": ["登录", "log in", "sign in"],
+      "weight": 1.6
+    },
+    {
+      "id": "deepseek_login_url",
+      "kind": "url_regex",
+      "pattern": "/login|/signin|auth",
+      "weight": 2.0
+    }
+  ]
+}
