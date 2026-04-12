@@ -908,10 +908,7 @@ export async function chatCompletionsHandler(
         originalPromptLength: currentPrompt.length,
       });
       const retryBasePrompt = dm.get_format_only_retry_prompt();
-      const includeCurrentPrompt = !formatOnlyRetry;
-      const templatePrompt = includeCurrentPrompt
-        ? `${retryBasePrompt}\n\n---\n${dm.get_current_prompt()}`
-        : retryBasePrompt;
+      const templatePrompt = retryBasePrompt;
 
       try {
         const retryResult = await webDriver.chat(site, sessionUrl, templatePrompt);
@@ -920,7 +917,7 @@ export async function chatCompletionsHandler(
         upstreamError = detectUpstreamServiceError(responseContent);
         logRequestTrace(traceId, 'json_extract_retry', {
           retry_index: retryCount + 1,
-          prompt_mode: includeCurrentPrompt ? 'format_plus_user' : 'format_only',
+          prompt_mode: 'format_only',
           content_length: responseContent.length,
           parsed_json: Boolean(parsedJson),
           upstream_error: Boolean(upstreamError),

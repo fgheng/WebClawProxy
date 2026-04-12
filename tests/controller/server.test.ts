@@ -258,7 +258,7 @@ describe('控制模块 API 测试', () => {
       );
     });
 
-    it('短内容 JSON 重试应使用格式提醒并在代码内拼接用户内容', async () => {
+    it('短内容 JSON 重试也应仅使用格式提醒模板', async () => {
       mockDm.get_current_prompt_for_web_send.mockReturnValueOnce('短内容');
       mockChat
         .mockResolvedValueOnce({ content: '不是 json' })
@@ -275,7 +275,7 @@ describe('控制模块 API 测试', () => {
         2,
         'deepseek',
         'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        '仅格式提醒 prompt\n\n---\n你好'
+        '仅格式提醒 prompt'
       );
     });
 
