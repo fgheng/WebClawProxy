@@ -39,7 +39,7 @@
   },
   "logging": {
     "enabled": true,
-    "debug": false,
+    "debug": true,
     "dir": "./data/logs",
     "file_prefix": "webclaw-proxy"
   }
