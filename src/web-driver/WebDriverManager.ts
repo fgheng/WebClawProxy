@@ -222,12 +222,27 @@ export class WebDriverManager {
   async openBrowser(url: string, hint?: string): Promise<void> {
     await this.ensureBrowser();
 
-    const page = await this.context!.newPage();
+    const targetHost = new URL(url).host;
+    const reusablePage = [
+      ...Array.from(this.pageMap.values()),
+      ...((this.context as BrowserContext).pages?.() ?? []),
+    ].find((p) => {
+      try {
+        return new URL(p.url()).host === targetHost;
+      } catch {
+        return false;
+      }
+    });
+
+    const page = reusablePage ?? await this.context!.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     if (hint) {
       await page.evaluate((message: string) => {
         const doc = (globalThis as any).document;
+        const existed = doc.getElementById('__webclaw_hint__');
+        if (existed) existed.remove();
+
         var overlay = doc.createElement('div');
         overlay.id = '__webclaw_hint__';
         overlay.style.cssText = [
@@ -514,13 +529,38 @@ export class WebDriverManager {
       }
     }
 
+    const siteUrl = SITE_URLS[site];
+
     const loggedIn = await driver.isLoggedIn();
     if (loggedIn) {
       this.markAuthVerified(site);
       return;
     }
 
-    const siteUrl = SITE_URLS[site];
+    // Qwen 登录态 UI 可能延迟出现，进入登录闸门前先做短时重试，避免误提示登录
+    if (site === 'qwen') {
+      for (let i = 0; i < 4; i++) {
+        await new Promise((r) => setTimeout(r, 700));
+        try {
+          if (i === 2) {
+            const page = this.pageMap.get(site);
+            if (page) {
+              await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            }
+          }
+
+          const loggedInAfterRetry = await driver.isLoggedIn();
+          if (loggedInAfterRetry) {
+            this.markAuthVerified(site);
+            console.log('[WebDriver] qwen 延迟探测确认已登录，跳过登录闸门');
+            return;
+          }
+        } catch {
+          // 忽略短时探测异常，继续重试
+        }
+      }
+    }
+
     const hint = `请在浏览器中登录 ${siteUrl}，登录完成后系统将自动继续。`;
     console.log(`[WebDriver] ${hint}`);
 
