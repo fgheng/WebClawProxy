@@ -1,5 +1,6 @@
 import { WebDriverManager, WebDriverError, WebDriverErrorCode } from '../../src/web-driver';
 import type { SiteKey } from '../../src/web-driver';
+import { QwenDriver } from '../../src/web-driver/drivers/QwenDriver';
 
 /**
  * Web 驱动模块单元测试
@@ -128,6 +129,40 @@ describe('WebDriverError', () => {
 
 describe('Driver URL 验证', () => {
   // 直接测试驱动类的 isValidConversationUrl 方法（通过类实例化测试）
+  it('Qwen 未登录时（即使可访问页面）也应返回 false', async () => {
+    const mockPage = {
+      goto: jest.fn(),
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/'),
+      waitForSelector: jest.fn().mockRejectedValue(new Error('no login indicator')),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+    } as any;
+
+    const driver = new QwenDriver(mockPage);
+    await expect(driver.isLoggedIn()).resolves.toBe(false);
+  });
+
+  it('Qwen 检测到账号态 UI 时应返回 true', async () => {
+    const mockPage = {
+      goto: jest.fn(),
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/'),
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+    } as any;
+
+    const driver = new QwenDriver(mockPage);
+    await expect(driver.isLoggedIn()).resolves.toBe(true);
+  });
+
   it('ChatGPT URL 验证', async () => {
     const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
     const mockPage = {

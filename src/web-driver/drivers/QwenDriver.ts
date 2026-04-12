@@ -10,7 +10,7 @@ import { WebDriverError, WebDriverErrorCode } from '../types';
  * - responseArea: 优先使用 data-role/data-message-role 语义属性定位助手消息
  */
 const SELECTORS = {
-  loginIndicator: '.user-avatar, [class*="avatar"], [class*="user-info"]',
+  loginIndicator: '[class*="user-avatar"], [class*="account"], [data-testid*="user"]',
   newChatButton: '[class*="new-chat"], button[title*="新建"], button[title*="New"]',
   newChatButtonAlt: 'button[class*="new"], [data-testid*="new"]',
   inputArea: 'textarea, [contenteditable="true"]',
@@ -66,12 +66,11 @@ export class QwenDriver extends BaseDriver {
       if (url.includes('/login') || url.includes('/signin')) {
         return false;
       }
-      try {
-        await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 5000 });
-        return true;
-      } catch {
-        return !url.includes('/login');
-      }
+
+      // Qwen 支持未登录匿名聊天，不能用“非 /login 页面”判断已登录。
+      // 必须检测到明确的账号态 UI（头像/账户信息）才算登录成功。
+      await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 5000 });
+      return true;
     } catch {
       return false;
     }

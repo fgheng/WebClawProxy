@@ -54,12 +54,9 @@ export class DeepSeekDriver extends BaseDriver {
         return false;
       }
 
-      try {
-        await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 5000 });
-        return true;
-      } catch {
-        return !url.includes('/login');
-      }
+      // 必须检测到明确账号态 UI，才判定为已登录
+      await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 5000 });
+      return true;
     } catch {
       return false;
     }

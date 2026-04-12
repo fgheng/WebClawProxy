@@ -5,7 +5,6 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Browser, BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 
 import {
   SiteKey,
@@ -39,6 +38,18 @@ const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
 const SITE_URLS: Record<SiteKey, string> = config.sites;
+
+interface AuthStateEntry {
+  status: 'verified' | 'invalid';
+  last_verified_at?: string;
+  last_failed_at?: string;
+  profile_path?: string;
+  failure_count?: number;
+}
+
+interface AuthStateFile {
+  sites: Partial<Record<SiteKey, AuthStateEntry>>;
+}
 
 /**
  * 获取用户数据目录路径（持久化目录，保留 Cookie/登录状态）
@@ -98,6 +109,7 @@ export class WebDriverManager {
   /** 每个 SiteKey 对应一个 Page 和 Driver */
   private pageMap: Map<SiteKey, Page> = new Map();
   private driverMap: Map<SiteKey, BaseDriver> = new Map();
+  private userDataDir: string = getUserDataDir();
 
   constructor(options: WebDriverManagerOptions = {}) {
     this.options = {
@@ -105,6 +117,9 @@ export class WebDriverManager {
       responseTimeoutMs: options.responseTimeoutMs ?? (config.webdriver?.response_timeout_ms ?? 120000),
       stabilityCheckIntervalMs: options.stabilityCheckIntervalMs ?? (config.webdriver?.stability_check_interval_ms ?? 500),
       stabilityCheckCount: options.stabilityCheckCount ?? (config.webdriver?.stability_check_count ?? 3),
+      authCacheTtlMs: options.authCacheTtlMs ?? (config.webdriver?.auth_cache_ttl_ms ?? 10 * 60 * 1000),
+      loginWaitTimeoutMs: options.loginWaitTimeoutMs ?? (config.webdriver?.login_wait_timeout_ms ?? 5 * 60 * 1000),
+      loginCheckIntervalMs: options.loginCheckIntervalMs ?? (config.webdriver?.login_check_interval_ms ?? 3000),
     };
   }
 
@@ -144,13 +159,8 @@ export class WebDriverManager {
     //    这一步非常重要：确保初始化提示词被模型完整接收并回复后
     //    才返回 sessionUrl，避免 chat() 过早跳入页面导致上下文丢失
     console.log(`[WebDriver] 等待 ${site} 初始化回复完成...`);
-    try {
-      await driver.waitForResponse();
-      console.log(`[WebDriver] ${site} 初始化回复已完成`);
-    } catch {
-      // 即使等待超时也继续（已获取 URL 就足够了）
-      console.warn(`[WebDriver] ${site} 初始化回复等待超时，继续执行`);
-    }
+    await driver.waitForResponse();
+    console.log(`[WebDriver] ${site} 初始化回复已完成`);
 
     return { url };
   }
@@ -276,7 +286,7 @@ export class WebDriverManager {
     this.pageMap.clear();
     this.driverMap.clear();
 
-    const userDataDir = getUserDataDir();
+    const userDataDir = this.userDataDir;
     const userAgent = buildUserAgent();
 
     console.log(`[WebDriver] 使用持久化用户目录: ${userDataDir}`);
@@ -481,37 +491,125 @@ export class WebDriverManager {
   }
 
   /**
-   * 确保用户已登录，如果没有登录则弹出浏览器等待登录
+   * 确保用户已登录：优先命中 auth-state 缓存，否则进行页面探测；失败则引导人工登录并轮询确认。
    */
   private async ensureLoggedIn(site: SiteKey, driver: BaseDriver): Promise<void> {
+    const cached = this.getAuthStateEntry(site);
+    if (this.isFreshVerifiedAuth(cached)) {
+      // 缓存命中时仍进行一次快速探测，避免“已退出登录但缓存仍有效”导致误判
+      try {
+        const stillLoggedIn = await driver.isLoggedIn();
+        if (stillLoggedIn) {
+          console.log(`[WebDriver] ${site} 命中登录缓存且探测通过，跳过登录闸门`);
+          return;
+        }
+      } catch {
+        // 继续走后续登录流程
+      }
+      this.markAuthInvalid(site);
+    }
+
     const loggedIn = await driver.isLoggedIn();
-    if (!loggedIn) {
-      const siteUrl = SITE_URLS[site];
-      const hint = `请在浏览器中登录 ${siteUrl}，登录完成后系统将自动继续。`;
-      console.log(`[WebDriver] ${hint}`);
+    if (loggedIn) {
+      this.markAuthVerified(site);
+      return;
+    }
 
-      // 打开浏览器并显示提示
-      await this.openBrowser(siteUrl, hint);
+    const siteUrl = SITE_URLS[site];
+    const hint = `请在浏览器中登录 ${siteUrl}，登录完成后系统将自动继续。`;
+    console.log(`[WebDriver] ${hint}`);
 
-      // 轮询检测登录状态（最多等 5 分钟）
-      const maxWait = 5 * 60 * 1000;
-      const checkInterval = 3000;
-      const startTime = Date.now();
+    await this.openBrowser(siteUrl, hint);
 
-      while (Date.now() - startTime < maxWait) {
-        await new Promise((r) => setTimeout(r, checkInterval));
+    const maxWait = this.options.loginWaitTimeoutMs;
+    const checkInterval = this.options.loginCheckIntervalMs;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, checkInterval));
+      try {
         const isNowLoggedIn = await driver.isLoggedIn();
         if (isNowLoggedIn) {
+          this.markAuthVerified(site);
           console.log(`[WebDriver] ${site} 登录成功`);
           return;
         }
+      } catch {
+        // 忽略单次探测异常，继续等待
       }
-
-      throw new WebDriverError(
-        WebDriverErrorCode.NOT_LOGGED_IN,
-        `等待登录超时（5分钟），请重新尝试`
-      );
     }
+
+    this.markAuthInvalid(site);
+    throw new WebDriverError(
+      WebDriverErrorCode.NOT_LOGGED_IN,
+      `等待登录超时（${Math.ceil(maxWait / 1000)}秒），请重新尝试`
+    );
+  }
+
+  private getAuthStatePath(): string {
+    return path.join(
+      process.cwd(),
+      config.data?.root_dir ?? './data',
+      'auth-state.json'
+    );
+  }
+
+  private loadAuthState(): AuthStateFile {
+    const authPath = this.getAuthStatePath();
+    if (!fs.existsSync(authPath)) {
+      return { sites: {} };
+    }
+
+    try {
+      const raw = fs.readFileSync(authPath, 'utf-8').trim();
+      if (!raw) return { sites: {} };
+      const parsed = JSON.parse(raw) as AuthStateFile;
+      return { sites: parsed?.sites ?? {} };
+    } catch {
+      return { sites: {} };
+    }
+  }
+
+  private saveAuthState(state: AuthStateFile): void {
+    const authPath = this.getAuthStatePath();
+    fs.mkdirSync(path.dirname(authPath), { recursive: true });
+    fs.writeFileSync(authPath, JSON.stringify(state, null, 2), 'utf-8');
+  }
+
+  private getAuthStateEntry(site: SiteKey): AuthStateEntry | undefined {
+    const state = this.loadAuthState();
+    return state.sites?.[site];
+  }
+
+  private isFreshVerifiedAuth(entry?: AuthStateEntry): boolean {
+    if (!entry || entry.status !== 'verified' || !entry.last_verified_at) return false;
+    const ts = Date.parse(entry.last_verified_at);
+    if (!Number.isFinite(ts)) return false;
+    return Date.now() - ts <= this.options.authCacheTtlMs;
+  }
+
+  private markAuthVerified(site: SiteKey): void {
+    const state = this.loadAuthState();
+    state.sites[site] = {
+      status: 'verified',
+      last_verified_at: new Date().toISOString(),
+      profile_path: this.userDataDir,
+      failure_count: 0,
+    };
+    this.saveAuthState(state);
+  }
+
+  private markAuthInvalid(site: SiteKey): void {
+    const state = this.loadAuthState();
+    const prev = state.sites[site];
+    state.sites[site] = {
+      status: 'invalid',
+      last_verified_at: prev?.last_verified_at,
+      profile_path: this.userDataDir,
+      last_failed_at: new Date().toISOString(),
+      failure_count: (prev?.failure_count ?? 0) + 1,
+    };
+    this.saveAuthState(state);
   }
 
   /**

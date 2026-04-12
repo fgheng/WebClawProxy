@@ -99,15 +99,32 @@ export abstract class BaseDriver implements IWebDriver {
 
     try {
       if (stopSelector) {
-        // 策略 1：等待停止按钮出现 → 再等待其消失
-        // 停止按钮出现说明模型已开始生成，消失说明生成完毕
-        await Promise.race([
+        // 策略 1：等待停止按钮完整生命周期（出现 -> 消失）
+        // 若停止按钮一直未出现，不能直接判定完成，必须回退到内容稳定检测
+        const stopLifecycleDetected = await Promise.race([
           timeoutPromise,
           this.waitBySendButtonRestore(),
         ]);
-        // 停止按钮消失后额外等待 500ms，确保最后一帧内容已写入 DOM
-        await this.sleep(500);
-      } else if (responseSelector) {
+
+        if (stopLifecycleDetected) {
+          // 停止按钮消失后额外等待 500ms，确保最后一帧内容已写入 DOM
+          await this.sleep(500);
+          return;
+        }
+
+        if (responseSelector) {
+          await Promise.race([
+            timeoutPromise,
+            this.waitByContentStability(),
+          ]);
+          return;
+        }
+
+        await this.sleep(5000);
+        return;
+      }
+
+      if (responseSelector) {
         // 策略 2（fallback）：内容稳定性检测
         await Promise.race([
           timeoutPromise,
@@ -132,22 +149,38 @@ export abstract class BaseDriver implements IWebDriver {
    * 等待"停止"按钮消失（即发送按钮恢复）
    * 注意：需要先等待停止按钮出现，再等待其消失，避免误判
    */
-  protected async waitBySendButtonRestore(): Promise<void> {
+  protected async waitBySendButtonRestore(): Promise<boolean> {
     const stopSelector = this.getStopButtonSelector();
-    if (!stopSelector) return;
+    if (!stopSelector) return false;
 
-    // 先等待停止按钮出现（最多等 5s，如果本来就没有停止按钮则跳过）
+    // 先等待停止按钮出现：如果一直没出现，说明可能是平台没有 stop 按钮，交给内容稳定策略处理
+    const stopAppearTimeout = Math.min(this.responseTimeoutMs, 20000);
     try {
-      await this.page.waitForSelector(stopSelector, { timeout: 5000, state: 'visible' });
+      await this.page.waitForSelector(stopSelector, {
+        timeout: stopAppearTimeout,
+        state: 'visible',
+      });
     } catch {
-      // 停止按钮没有出现，可能已经结束了
+      return false;
     }
 
-    // 等待停止按钮消失
+    // 再等待停止按钮消失，表示生成完成
     await this.page.waitForSelector(stopSelector, {
       state: 'hidden',
       timeout: this.responseTimeoutMs,
     });
+
+    // 防抖：确认停止按钮在短时间内没有再次出现
+    await this.sleep(800);
+    const stillVisible = await this.page.$(stopSelector);
+    if (stillVisible) {
+      await this.page.waitForSelector(stopSelector, {
+        state: 'hidden',
+        timeout: this.responseTimeoutMs,
+      });
+    }
+
+    return true;
   }
 
   /**
@@ -175,30 +208,61 @@ export abstract class BaseDriver implements IWebDriver {
       await this.sleep(3000);
     }
 
-    // Step 2: 等待内容「从空变为非空」（模型开始输出）
-    // 最多等 30s
+    // Step 2: 等待内容发生“首个变化”（视为本轮回复开始）
+    // 说明：在某些站点，响应区域里会先有上一轮内容；必须先观察到变化，避免误判为本轮已完成
     const startWait = Date.now();
+    let baselineContent = '';
+    let lastContent = '';
+    let hasObservedChange = false;
+
+    try {
+      baselineContent = await this.page.evaluate(
+        ([sel]: [string]) => {
+          const nodes = (globalThis as any).document.querySelectorAll(sel as string);
+          const el = nodes.length > 0 ? nodes[nodes.length - 1] : null;
+          return el ? (el.textContent || '').trim() : '';
+        },
+        [responseSelector] as [string]
+      );
+      lastContent = baselineContent;
+    } catch {
+      baselineContent = '';
+      lastContent = '';
+    }
+
     while (Date.now() - startWait < 30000) {
       await this.sleep(500);
       try {
-        const initial = await this.page.evaluate(
+        const current = await this.page.evaluate(
           ([sel]: [string]) => {
-            const el = (globalThis as any).document.querySelector(sel as string);
+            const nodes = (globalThis as any).document.querySelectorAll(sel as string);
+            const el = nodes.length > 0 ? nodes[nodes.length - 1] : null;
             return el ? (el.textContent || '').trim() : '';
           },
           [responseSelector] as [string]
         );
-        if (initial.length > 0) break;
+
+        if (current.length > 0 && current !== baselineContent) {
+          hasObservedChange = true;
+          lastContent = current;
+          break;
+        }
       } catch {
         // 继续等待
       }
+    }
+
+    if (!hasObservedChange) {
+      throw new WebDriverError(
+        WebDriverErrorCode.RESPONSE_TIMEOUT,
+        '未观察到模型开始输出新响应'
+      );
     }
 
     // Step 3: 稳定性计数（间隔 1500ms，连续 3 次相同即认为完成）
     // 同时要求内容长度 > 0，防止空内容误判
     const checkInterval = Math.max(this.stabilityCheckIntervalMs, 1500);
     let stableCount = 0;
-    let lastContent = '';
 
     while (stableCount < this.stabilityCheckCount) {
       await this.sleep(checkInterval);
@@ -207,7 +271,8 @@ export abstract class BaseDriver implements IWebDriver {
       try {
         currentContent = await this.page.evaluate(
           ([selector]: [string]) => {
-            const el = (globalThis as any).document.querySelector(selector as string);
+            const nodes = (globalThis as any).document.querySelectorAll(selector as string);
+            const el = nodes.length > 0 ? nodes[nodes.length - 1] : null;
             return el ? (el.textContent || '').trim() : '';
           },
           [responseSelector] as [string]

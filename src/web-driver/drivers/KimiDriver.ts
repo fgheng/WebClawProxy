@@ -10,7 +10,7 @@ import { WebDriverError, WebDriverErrorCode } from '../types';
  * - responseArea: 使用 [class*="segment"] 等 Kimi 特有 class，缩小匹配范围
  */
 const SELECTORS = {
-  loginIndicator: '[class*="user-avatar"], [class*="account"], [class*="user-info"]',
+  loginIndicator: '[class*="user-avatar"], [class*="account"], [data-testid*="user"]',
   newChatButton: 'button[class*="new"], [class*="new-chat"], [data-testid*="new"]',
   inputArea: 'textarea, [contenteditable="true"][class*="input"]',
   sendButton: 'button[class*="send"], [class*="send-button"], button[type="submit"]',
@@ -55,12 +55,10 @@ export class KimiDriver extends BaseDriver {
       if (currentUrl.includes('/login') || currentUrl.includes('/signin')) {
         return false;
       }
-      try {
-        await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 5000 });
-        return true;
-      } catch {
-        return !currentUrl.includes('/login');
-      }
+
+      // Kimi 可能支持未登录访问部分能力，必须以账号态 UI 为准
+      await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 5000 });
+      return true;
     } catch {
       return false;
     }
