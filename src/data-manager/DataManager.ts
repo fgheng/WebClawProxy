@@ -10,7 +10,6 @@ import {
   buildCurrentPrompt,
   buildToolsPrompt,
   buildInitPrompt,
-  buildCurrentPromptWithTemplate,
   buildCurrentPromptForWebSend,
 } from './utils/prompt';
 import type {} from './utils/prompt';
@@ -107,10 +106,6 @@ export class DataManager {
         customConfig?.initPromptTemplate ??
         config.defaults?.init_prompt_template ??
         '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
-      currentTemplate:
-        customConfig?.currentTemplate ??
-        config.defaults?.current_template ??
-        '请按照下面的模板回答，不要重复用户问题或额外解释\n{{response_schema_template}}\n\n---\n{{current}}',
       userMessageTemplate:
         customConfig?.userMessageTemplate ??
         config.defaults?.user_message_template ??
@@ -399,14 +394,6 @@ export class DataManager {
         total_tokens: prompt_tokens + completion_tokens,
       },
     };
-  }
-
-  get_current_prompt_with_template(): string {
-    return buildCurrentPromptWithTemplate({
-      template: this.config.currentTemplate!,
-      responseSchemaTemplate: this.config.responseSchemaTemplate!,
-      currentPrompt: this.get_current_prompt(),
-    });
   }
 
   get_format_only_retry_prompt(): string {

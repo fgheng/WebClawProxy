@@ -67,7 +67,6 @@ const createTestDataManager = (request: InternalRequest = mockRequest) => {
     responseSchemaTemplate: '{"test": "template"}',
     initPromptTemplate:
       '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
-    currentTemplate: '请按照下面的模板回答\n{{response_schema_template}}\n\n---\n{{current}}',
     userMessageTemplate: '',
   });
 };
@@ -577,11 +576,11 @@ describe('DataManager', () => {
       expect(prompt).toBeTruthy();
     });
 
-    it('get_current_prompt_with_template 应该包含模板和当前内容', () => {
+    it('get_format_only_retry_prompt 应该包含响应模板', () => {
       const dm = createTestDataManager();
-      const prompt = dm.get_current_prompt_with_template();
+      const prompt = dm.get_format_only_retry_prompt();
       expect(prompt).toContain('{"test": "template"}');
-      expect(prompt).toContain('当前消息');
+      expect(prompt).toContain('合法 JSON');
     });
 
     it('get_current_prompt_for_web_send 在模板非空时应进行包装替换', () => {
@@ -594,7 +593,6 @@ describe('DataManager', () => {
         responseSchemaTemplate: '{"test": "template"}',
         initPromptTemplate:
           '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
-        currentTemplate: '请按照下面的模板回答\n{{response_schema_template}}\n\n---\n{{current}}',
         userMessageTemplate: '注意：仅做输出，不执行任何操作！！\n{{content}}',
       });
 

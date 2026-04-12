@@ -10,7 +10,6 @@ export interface DataManagerConfig {
     models: Record<string, string[]>;
     responseSchemaTemplate?: string;
     initPromptTemplate?: string;
-    currentTemplate?: string;
     /** 用户消息发送到网页前的包装模板，支持 {{content}} 占位符 */
     userMessageTemplate?: string;
     /** JSON 重试时仅发送格式提醒的模板，支持 {{response_schema_template}} 占位符 */

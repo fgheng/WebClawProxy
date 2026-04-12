@@ -146,21 +146,6 @@ export function buildInitPrompt(options: {
 }
 
 /**
- * 构造带模板的 current prompt
- */
-export function buildCurrentPromptWithTemplate(options: {
-  template: string;
-  responseSchemaTemplate: string;
-  currentPrompt: string;
-}): string {
-  const { template, responseSchemaTemplate, currentPrompt } = options;
-
-  return template
-    .replace('{{response_schema_template}}', responseSchemaTemplate)
-    .replace('{{current}}', currentPrompt);
-}
-
-/**
  * 构造发送到网页前的用户消息包装
  * - template 为空（或全空白）时，直接返回 currentPrompt
  * - 非空时用 {{content}} 替换当前消息；若未出现占位符，则按原样返回模板

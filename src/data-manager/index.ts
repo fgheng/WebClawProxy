@@ -46,6 +46,5 @@ export {
   buildCurrentPrompt,
   buildToolsPrompt,
   buildInitPrompt,
-  buildCurrentPromptWithTemplate,
   contentToString,
 } from './utils/prompt';

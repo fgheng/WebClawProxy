@@ -6,7 +6,6 @@ exports.buildHistoryPrompt = buildHistoryPrompt;
 exports.buildCurrentPrompt = buildCurrentPrompt;
 exports.buildToolsPrompt = buildToolsPrompt;
 exports.buildInitPrompt = buildInitPrompt;
-exports.buildCurrentPromptWithTemplate = buildCurrentPromptWithTemplate;
 exports.buildCurrentPromptForWebSend = buildCurrentPromptForWebSend;
 function formatNonTextContentItem(item) {
     const { type, ...rest } = item;
@@ -133,15 +132,6 @@ function buildInitPrompt(options) {
         .replace('{{system_prompt}}', systemPrompt)
         .replace('{{tools_prompt}}', toolsPrompt || '（无可用工具）')
         .replace('{{history_prompt}}', historyPrompt || '（无历史记录）');
-}
-/**
- * 构造带模板的 current prompt
- */
-function buildCurrentPromptWithTemplate(options) {
-    const { template, responseSchemaTemplate, currentPrompt } = options;
-    return template
-        .replace('{{response_schema_template}}', responseSchemaTemplate)
-        .replace('{{current}}', currentPrompt);
 }
 /**
  * 构造发送到网页前的用户消息包装

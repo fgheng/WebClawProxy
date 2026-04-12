@@ -32,5 +32,5 @@
 export { DataManager } from './DataManager';
 export { DataManagerConfig, DataManagerError, DataManagerErrorCode, ModelCategory, } from './types';
 export { computeHashKey, computeSystemHash, computeHistoryHash, computeToolsHash } from './utils/hash';
-export { buildSystemPrompt, buildHistoryPrompt, buildCurrentPrompt, buildToolsPrompt, buildInitPrompt, buildCurrentPromptWithTemplate, contentToString, } from './utils/prompt';
+export { buildSystemPrompt, buildHistoryPrompt, buildCurrentPrompt, buildToolsPrompt, buildInitPrompt, contentToString, } from './utils/prompt';
 //# sourceMappingURL=index.d.ts.map

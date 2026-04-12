@@ -20,7 +20,6 @@ const mockDm = {
   get_init_prompt_for_new_session: jest.fn(),
   get_current_prompt: jest.fn(),
   get_current_prompt_for_web_send: jest.fn(),
-  get_current_prompt_with_template: jest.fn(),
   get_response_schema_template: jest.fn(),
   get_format_only_retry_prompt: jest.fn(),
   get_usage: jest.fn(),
@@ -100,7 +99,6 @@ beforeEach(() => {
   mockDm.get_init_prompt_for_new_session.mockReturnValue('初始化 prompt（不含当前轮）');
   mockDm.get_current_prompt.mockReturnValue('你好');
   mockDm.get_current_prompt_for_web_send.mockReturnValue('你好');
-  mockDm.get_current_prompt_with_template.mockReturnValue('带模板的 prompt');
   mockDm.get_response_schema_template.mockReturnValue(
     '{"index":0,"message":{"role":"assistant","content":"文本内容","tool_calls":[]},"logprobs":null,"finish_reason":"stop"}'
   );
@@ -252,7 +250,6 @@ describe('控制模块 API 测试', () => {
 
       expect(res.status).toBe(200);
       expect(mockDm.get_format_only_retry_prompt).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
       expect(mockChat).toHaveBeenNthCalledWith(
         2,
         'deepseek',
@@ -261,7 +258,7 @@ describe('控制模块 API 测试', () => {
       );
     });
 
-    it('短内容 JSON 重试应保持格式+用户内容模板', async () => {
+    it('短内容 JSON 重试应使用格式提醒并在代码内拼接用户内容', async () => {
       mockDm.get_current_prompt_for_web_send.mockReturnValueOnce('短内容');
       mockChat
         .mockResolvedValueOnce({ content: '不是 json' })
@@ -273,13 +270,12 @@ describe('控制模块 API 测试', () => {
         .set('Content-Type', 'application/json');
 
       expect(res.status).toBe(200);
-      expect(mockDm.get_current_prompt_with_template).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_format_only_retry_prompt).not.toHaveBeenCalled();
+      expect(mockDm.get_format_only_retry_prompt).toHaveBeenCalledTimes(1);
       expect(mockChat).toHaveBeenNthCalledWith(
         2,
         'deepseek',
         'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        '带模板的 prompt'
+        '仅格式提醒 prompt\n\n---\n你好'
       );
     });
 
@@ -337,7 +333,6 @@ describe('控制模块 API 测试', () => {
       expect(res.body.model).toBe('deepseek-chat');
       expect(res.body.choices?.[0]?.message?.content).toBe('这是 JSONC 回复');
       expect(mockChat).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
     it('带 BOM/零宽字符/行号噪声的 JSON 也应识别成功，且不触发重试', async () => {
@@ -362,7 +357,6 @@ describe('控制模块 API 测试', () => {
       expect(res.body.object).toBe('chat.completion');
       expect(res.body.choices?.[0]?.message?.content).toBe('带噪声 JSON');
       expect(mockChat).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
     it('GPT 常见 code fence 噪声（copy code/json 标签）应识别 JSON 且不重试', async () => {
@@ -396,7 +390,6 @@ describe('控制模块 API 测试', () => {
       expect(res.body.model).toBe('gpt-4o');
       expect(res.body.choices?.[0]?.message?.content).toBe('GPT JSON 正常');
       expect(mockChat).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
     it('非 json 语言标记 code fence（如 ```javascript）包裹 JSON 也应识别', async () => {
@@ -427,7 +420,6 @@ describe('控制模块 API 测试', () => {
       expect(res.status).toBe(200);
       expect(res.body.choices?.[0]?.message?.content).toBe('JS Fence JSON');
       expect(mockChat).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
     it('Qwen tool_calls 场景：arguments 内嵌 JSON 字符串未转义时也应被修复并解析成功', async () => {
@@ -479,7 +471,6 @@ describe('控制模块 API 测试', () => {
       expect(res.body.model).toBe('qwen');
       expect(res.body.choices?.[0]?.message?.content).toBe('正在为您读取 downloads/player.txt 文件内容...');
       expect(mockChat).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
     it('Qwen 内容字段包含未转义双引号时也应修复并解析成功', async () => {
@@ -512,7 +503,6 @@ describe('控制模块 API 测试', () => {
       expect(res.body.model).toBe('qwen');
       expect(res.body.choices?.[0]?.message?.content).toContain('qw 哥');
       expect(mockChat).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
     it('Qwen 首轮回复截断时应触发重试并在二次成功后返回', async () => {
@@ -546,7 +536,7 @@ describe('控制模块 API 测试', () => {
       expect(res.status).toBe(200);
       expect(res.body.choices?.[0]?.message?.content).toBe('二次重试后的完整 JSON');
       expect(mockChat).toHaveBeenCalledTimes(2);
-      expect(mockDm.get_current_prompt_with_template).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_format_only_retry_prompt).toHaveBeenCalledTimes(1);
     });
 
     it('无效的请求格式应该返回 400', async () => {
@@ -585,7 +575,6 @@ describe('控制模块 API 测试', () => {
       });
       expect(res.body.error.message).toContain('已达到使用额度上限');
       expect(mockChat).toHaveBeenCalledTimes(1);
-      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
     it('遇到上游服务繁忙时应该返回 503', async () => {

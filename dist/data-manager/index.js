@@ -31,7 +31,7 @@
  * ```
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.contentToString = exports.buildCurrentPromptWithTemplate = exports.buildInitPrompt = exports.buildToolsPrompt = exports.buildCurrentPrompt = exports.buildHistoryPrompt = exports.buildSystemPrompt = exports.computeToolsHash = exports.computeHistoryHash = exports.computeSystemHash = exports.computeHashKey = exports.DataManagerErrorCode = exports.DataManagerError = exports.DataManager = void 0;
+exports.contentToString = exports.buildInitPrompt = exports.buildToolsPrompt = exports.buildCurrentPrompt = exports.buildHistoryPrompt = exports.buildSystemPrompt = exports.computeToolsHash = exports.computeHistoryHash = exports.computeSystemHash = exports.computeHashKey = exports.DataManagerErrorCode = exports.DataManagerError = exports.DataManager = void 0;
 var DataManager_1 = require("./DataManager");
 Object.defineProperty(exports, "DataManager", { enumerable: true, get: function () { return DataManager_1.DataManager; } });
 var types_1 = require("./types");
@@ -49,6 +49,5 @@ Object.defineProperty(exports, "buildHistoryPrompt", { enumerable: true, get: fu
 Object.defineProperty(exports, "buildCurrentPrompt", { enumerable: true, get: function () { return prompt_1.buildCurrentPrompt; } });
 Object.defineProperty(exports, "buildToolsPrompt", { enumerable: true, get: function () { return prompt_1.buildToolsPrompt; } });
 Object.defineProperty(exports, "buildInitPrompt", { enumerable: true, get: function () { return prompt_1.buildInitPrompt; } });
-Object.defineProperty(exports, "buildCurrentPromptWithTemplate", { enumerable: true, get: function () { return prompt_1.buildCurrentPromptWithTemplate; } });
 Object.defineProperty(exports, "contentToString", { enumerable: true, get: function () { return prompt_1.contentToString; } });
 //# sourceMappingURL=index.js.map

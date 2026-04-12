@@ -77,7 +77,6 @@ export declare class DataManager {
             total_tokens: number;
         };
     };
-    get_current_prompt_with_template(): string;
     get_format_only_retry_prompt(): string;
     /**
      * 发送到网页前的用户消息包装。
