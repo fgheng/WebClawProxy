@@ -40,6 +40,11 @@ export declare class WebDriverManager {
      */
     chat(site: SiteKey, sessionUrl: string, message: string): Promise<ChatResult>;
     /**
+     * 仅发送并等待完成，不提取回复内容。
+     * 用于长文本分段发送时的前置分段。
+     */
+    sendOnly(site: SiteKey, sessionUrl: string, message: string): Promise<void>;
+    /**
      * 浏览器弹出服务
      *
      * @param url 要打开的链接
@@ -48,6 +53,7 @@ export declare class WebDriverManager {
     openBrowser(url: string, hint?: string): Promise<void>;
     preflightConfiguredSites(sites?: SiteKey[]): Promise<void>;
     openConfiguredSites(sites?: SiteKey[]): Promise<void>;
+    private executeSendFlow;
     private openSitePage;
     /**
      * 关闭浏览器，释放资源

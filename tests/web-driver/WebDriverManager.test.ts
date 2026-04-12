@@ -443,6 +443,29 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
       mockDriver.sendMessage.mock.invocationCallOrder[0]
     );
   });
+
+  it('sendOnly: 应执行发送与等待，但不提取响应内容', async () => {
+    const mockDriver = {
+      isValidConversationUrl: jest.fn().mockReturnValue(true),
+      getConversationUrl: jest.fn().mockResolvedValue('https://chatgpt.com/c/new'),
+      navigateToConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+      extractResponse: jest.fn().mockResolvedValue('should-not-be-used'),
+    } as any;
+
+    jest.spyOn(manager as any, 'ensureBrowser').mockResolvedValue(undefined);
+    jest.spyOn(manager as any, 'getOrCreateDriver').mockResolvedValue(mockDriver);
+    const readySpy = jest.spyOn(manager as any, 'waitForPageReadyBeforeSend').mockResolvedValue(undefined);
+
+    await expect(manager.sendOnly('gpt', 'https://chatgpt.com/c/new', 'chunk-1')).resolves.toBeUndefined();
+
+    expect(readySpy).toHaveBeenCalledWith('gpt');
+    expect(mockDriver.sendMessage).toHaveBeenCalledWith('chunk-1');
+    expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(1);
+    expect(mockDriver.extractResponse).not.toHaveBeenCalled();
+    expect(mockDriver.navigateToConversation).not.toHaveBeenCalled();
+  });
 });
 
 describe('QwenDriver 运行态问题回归', () => {

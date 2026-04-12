@@ -511,6 +511,89 @@ function buildContentPreview(content, maxLength = 200) {
         .replace(/\s+/g, ' ')
         .slice(0, maxLength);
 }
+function getWebInputConfig() {
+    return (config.web_input ?? {});
+}
+function getProviderInputCharLimitByModel(model) {
+    const providers = getProviderConfigMap();
+    for (const provider of Object.values(providers)) {
+        const modelList = provider.models ?? [];
+        if (modelList.some((m) => m.toLowerCase() === model.toLowerCase())) {
+            const limit = provider.input_max_chars;
+            return typeof limit === 'number' && limit > 0 ? limit : undefined;
+        }
+    }
+    const fallbackSite = inferSiteFromModel(model);
+    const fallbackProvider = providers[fallbackSite];
+    const fallbackLimit = fallbackProvider?.input_max_chars;
+    return typeof fallbackLimit === 'number' && fallbackLimit > 0 ? fallbackLimit : undefined;
+}
+function splitPromptByLimit(prompt, maxChars) {
+    if (!maxChars || maxChars <= 0 || prompt.length <= maxChars) {
+        return [prompt];
+    }
+    const chunks = [];
+    let cursor = 0;
+    while (cursor < prompt.length) {
+        const end = Math.min(cursor + maxChars, prompt.length);
+        let cut = end;
+        if (end < prompt.length) {
+            const window = prompt.slice(cursor, end);
+            const paragraphCut = window.lastIndexOf('\n\n');
+            const lineCut = window.lastIndexOf('\n');
+            const softCut = Math.max(paragraphCut, lineCut);
+            if (softCut > Math.floor(maxChars * 0.4)) {
+                cut = cursor + softCut;
+            }
+        }
+        if (cut <= cursor) {
+            cut = end;
+        }
+        chunks.push(prompt.slice(cursor, cut));
+        cursor = cut;
+    }
+    return chunks.filter((c) => c.length > 0);
+}
+function buildChunkPrompt(chunk, chunkIndex, chunkTotal) {
+    if (chunkTotal <= 1)
+        return chunk;
+    const seq = `${chunkIndex + 1}/${chunkTotal}`;
+    const startMarker = `<|wc_chunk_start:${seq}|>`;
+    const endMarker = `<|wc_chunk_end:${seq}|>`;
+    const allEndMarker = '<|wc_all_chunks_end|>';
+    const wrappedChunk = [startMarker, chunk, endMarker].join('\n');
+    if (chunkIndex === 0) {
+        return [
+            `【分段输入 ${seq}】后续内容较长，将分段发送。`,
+            `当你看到 ${startMarker} 到 ${endMarker} 时，表示一个分段内容。`,
+            `在看到 ${allEndMarker} 之前，你只能回复“收到”，不要正式回答。`,
+            '---',
+            wrappedChunk,
+            '请仅回复：收到',
+        ].join('\n');
+    }
+    if (chunkIndex < chunkTotal - 1) {
+        return [
+            `【分段输入 ${seq}】中间分段。`,
+            wrappedChunk,
+            '请仅回复：收到',
+        ].join('\n');
+    }
+    return [
+        `【分段输入 ${seq}】最后一段。`,
+        wrappedChunk,
+        allEndMarker,
+        '以上分段输入全部结束。请基于全部分段内容进行正式回答。',
+    ].join('\n');
+}
+function shouldUseFormatOnlyRetry(options) {
+    if (options.chunked)
+        return true;
+    const threshold = getWebInputConfig().retry_format_only_threshold_chars;
+    if (typeof threshold !== 'number' || threshold <= 0)
+        return false;
+    return options.originalPromptLength > threshold;
+}
 /**
  * POST /v1/chat/completions — OpenAI 兼容接口处理器
  */
@@ -643,16 +726,17 @@ async function chatCompletionsHandler(req, res, next) {
         }
         // ===== Step 6: 发送当前消息 =====
         const currentPrompt = dm.get_current_prompt_for_web_send();
+        const providerInputCharLimit = getProviderInputCharLimitByModel(internalReq.model);
+        const promptChunks = splitPromptByLimit(currentPrompt, providerInputCharLimit);
+        const isChunkedInput = promptChunks.length > 1;
         logRequestTrace(traceId, 'chat_dispatch', {
             site,
             session_url: sessionUrl,
             current_prompt_length: currentPrompt.length,
+            provider_input_char_limit: providerInputCharLimit ?? null,
+            chunk_count: promptChunks.length,
         });
-        let chatResult;
-        try {
-            chatResult = await webDriver.chat(site, sessionUrl, currentPrompt);
-        }
-        catch (err) {
+        const handleDispatchError = (err) => {
             if (err instanceof types_1.WebDriverError) {
                 if (err.code === types_1.WebDriverErrorCode.INVALID_SESSION_URL) {
                     // session 失效，取消链接状态，让下次重新初始化
@@ -664,7 +748,7 @@ async function chatCompletionsHandler(req, res, next) {
                             code: 'invalid_session_url',
                         },
                     });
-                    return;
+                    return true;
                 }
                 if (err.code === types_1.WebDriverErrorCode.RESPONSE_TIMEOUT) {
                     res.status(408).json({
@@ -674,9 +758,26 @@ async function chatCompletionsHandler(req, res, next) {
                             code: 'response_timeout',
                         },
                     });
-                    return;
+                    return true;
                 }
-                throw err;
+            }
+            return false;
+        };
+        let chatResult;
+        try {
+            if (isChunkedInput) {
+                for (let i = 0; i < promptChunks.length - 1; i++) {
+                    const chunkPrompt = buildChunkPrompt(promptChunks[i], i, promptChunks.length);
+                    await webDriver.sendOnly(site, sessionUrl, chunkPrompt);
+                }
+            }
+            const finalChunkIndex = promptChunks.length - 1;
+            const finalPrompt = buildChunkPrompt(promptChunks[finalChunkIndex], finalChunkIndex, promptChunks.length);
+            chatResult = await webDriver.chat(site, sessionUrl, finalPrompt);
+        }
+        catch (err) {
+            if (handleDispatchError(err)) {
+                return;
             }
             throw err;
         }
@@ -695,7 +796,13 @@ async function chatCompletionsHandler(req, res, next) {
         while (!parsedJson && !upstreamError && retryCount < maxRetries) {
             console.log(`[Controller] 模型未返回 JSON 格式，重新发送（第 ${retryCount + 1} 次）... ` +
                 `preview=${responseContent.slice(0, 160).replace(/\s+/g, ' ')}`);
-            const templatePrompt = dm.get_current_prompt_with_template();
+            const formatOnlyRetry = shouldUseFormatOnlyRetry({
+                chunked: isChunkedInput,
+                originalPromptLength: currentPrompt.length,
+            });
+            const templatePrompt = formatOnlyRetry
+                ? dm.get_format_only_retry_prompt()
+                : dm.get_current_prompt_with_template();
             try {
                 const retryResult = await webDriver.chat(site, sessionUrl, templatePrompt);
                 responseContent = retryResult.content;
@@ -703,13 +810,17 @@ async function chatCompletionsHandler(req, res, next) {
                 upstreamError = detectUpstreamServiceError(responseContent);
                 logRequestTrace(traceId, 'json_extract_retry', {
                     retry_index: retryCount + 1,
+                    prompt_mode: formatOnlyRetry ? 'format_only' : 'format_plus_user',
                     content_length: responseContent.length,
                     parsed_json: Boolean(parsedJson),
                     upstream_error: Boolean(upstreamError),
                     content_preview: buildContentPreview(responseContent),
                 });
             }
-            catch {
+            catch (err) {
+                if (handleDispatchError(err)) {
+                    return;
+                }
                 break;
             }
             retryCount++;

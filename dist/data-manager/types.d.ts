@@ -13,6 +13,8 @@ export interface DataManagerConfig {
     currentTemplate?: string;
     /** 用户消息发送到网页前的包装模板，支持 {{content}} 占位符 */
     userMessageTemplate?: string;
+    /** JSON 重试时仅发送格式提醒的模板，支持 {{json_template}} 占位符 */
+    formatOnlyRetryTemplate?: string;
     /** session-index 最多保留的 hash 条目数（按 updated_at 取最近） */
     sessionIndexMaxEntries?: number;
 }

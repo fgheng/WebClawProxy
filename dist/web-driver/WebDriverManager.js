@@ -180,33 +180,17 @@ class WebDriverManager {
      * @returns 模型的响应内容
      */
     async chat(site, sessionUrl, message) {
-        await this.ensureBrowser();
-        const driver = await this.getOrCreateDriver(site);
-        // 登录态检查在服务启动预检阶段完成，chat 路径不再重复检查
-        // 2. 验证 session URL 有效性
-        if (!driver.isValidConversationUrl(sessionUrl)) {
-            throw new types_1.WebDriverError(types_1.WebDriverErrorCode.INVALID_SESSION_URL, `session URL 无效: ${sessionUrl}，请重新调用 initConversation 获取新链接`);
-        }
-        // 3. 跳转到对话（如果已经在目标页面，跳过导航，避免刷新页面打断模型输出）
-        const currentUrl = await driver.getConversationUrl();
-        if (currentUrl !== sessionUrl) {
-            console.log(`[WebDriver] 跳转到对话: ${sessionUrl}`);
-            await driver.navigateToConversation(sessionUrl);
-            // 跳转后等待页面稳定，再发送消息
-            await this.waitForPageReadyBeforeSend(site);
-        }
-        else {
-            console.log(`[WebDriver] 已在目标对话页面，跳过导航`);
-            // 即使未跳转，也做一次轻量稳定等待，避免页面刚切换完成时输入丢失
-            await this.waitForPageReadyBeforeSend(site);
-        }
-        // 4. 发送消息
-        await driver.sendMessage(message);
-        // 5. 等待响应完成
-        await driver.waitForResponse();
+        const driver = await this.executeSendFlow(site, sessionUrl, message);
         // 6. 提取响应
         const content = await driver.extractResponse();
         return { content };
+    }
+    /**
+     * 仅发送并等待完成，不提取回复内容。
+     * 用于长文本分段发送时的前置分段。
+     */
+    async sendOnly(site, sessionUrl, message) {
+        await this.executeSendFlow(site, sessionUrl, message);
     }
     /**
      * 浏览器弹出服务
@@ -270,6 +254,33 @@ class WebDriverManager {
             console.log(`[WebDriver] 启动打开站点：${site} -> ${siteUrl}`);
             await this.openSitePage(site);
         }
+    }
+    async executeSendFlow(site, sessionUrl, message) {
+        await this.ensureBrowser();
+        const driver = await this.getOrCreateDriver(site);
+        // 登录态检查在服务启动预检阶段完成，chat 路径不再重复检查
+        // 2. 验证 session URL 有效性
+        if (!driver.isValidConversationUrl(sessionUrl)) {
+            throw new types_1.WebDriverError(types_1.WebDriverErrorCode.INVALID_SESSION_URL, `session URL 无效: ${sessionUrl}，请重新调用 initConversation 获取新链接`);
+        }
+        // 3. 跳转到对话（如果已经在目标页面，跳过导航，避免刷新页面打断模型输出）
+        const currentUrl = await driver.getConversationUrl();
+        if (currentUrl !== sessionUrl) {
+            console.log(`[WebDriver] 跳转到对话: ${sessionUrl}`);
+            await driver.navigateToConversation(sessionUrl);
+            // 跳转后等待页面稳定，再发送消息
+            await this.waitForPageReadyBeforeSend(site);
+        }
+        else {
+            console.log(`[WebDriver] 已在目标对话页面，跳过导航`);
+            // 即使未跳转，也做一次轻量稳定等待，避免页面刚切换完成时输入丢失
+            await this.waitForPageReadyBeforeSend(site);
+        }
+        // 4. 发送消息
+        await driver.sendMessage(message);
+        // 5. 等待响应完成
+        await driver.waitForResponse();
+        return driver;
     }
     async openSitePage(site) {
         if (!this.context) {

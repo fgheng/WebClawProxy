@@ -89,6 +89,9 @@ class DataManager {
             userMessageTemplate: customConfig?.userMessageTemplate ??
                 config.defaults?.user_message_template ??
                 '',
+            formatOnlyRetryTemplate: customConfig?.formatOnlyRetryTemplate ??
+                config.defaults?.format_only_retry_template ??
+                '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{json_template}}',
             sessionIndexMaxEntries: customConfig?.sessionIndexMaxEntries ??
                 config.session_index?.max_entries ??
                 120,
@@ -321,6 +324,11 @@ class DataManager {
             jsonTemplate: this.config.jsonTemplate,
             currentPrompt: this.get_current_prompt(),
         });
+    }
+    get_format_only_retry_prompt() {
+        const template = this.config.formatOnlyRetryTemplate ??
+            '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{json_template}}';
+        return template.replace('{{json_template}}', this.config.jsonTemplate ?? '');
     }
     /**
      * 发送到网页前的用户消息包装。

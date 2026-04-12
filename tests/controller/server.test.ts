@@ -2,6 +2,7 @@ import request from 'supertest';
 
 const mockInitConversation = jest.fn();
 const mockChat = jest.fn();
+const mockSendOnly = jest.fn();
 const mockOpenBrowser = jest.fn();
 const mockClose = jest.fn();
 
@@ -20,6 +21,8 @@ const mockDm = {
   get_current_prompt: jest.fn(),
   get_current_prompt_for_web_send: jest.fn(),
   get_current_prompt_with_template: jest.fn(),
+  get_json_template: jest.fn(),
+  get_format_only_retry_prompt: jest.fn(),
   get_usage: jest.fn(),
   update_web_url: jest.fn(),
   get_web_url: jest.fn(),
@@ -34,6 +37,7 @@ jest.mock('../../src/web-driver/WebDriverManager', () => {
     WebDriverManager: jest.fn().mockImplementation(() => ({
       initConversation: mockInitConversation,
       chat: mockChat,
+      sendOnly: mockSendOnly,
       openBrowser: mockOpenBrowser,
       close: mockClose,
     })),
@@ -80,6 +84,7 @@ beforeEach(() => {
     content: buildOpenAIJsonResponse(),
   });
   mockOpenBrowser.mockResolvedValue(undefined);
+  mockSendOnly.mockResolvedValue(undefined);
   mockClose.mockResolvedValue(undefined);
 
   mockDm.model = 'deepseek-chat';
@@ -96,6 +101,10 @@ beforeEach(() => {
   mockDm.get_current_prompt.mockReturnValue('你好');
   mockDm.get_current_prompt_for_web_send.mockReturnValue('你好');
   mockDm.get_current_prompt_with_template.mockReturnValue('带模板的 prompt');
+  mockDm.get_json_template.mockReturnValue(
+    '{"index":0,"message":{"role":"assistant","content":"文本内容","tool_calls":[]},"logprobs":null,"finish_reason":"stop"}'
+  );
+  mockDm.get_format_only_retry_prompt.mockReturnValue('仅格式提醒 prompt');
   mockDm.get_usage.mockReturnValue({
     usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
   });
@@ -159,6 +168,119 @@ describe('控制模块 API 测试', () => {
         .set('Content-Type', 'application/json');
 
       expect(res.status).toBe(200);
+    });
+
+    it('长输入应按 provider 限长分段发送，且遵循 start/end/all_end 协议', async () => {
+      mockDm.model = 'gpt-4o';
+      const longPrompt = 'A'.repeat(13050);
+      mockDm.get_current_prompt_for_web_send.mockReturnValueOnce(longPrompt);
+      mockChat.mockResolvedValueOnce({
+        content: buildOpenAIJsonResponse('最后一段的最终回答'),
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send({
+          ...openAIRequest,
+          model: 'gpt-4o',
+        })
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(mockSendOnly).toHaveBeenCalledTimes(1);
+      expect(mockSendOnly).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('【分段输入 1/2】')
+      );
+      expect(mockSendOnly).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('<|wc_chunk_start:1/2|>')
+      );
+      expect(mockSendOnly).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('<|wc_chunk_end:1/2|>')
+      );
+      expect(mockSendOnly).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('请仅回复：收到')
+      );
+
+      expect(mockChat).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('【分段输入 2/2】')
+      );
+      expect(mockChat).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('<|wc_chunk_start:2/2|>')
+      );
+      expect(mockChat).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('<|wc_chunk_end:2/2|>')
+      );
+      expect(mockChat).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('<|wc_all_chunks_end|>')
+      );
+      expect(mockChat).toHaveBeenCalledWith(
+        'gpt',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        expect.stringContaining('请基于全部分段内容进行正式回答')
+      );
+
+      expect(res.body.choices?.[0]?.message?.content).toBe('最后一段的最终回答');
+    });
+
+    it('长内容但未分段时，JSON 重试应使用仅格式提醒', async () => {
+      mockDm.model = 'deepseek-chat';
+      mockDm.get_current_prompt_for_web_send.mockReturnValueOnce('B'.repeat(4001));
+      mockChat
+        .mockResolvedValueOnce({ content: '这不是 json' })
+        .mockResolvedValueOnce({ content: buildOpenAIJsonResponse('格式重试成功') });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(mockDm.get_format_only_retry_prompt).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+      expect(mockChat).toHaveBeenNthCalledWith(
+        2,
+        'deepseek',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        '仅格式提醒 prompt'
+      );
+    });
+
+    it('短内容 JSON 重试应保持格式+用户内容模板', async () => {
+      mockDm.get_current_prompt_for_web_send.mockReturnValueOnce('短内容');
+      mockChat
+        .mockResolvedValueOnce({ content: '不是 json' })
+        .mockResolvedValueOnce({ content: buildOpenAIJsonResponse('模板重试成功') });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(mockDm.get_current_prompt_with_template).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_format_only_retry_prompt).not.toHaveBeenCalled();
+      expect(mockChat).toHaveBeenNthCalledWith(
+        2,
+        'deepseek',
+        'https://chat.deepseek.com/a/chat/s/mock_session_123',
+        '带模板的 prompt'
+      );
     });
 
     it('已链接且 usage 超过阈值时应切换到新会话并使用新 URL 发送消息', async () => {

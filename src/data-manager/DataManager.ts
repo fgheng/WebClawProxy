@@ -107,11 +107,15 @@ export class DataManager {
       currentTemplate:
         customConfig?.currentTemplate ??
         config.defaults?.current_template ??
-        '请按照下面的模板回答\n{{json_template}}\n\n---\n{{current}}',
+        '请按照下面的模板回答，不要重复用户问题或额外解释\n{{json_template}}\n\n---\n{{current}}',
       userMessageTemplate:
         customConfig?.userMessageTemplate ??
         config.defaults?.user_message_template ??
         '',
+      formatOnlyRetryTemplate:
+        customConfig?.formatOnlyRetryTemplate ??
+        config.defaults?.format_only_retry_template ??
+        '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{json_template}}',
       sessionIndexMaxEntries:
         customConfig?.sessionIndexMaxEntries ??
         config.session_index?.max_entries ??
@@ -339,6 +343,10 @@ export class DataManager {
     return buildToolsPrompt(this.tools);
   }
 
+  get_json_template(): string {
+    return this.config.jsonTemplate ?? '';
+  }
+
   get_init_prompt(): string {
     return buildInitPrompt({
       template: this.config.initPromptTemplate!,
@@ -396,6 +404,13 @@ export class DataManager {
       jsonTemplate: this.config.jsonTemplate!,
       currentPrompt: this.get_current_prompt(),
     });
+  }
+
+  get_format_only_retry_prompt(): string {
+    const template =
+      this.config.formatOnlyRetryTemplate ??
+      '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{json_template}}';
+    return template.replace('{{json_template}}', this.config.jsonTemplate ?? '');
   }
 
   /**
