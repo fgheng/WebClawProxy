@@ -494,17 +494,24 @@ export class WebDriverManager {
   private async ensureLoggedIn(site: SiteKey, driver: BaseDriver): Promise<void> {
     const cached = this.getAuthStateEntry(site);
     if (this.isFreshVerifiedAuth(cached)) {
-      // 缓存命中时仍进行一次快速探测，避免“已退出登录但缓存仍有效”导致误判
+      // 缓存命中优先快速放行，避免单次探测抖动导致误触发登录引导
+      // 对 qwen 这类可匿名访问但登录态 UI 可能延迟刷新的站点，采用“失败宽容”策略：
+      // - 探测成功：刷新 verified 时间并放行
+      // - 探测失败：保留缓存，继续放行（不立刻置 invalid）
       try {
         const stillLoggedIn = await driver.isLoggedIn();
         if (stillLoggedIn) {
+          this.markAuthVerified(site);
           console.log(`[WebDriver] ${site} 命中登录缓存且探测通过，跳过登录闸门`);
           return;
         }
+
+        console.log(`[WebDriver] ${site} 命中登录缓存但探测未通过，采用缓存放行并等待后续请求再校验`);
+        return;
       } catch {
-        // 继续走后续登录流程
+        console.log(`[WebDriver] ${site} 命中登录缓存但探测异常，采用缓存放行`);
+        return;
       }
-      this.markAuthInvalid(site);
     }
 
     const loggedIn = await driver.isLoggedIn();
