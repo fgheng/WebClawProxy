@@ -33,6 +33,12 @@ export interface WebDriverManagerOptions {
   stabilityCheckIntervalMs?: number;
   /** 连续稳定次数才认为完成，默认 3 */
   stabilityCheckCount?: number;
+  /** 登录态缓存有效期（ms），默认 10 分钟 */
+  authCacheTtlMs?: number;
+  /** 人工登录最长等待时间（ms），默认 5 分钟 */
+  loginWaitTimeoutMs?: number;
+  /** 人工登录轮询间隔（ms），默认 3 秒 */
+  loginCheckIntervalMs?: number;
 }
 
 /**

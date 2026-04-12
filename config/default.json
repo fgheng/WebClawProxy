@@ -35,6 +35,9 @@
     "response_timeout_ms": 120000,
     "stability_check_interval_ms": 500,
     "stability_check_count": 3,
-    "headless": false
+    "headless": false,
+    "auth_cache_ttl_ms": 600000,
+    "login_wait_timeout_ms": 300000,
+    "login_check_interval_ms": 3000
   }
 }
