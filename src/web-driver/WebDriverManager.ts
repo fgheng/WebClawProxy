@@ -520,12 +520,25 @@ export class WebDriverManager {
     await this.openBrowser(siteUrl, hint);
 
     const maxWait = this.options.loginWaitTimeoutMs;
-    const checkInterval = this.options.loginCheckIntervalMs;
+    const checkInterval = site === 'qwen'
+      ? Math.min(this.options.loginCheckIntervalMs, 1000)
+      : this.options.loginCheckIntervalMs;
     const startTime = Date.now();
+    let checkCount = 0;
 
     while (Date.now() - startTime < maxWait) {
       await new Promise((r) => setTimeout(r, checkInterval));
+      checkCount++;
       try {
+        // Qwen 登录后页面有时不会立即反映账号态，每 5 次探测轻量刷新一次主页
+        if (site === 'qwen' && checkCount % 5 === 0) {
+          const page = this.pageMap.get(site);
+          if (page) {
+            await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            await new Promise((r) => setTimeout(r, 300));
+          }
+        }
+
         const isNowLoggedIn = await driver.isLoggedIn();
         if (isNowLoggedIn) {
           this.markAuthVerified(site);

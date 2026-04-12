@@ -10,7 +10,14 @@ import { WebDriverError, WebDriverErrorCode } from '../types';
  * - responseArea: 优先使用 data-role/data-message-role 语义属性定位助手消息
  */
 const SELECTORS = {
-  loginIndicator: '[class*="user-avatar"], [class*="account"], [data-testid*="user"]',
+  // Qwen 登录态：优先使用头像/用户菜单按钮等强信号，避免误判匿名可用状态
+  loginIndicator: [
+    '[data-testid*="user"]',
+    '[data-testid*="avatar"]',
+    'button[aria-haspopup="menu"][class*="user"]',
+    'button[class*="user-avatar"]',
+    '[class*="account"] [class*="avatar"]',
+  ].join(', '),
   newChatButton: '[class*="new-chat"], button[title*="新建"], button[title*="New"]',
   newChatButtonAlt: 'button[class*="new"], [data-testid*="new"]',
   inputArea: 'textarea, [contenteditable="true"]',
@@ -60,7 +67,7 @@ export class QwenDriver extends BaseDriver {
       const currentUrl = this.page.url();
       if (!currentUrl.includes('qwen.ai') && !currentUrl.includes('aliyun.com')) {
         await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await this.sleep(2000);
+        await this.sleep(800);
       }
       const url = this.page.url();
       if (url.includes('/login') || url.includes('/signin')) {
@@ -69,7 +76,7 @@ export class QwenDriver extends BaseDriver {
 
       // Qwen 支持未登录匿名聊天，不能用“非 /login 页面”判断已登录。
       // 必须检测到明确的账号态 UI（头像/账户信息）才算登录成功。
-      await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 5000 });
+      await this.page.waitForSelector(SELECTORS.loginIndicator, { timeout: 1500, state: 'visible' });
       return true;
     } catch {
       return false;
