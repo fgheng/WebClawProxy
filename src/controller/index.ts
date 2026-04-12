@@ -28,6 +28,13 @@ app.listen(PORT, () => {
 ╚══════════════════════════════════════════╝
   `);
 
+  const startupPreflightEnabled = config.webdriver?.startup_preflight_enabled !== false;
+
+  if (!startupPreflightEnabled) {
+    console.log('[Startup] 已跳过站点登录预检（startup_preflight_enabled=false）');
+    return;
+  }
+
   // 启动后先执行站点登录预检（不阻塞服务端口监听）
   void preflightWebDriverSites()
     .then(() => {

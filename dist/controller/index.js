@@ -57,6 +57,11 @@ app.listen(PORT, () => {
 ║  GET  /health                            ║
 ╚══════════════════════════════════════════╝
   `);
+    const startupPreflightEnabled = config.webdriver?.startup_preflight_enabled !== false;
+    if (!startupPreflightEnabled) {
+        console.log('[Startup] 已跳过站点登录预检（startup_preflight_enabled=false）');
+        return;
+    }
     // 启动后先执行站点登录预检（不阻塞服务端口监听）
     void (0, openai_1.preflightWebDriverSites)()
         .then(() => {

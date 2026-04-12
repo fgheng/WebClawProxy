@@ -35,7 +35,8 @@
     "response_timeout_ms": 120000,
     "stability_check_interval_ms": 500,
     "stability_check_count": 3,
-    "headless": false
+    "headless": false,
+    "startup_preflight_enabled": true
   },
   "logging": {
     "enabled": true,
