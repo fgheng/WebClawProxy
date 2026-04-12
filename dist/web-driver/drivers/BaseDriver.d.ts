@@ -58,6 +58,7 @@ export declare abstract class BaseDriver implements IWebDriver {
      * 4. 最少等待 minWaitMs，防止极端情况下过早退出
      */
     protected waitByContentStability(): Promise<void>;
+    protected getLatestResponseText(responseSelector: string): Promise<string>;
     /** 返回停止按钮的 CSS 选择器，子类如果没有停止按钮可返回 null */
     protected getStopButtonSelector(): string | null;
     /** 返回响应区域的 CSS 选择器，用于内容稳定性检测 */

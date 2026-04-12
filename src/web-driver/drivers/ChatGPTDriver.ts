@@ -80,12 +80,37 @@ export class ChatGPTDriver extends BaseDriver {
     try {
       await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
 
-      // 使用 Playwright 的 fill 方法填充文本
-      await this.page.fill(SELECTORS.inputArea, text);
+      const normalizedText = text.replace(/\s+/g, ' ').trim();
+      let dispatched = false;
 
-      // 等待发送按钮可点击
-      await this.page.waitForSelector(SELECTORS.sendButton, { timeout: 5000, state: 'visible' });
-      await this.page.click(SELECTORS.sendButton);
+      for (let i = 0; i < 3; i++) {
+        await this.page.fill(SELECTORS.inputArea, text);
+
+        const currentInput = await this.getInputText();
+        if (normalizedText && currentInput !== normalizedText) {
+          await this.sleep(150);
+          continue;
+        }
+
+        try {
+          await this.page.waitForSelector(SELECTORS.sendButton, { timeout: 3000, state: 'visible' });
+          await this.page.click(SELECTORS.sendButton);
+        } catch {
+          await this.page.keyboard.press('Enter');
+        }
+
+        dispatched = await this.waitForDispatch(normalizedText, 1800);
+        if (dispatched) break;
+
+        await this.sleep(200);
+      }
+
+      if (!dispatched) {
+        throw new WebDriverError(
+          WebDriverErrorCode.SEND_MESSAGE_FAILED,
+          'ChatGPT 发送后未确认投递（输入可能未生效）'
+        );
+      }
     } catch (err) {
       if (err instanceof WebDriverError) throw err;
       throw new WebDriverError(
@@ -151,6 +176,38 @@ export class ChatGPTDriver extends BaseDriver {
 
   protected getResponseAreaSelector(): string | null {
     return SELECTORS.responseArea;
+  }
+
+  private async getInputText(): Promise<string> {
+    return this.page.evaluate(([selector]: [string]) => {
+      const el = (globalThis as any).document.querySelector(selector as string);
+      if (!el) return '';
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'TEXTAREA' || tag === 'INPUT') return ((el as any).value || '').replace(/\s+/g, ' ').trim();
+      return ((el.textContent || '') as string).replace(/\s+/g, ' ').trim();
+    }, [SELECTORS.inputArea] as [string]);
+  }
+
+  private async waitForDispatch(normalizedText: string, timeoutMs: number): Promise<boolean> {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      await this.sleep(200);
+
+      const stopVisible = await this.page
+        .waitForSelector(SELECTORS.stopButton, { timeout: 250, state: 'visible' })
+        .then(() => true)
+        .catch(() => false);
+      if (stopVisible) return true;
+
+      const currentInput = await this.getInputText();
+      if (!normalizedText || currentInput !== normalizedText) {
+        return true;
+      }
+    }
+
+    const finalInput = await this.getInputText();
+    return !normalizedText || finalInput !== normalizedText;
   }
 
   /**

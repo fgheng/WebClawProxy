@@ -137,10 +137,7 @@ class BaseDriver {
         while (Date.now() - startWait < 30000) {
             await this.sleep(500);
             try {
-                const initial = await this.page.evaluate(([sel]) => {
-                    const el = globalThis.document.querySelector(sel);
-                    return el ? (el.textContent || '').trim() : '';
-                }, [responseSelector]);
+                const initial = await this.getLatestResponseText(responseSelector);
                 if (initial.length > 0)
                     break;
             }
@@ -157,10 +154,7 @@ class BaseDriver {
             await this.sleep(checkInterval);
             let currentContent = '';
             try {
-                currentContent = await this.page.evaluate(([selector]) => {
-                    const el = globalThis.document.querySelector(selector);
-                    return el ? (el.textContent || '').trim() : '';
-                }, [responseSelector]);
+                currentContent = await this.getLatestResponseText(responseSelector);
             }
             catch {
                 // 页面可能在导航，继续等待
@@ -176,6 +170,21 @@ class BaseDriver {
                 lastContent = currentContent;
             }
         }
+    }
+    async getLatestResponseText(responseSelector) {
+        return this.page.evaluate(([selector]) => {
+            const nodes = Array.from(globalThis.document.querySelectorAll(selector));
+            if (nodes.length === 0)
+                return '';
+            for (let i = nodes.length - 1; i >= 0; i--) {
+                const node = nodes[i];
+                const text = (node?.textContent || '').replace(/\s+/g, ' ').trim();
+                if (text.length > 0) {
+                    return text;
+                }
+            }
+            return '';
+        }, [responseSelector]);
     }
     // ============================
     // 子类可覆盖的钩子方法

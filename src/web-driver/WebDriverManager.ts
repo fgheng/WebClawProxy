@@ -572,26 +572,55 @@ export class WebDriverManager {
     const page = this.pageMap.get(site);
     if (!page) return;
 
+    const inputSelectorBySite: Record<SiteKey, string> = {
+      gpt: '#prompt-textarea',
+      qwen: 'textarea, [contenteditable="true"]',
+      deepseek: 'textarea, [contenteditable="true"]',
+      kimi: 'textarea, [contenteditable="true"][class*="input"]',
+    };
+
     // 1) 等待文档事件（若 API 可用）
     try {
       await (page as any).waitForLoadState?.('domcontentloaded', { timeout: 4000 });
     } catch {
-      // 忽略，继续走 URL 稳定性判断
+      // 忽略，继续走稳定性判断
     }
 
-    // 2) URL 稳定性：连续两次相同视为稳定
+    // 2) URL 稳定 + 输入框可交互联合判定
+    // 要求连续两轮满足，避免路由切换/水合阶段刚好命中一次
     let lastUrl = '';
     let stableRounds = 0;
     const start = Date.now();
-    while (Date.now() - start < 3000 && stableRounds < 2) {
+    const inputSelector = inputSelectorBySite[site];
+
+    while (Date.now() - start < 5000 && stableRounds < 2) {
       const currentUrl = page.url?.() ?? '';
-      if (currentUrl && currentUrl === lastUrl) {
+      const inputReady = await page
+        .evaluate(([selector]: [string]) => {
+          const el = (globalThis as any).document.querySelector(selector as string) as any;
+          if (!el) return false;
+
+          const style = (globalThis as any).getComputedStyle?.(el);
+          const rect = el.getBoundingClientRect?.();
+          const visible = !style || (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            (rect ? rect.width > 0 && rect.height > 0 : true)
+          );
+
+          const notDisabled = !el.disabled && el.getAttribute?.('aria-disabled') !== 'true';
+          return Boolean(visible && notDisabled);
+        }, [inputSelector] as [string])
+        .catch(() => false);
+
+      if (currentUrl && currentUrl === lastUrl && inputReady) {
         stableRounds++;
       } else {
         stableRounds = 0;
         lastUrl = currentUrl;
       }
-      await new Promise((r) => setTimeout(r, 200));
+
+      await new Promise((r) => setTimeout(r, 250));
     }
 
     // 3) 最后缓冲，给前端框架渲染一个小窗口

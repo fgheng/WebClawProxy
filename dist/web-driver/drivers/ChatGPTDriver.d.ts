@@ -13,6 +13,8 @@ export declare class ChatGPTDriver extends BaseDriver {
     isValidConversationUrl(url: string): boolean;
     protected getStopButtonSelector(): string | null;
     protected getResponseAreaSelector(): string | null;
+    private getInputText;
+    private waitForDispatch;
     /**
      * 关闭可能存在的弹窗/广告
      */

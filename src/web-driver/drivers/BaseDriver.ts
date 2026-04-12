@@ -194,13 +194,7 @@ export abstract class BaseDriver implements IWebDriver {
     while (Date.now() - startWait < 30000) {
       await this.sleep(500);
       try {
-        const initial = await this.page.evaluate(
-          ([sel]: [string]) => {
-            const el = (globalThis as any).document.querySelector(sel as string);
-            return el ? (el.textContent || '').trim() : '';
-          },
-          [responseSelector] as [string]
-        );
+        const initial = await this.getLatestResponseText(responseSelector);
         if (initial.length > 0) break;
       } catch {
         // 继续等待
@@ -218,13 +212,7 @@ export abstract class BaseDriver implements IWebDriver {
 
       let currentContent = '';
       try {
-        currentContent = await this.page.evaluate(
-          ([selector]: [string]) => {
-            const el = (globalThis as any).document.querySelector(selector as string);
-            return el ? (el.textContent || '').trim() : '';
-          },
-          [responseSelector] as [string]
-        );
+        currentContent = await this.getLatestResponseText(responseSelector);
       } catch {
         // 页面可能在导航，继续等待
         stableCount = 0;
@@ -239,6 +227,23 @@ export abstract class BaseDriver implements IWebDriver {
         lastContent = currentContent;
       }
     }
+  }
+
+  protected async getLatestResponseText(responseSelector: string): Promise<string> {
+    return this.page.evaluate(([selector]: [string]) => {
+      const nodes = Array.from((globalThis as any).document.querySelectorAll(selector as string)) as any[];
+      if (nodes.length === 0) return '';
+
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const node = nodes[i];
+        const text = (node?.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text.length > 0) {
+          return text;
+        }
+      }
+
+      return '';
+    }, [responseSelector] as [string]);
   }
 
   // ============================
