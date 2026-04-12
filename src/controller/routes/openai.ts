@@ -61,7 +61,7 @@ function normalizeJsonLike(input: string): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
 
-  const normalizedInput = normalizeJsonArtifacts(trimmed);
+  const normalizedInput = repairMalformedToolCallArguments(normalizeJsonArtifacts(trimmed));
 
   // 先尝试严格 JSON
   try {
@@ -82,11 +82,32 @@ function normalizeJsonLike(input: string): string | null {
   }
 }
 
+function repairMalformedToolCallArguments(text: string): string {
+  // 兼容部分模型输出："arguments": "{"path":"downloads/player.txt"}"
+  // 这种写法内部引号未转义，属于非法 JSON；这里做定向修复。
+  return text.replace(
+    /("arguments"\s*:\s*)"\{([\s\S]*?)\}"/g,
+    (_all, prefix: string, inner: string) => {
+      // 已经是合法转义（如 {\"path\":\"a\"}）时不再二次处理
+      if (/\\"/.test(inner)) {
+        return _all;
+      }
+
+      const raw = `{${inner}}`;
+      const escaped = raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `${prefix}"${escaped}"`;
+    }
+  );
+}
+
 /**
  * 清理常见网页渲染噪声，提升 JSON 识别稳定性
  */
 function normalizeJsonArtifacts(text: string): string {
-  const noBomAndInvisible = text.replace(/^\uFEFF/, '').replace(/[\u200B-\u200D\uFEFF]/g, '');
+  const noBomAndInvisible = text
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\uFEFF\u2060]/g, '')
+    .replace(/[\u00A0\u202F]/g, ' ');
 
   // 兼容“代码块行号”场景（如: "12  \"key\": \"value\"")
   const withoutLineNumbers = noBomAndInvisible
@@ -94,12 +115,22 @@ function normalizeJsonArtifacts(text: string): string {
     .map((line) => line.replace(/^\s*\d+\s+(?=[\[{\]}",\-\w])/, ''))
     .join('\n');
 
+  // 清理常见代码块噪声行（不影响 JSON 字符串内容）
+  const withoutUiNoise = withoutLineNumbers
+    .split('\n')
+    .filter((line) => !/^\s*(copy code|复制代码|jsonc?|javascript|js|typescript|ts)\s*$/i.test(line.trim()))
+    .join('\n');
+
   // 统一常见全角标点/引号（部分站点 markdown 渲染会出现）
-  return withoutLineNumbers
+  return withoutUiNoise
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
     .replace(/，/g, ',')
-    .replace(/：/g, ':');
+    .replace(/：/g, ':')
+    .replace(/｛/g, '{')
+    .replace(/｝/g, '}')
+    .replace(/［/g, '[')
+    .replace(/］/g, ']');
 }
 
 /**
@@ -271,10 +302,10 @@ function extractJson(content: string): string | null {
   // 1) 整体内容
   candidates.push(content);
 
-  // 2) code fence（可能多个）
-  const codeBlocks = content.match(/```(?:json|jsonc)?\s*\n?([\s\S]*?)\n?```/gi) || [];
+  // 2) code fence（可能多个，语言标记不限）
+  const codeBlocks = content.match(/```[^\n`]*\s*\n?([\s\S]*?)\n?```/g) || [];
   for (const block of codeBlocks) {
-    const m = block.match(/```(?:json|jsonc)?\s*\n?([\s\S]*?)\n?```/i);
+    const m = block.match(/```[^\n`]*\s*\n?([\s\S]*?)\n?```/);
     if (m?.[1]) candidates.push(m[1]);
   }
 
@@ -623,7 +654,10 @@ export async function chatCompletionsHandler(
     let retryCount = 0;
 
     while (!parsedJson && !upstreamError && retryCount < maxRetries) {
-      console.log(`[Controller] 模型未返回 JSON 格式，重新发送（第 ${retryCount + 1} 次）...`);
+      console.log(
+        `[Controller] 模型未返回 JSON 格式，重新发送（第 ${retryCount + 1} 次）... ` +
+          `preview=${responseContent.slice(0, 160).replace(/\s+/g, ' ')}`
+      );
       const templatePrompt = dm.get_current_prompt_with_template();
 
       try {

@@ -241,6 +241,123 @@ describe('控制模块 API 测试', () => {
       expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
     });
 
+    it('GPT 常见 code fence 噪声（copy code/json 标签）应识别 JSON 且不重试', async () => {
+      mockDm.model = 'gpt-4o';
+      const gptRequest = {
+        ...openAIRequest,
+        model: 'gpt-4o',
+      };
+
+      mockChat.mockResolvedValueOnce({
+        content: `copy code
+\`\`\`json
+{
+  "message": {
+    "role": "assistant",
+    "content": "GPT JSON 正常",
+    "tool_calls": []
+  },
+  "finish_reason": "stop"
+}
+\`\`\``,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(gptRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.object).toBe('chat.completion');
+      expect(res.body.model).toBe('gpt-4o');
+      expect(res.body.choices?.[0]?.message?.content).toBe('GPT JSON 正常');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
+    it('非 json 语言标记 code fence（如 ```javascript）包裹 JSON 也应识别', async () => {
+      mockDm.model = 'gpt-4o';
+      const gptRequest = {
+        ...openAIRequest,
+        model: 'gpt-4o',
+      };
+
+      mockChat.mockResolvedValueOnce({
+        content: `\`\`\`javascript
+{
+  "message": {
+    "role": "assistant",
+    "content": "JS Fence JSON",
+    "tool_calls": []
+  },
+  "finish_reason": "stop"
+}
+\`\`\``,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(gptRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.choices?.[0]?.message?.content).toBe('JS Fence JSON');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
+    it('Qwen tool_calls 场景：arguments 内嵌 JSON 字符串未转义时也应被修复并解析成功', async () => {
+      mockDm.model = 'qwen';
+      const qwenRequest = {
+        ...openAIRequest,
+        model: 'qwen',
+        messages: [
+          { role: 'user', content: '你好哇哇哇' },
+          { role: 'assistant', content: '你好！👋 很高兴见到你～有什么我可以帮你的吗？' },
+          {
+            role: 'user',
+            content:
+              '你现在有一个工具可以使用,这个工具定义如下 {"type":"function","function":{"name":"read"}},请帮我阅读一下 downloads/player.txt',
+          },
+        ],
+      };
+
+      mockChat.mockResolvedValueOnce({
+        content: `{
+  "index": 0,
+  "message": {
+    "role": "assistant",
+    "content": "正在为您读取 downloads/player.txt 文件内容...",
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "callread001",
+        "type": "function",
+        "function": {
+          "name": "read",
+          "arguments": "{"path":"downloads/player.txt"}"
+        }
+      }
+    ]
+  },
+  "logprobs": null,
+  "finishreason": "toolcalls"
+}`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(qwenRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.object).toBe('chat.completion');
+      expect(res.body.model).toBe('qwen');
+      expect(res.body.choices?.[0]?.message?.content).toBe('正在为您读取 downloads/player.txt 文件内容...');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_current_prompt_with_template).not.toHaveBeenCalled();
+    });
+
     it('无效的请求格式应该返回 400', async () => {
       const res = await request(app)
         .post('/v1/chat/completions')
