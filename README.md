@@ -241,3 +241,12 @@ WebClawProxy/
 - **HTTP 服务**: Express.js
 - **测试框架**: Jest
 - **运行时**: Node.js 18+
+
+## TODO
+- [ ] 文档更新
+- [ ] session 分片还未测试
+- [ ] 接入 openclaw
+- [ ] 内部再转换成 openai-reponses 协议？主要是该协议有状态，对于映射 webssion 比较合适
+- [ ] 前端支持多种协议 openai-chat responses anthropic gemini
+- [ ] 支持 GUI
+- [ ] 实现 webclaw
