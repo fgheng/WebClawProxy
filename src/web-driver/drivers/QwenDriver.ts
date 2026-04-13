@@ -88,26 +88,9 @@ export class QwenDriver extends BaseDriver {
   }
 
   async createNewConversation(): Promise<void> {
-    // 先尝试关闭弹窗
+    // 统一采用回到主页的方式创建新会话，避免污染已有 session。
+    await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await this.dismissDialogs();
-
-    let created = false;
-    // 尝试多个新建按钮选择器
-    for (const selector of [SELECTORS.newChatButton, SELECTORS.newChatButtonAlt]) {
-      try {
-        await this.page.waitForSelector(selector, { timeout: 3000 });
-        await this.page.click(selector);
-        created = true;
-        break;
-      } catch {
-        continue;
-      }
-    }
-
-    if (!created) {
-      // 直接导航到主页作为新建对话
-      await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    }
 
     try {
       await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });

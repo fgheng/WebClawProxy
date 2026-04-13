@@ -745,6 +745,104 @@ describe('Driver URL 验证', () => {
   });
 });
 
+describe('Driver 新建对话策略', () => {
+  it('ChatGPT 应直接 goto baseUrl 创建新会话', async () => {
+    const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
+    const mockPage = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+      url: jest.fn().mockReturnValue('https://chatgpt.com/'),
+    } as any;
+
+    const driver = new ChatGPTDriver(mockPage);
+    jest.spyOn(driver as any, 'dismissDialogs').mockResolvedValue(undefined);
+
+    await expect(driver.createNewConversation()).resolves.toBeUndefined();
+    expect(mockPage.goto).toHaveBeenCalledWith('https://chatgpt.com/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+  });
+
+  it('Qwen 应直接 goto baseUrl 创建新会话', async () => {
+    const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
+    const mockPage = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+      url: jest.fn().mockReturnValue('https://chat.qwen.ai/'),
+    } as any;
+
+    const driver = new QwenDriver(mockPage);
+    jest.spyOn(driver as any, 'dismissDialogs').mockResolvedValue(undefined);
+
+    await expect(driver.createNewConversation()).resolves.toBeUndefined();
+    expect(mockPage.goto).toHaveBeenCalledWith('https://chat.qwen.ai/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+  });
+
+  it('DeepSeek 应直接 goto baseUrl 创建新会话', async () => {
+    const { DeepSeekDriver } = await import('../../src/web-driver/drivers/DeepSeekDriver');
+    const mockPage = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+      url: jest.fn().mockReturnValue('https://chat.deepseek.com/'),
+    } as any;
+
+    const driver = new DeepSeekDriver(mockPage);
+    jest.spyOn(driver as any, 'dismissDialogs').mockResolvedValue(undefined);
+
+    await expect(driver.createNewConversation()).resolves.toBeUndefined();
+    expect(mockPage.goto).toHaveBeenCalledWith('https://chat.deepseek.com/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+  });
+
+  it('Kimi 应直接 goto baseUrl 创建新会话', async () => {
+    const { KimiDriver } = await import('../../src/web-driver/drivers/KimiDriver');
+    const mockPage = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+      url: jest.fn().mockReturnValue('https://www.kimi.com/'),
+    } as any;
+
+    const driver = new KimiDriver(mockPage);
+    jest.spyOn(driver as any, 'dismissDialogs').mockResolvedValue(undefined);
+
+    await expect(driver.createNewConversation()).resolves.toBeUndefined();
+    expect(mockPage.goto).toHaveBeenCalledWith('https://www.kimi.com/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+  });
+});
+
 describe('ChatGPTDriver 发送稳定性', () => {
   it('首次投递未确认时应恢复并重试发送', async () => {
     const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');

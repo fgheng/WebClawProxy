@@ -53,17 +53,9 @@ export class ChatGPTDriver extends BaseDriver {
   }
 
   async createNewConversation(): Promise<void> {
-    // 先尝试关闭可能存在的弹窗
+    // 统一采用回到主页的方式创建新会话，避免污染已有 session。
+    await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await this.dismissDialogs();
-
-    // 尝试点击新建对话按钮
-    try {
-      await this.page.waitForSelector(SELECTORS.newChatButton, { timeout: 5000 });
-      await this.page.click(SELECTORS.newChatButton);
-    } catch {
-      // 备用方案：直接导航到主页
-      await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    }
 
     // 等待输入框出现，确认新对话已创建
     try {

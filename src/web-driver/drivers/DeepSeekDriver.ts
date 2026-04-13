@@ -66,20 +66,9 @@ export class DeepSeekDriver extends BaseDriver {
   }
 
   async createNewConversation(): Promise<void> {
+    // 统一采用回到主页的方式创建新会话，避免污染已有 session。
+    await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await this.dismissDialogs();
-
-    let created = false;
-    try {
-      await this.page.waitForSelector(SELECTORS.newChatButton, { timeout: 5000 });
-      await this.page.click(SELECTORS.newChatButton);
-      created = true;
-    } catch {
-      // 直接导航到主页
-    }
-
-    if (!created) {
-      await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    }
 
     try {
       await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
