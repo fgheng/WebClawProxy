@@ -867,3 +867,69 @@ describe('ChatGPTDriver 发送稳定性', () => {
     await expect((driver as any).waitForDispatch('still same input', 'https://chatgpt.com/', 500)).resolves.toBe(true);
   });
 });
+
+describe('DeepSeek/Kimi 输入流程收敛', () => {
+  it('DeepSeek 发送前应先清空输入框再写入，并优先点击发送按钮', async () => {
+    const { DeepSeekDriver } = await import('../../src/web-driver/drivers/DeepSeekDriver');
+
+    const mockPage = {
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+      evaluate: jest
+        .fn()
+        .mockResolvedValueOnce('') // clearInputArea 后读取
+        .mockResolvedValueOnce(undefined) // fillInputRobustly 事件补发
+        .mockResolvedValueOnce({
+          inputCanonicalMatches: true,
+          sendButtonMounted: true,
+          sendButtonReady: true,
+          stopVisible: false,
+        }) // waitForSendButtonStateAfterFill
+        .mockResolvedValueOnce(''), // waitForDispatch 时读取输入框
+    } as any;
+
+    const driver = new DeepSeekDriver(mockPage);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+
+    await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
+
+    expect(mockPage.fill).toHaveBeenNthCalledWith(1, 'textarea#chat-input, textarea[placeholder], textarea', '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(2, 'textarea#chat-input, textarea[placeholder], textarea', 'hello world');
+    expect(mockPage.click).toHaveBeenCalledWith('button[type="submit"], [class*="send-button"], [aria-label*="发送"]', { timeout: 1000 });
+    expect(mockPage.keyboard.press).not.toHaveBeenCalledWith('Enter');
+  });
+
+  it('Kimi 发送前应先清空输入框再写入，并优先点击发送按钮', async () => {
+    const { KimiDriver } = await import('../../src/web-driver/drivers/KimiDriver');
+
+    const mockPage = {
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+      evaluate: jest
+        .fn()
+        .mockResolvedValueOnce('') // clearInputArea 后读取
+        .mockResolvedValueOnce(undefined) // fillInputRobustly 事件补发
+        .mockResolvedValueOnce({
+          inputCanonicalMatches: true,
+          sendButtonMounted: true,
+          sendButtonReady: true,
+          stopVisible: false,
+        }) // waitForSendButtonStateAfterFill
+        .mockResolvedValueOnce(''), // waitForDispatch 时读取输入框
+    } as any;
+
+    const driver = new KimiDriver(mockPage);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+
+    await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
+
+    expect(mockPage.fill).toHaveBeenNthCalledWith(1, 'textarea, [contenteditable="true"][class*="input"]', '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(2, 'textarea, [contenteditable="true"][class*="input"]', 'hello world');
+    expect(mockPage.click).toHaveBeenCalledWith('button[class*="send"], [class*="send-button"], button[type="submit"]', { timeout: 1000 });
+    expect(mockPage.keyboard.press).not.toHaveBeenCalledWith('Enter');
+  });
+});
