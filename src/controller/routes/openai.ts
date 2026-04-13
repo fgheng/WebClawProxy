@@ -102,8 +102,8 @@ function normalizeJsonLike(input: string): string | null {
     // ignore
   }
 
-  // 针对 message.content 等字段中“未转义双引号”做定向修复
-  const repairedQuoteFields = repairUnescapedQuotesInFields(noTrailingComma, ['content']);
+  // 针对 message.content / tool_calls.function.arguments 等字段中“未转义双引号”做定向修复
+  const repairedQuoteFields = repairUnescapedQuotesInFields(noTrailingComma, ['content', 'arguments']);
   try {
     const obj = JSON.parse(repairedQuoteFields);
     return JSON.stringify(obj);
@@ -115,11 +115,12 @@ function normalizeJsonLike(input: string): string | null {
 function repairMalformedToolCallArguments(text: string): string {
   // 兼容部分模型输出："arguments": "{"path":"downloads/player.txt"}"
   // 这种写法内部引号未转义，属于非法 JSON；这里做定向修复。
+  // 关键：不能仅凭是否包含 \" 判断是否已合法；复杂命令可能“部分已转义 + 部分未转义”。
   return text.replace(
     /("arguments"\s*:\s*)"\{([\s\S]*?)\}"/g,
     (_all, prefix: string, inner: string) => {
-      // 已经是合法转义（如 {\"path\":\"a\"}）时不再二次处理
-      if (/\\"/.test(inner)) {
+      const hasUnescapedQuote = /(^|[^\\])"/.test(inner);
+      if (!hasUnescapedQuote) {
         return _all;
       }
 

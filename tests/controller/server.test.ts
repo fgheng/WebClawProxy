@@ -473,6 +473,67 @@ describe('控制模块 API 测试', () => {
       expect(mockChat).toHaveBeenCalledTimes(1);
     });
 
+    it('复杂命令型 tool_calls.arguments（python -c）应解析成功并保留 tool_calls', async () => {
+      mockDm.model = 'qwen';
+      const qwenRequest = {
+        ...openAIRequest,
+        model: 'qwen',
+      };
+
+      mockChat.mockResolvedValueOnce({
+        content: `{
+  "index": 0,
+  "message": {
+    "role": "assistant",
+    "content": "我来帮你处理。首先，我会读取这个音频文件并将其转换为文本，然后再发送到指定的邮箱。",
+    "tool_calls": [
+      {
+        "index": 0,
+        "id": "call_transcribe_audio",
+        "type": "function",
+        "function": {
+          "name": "exec",
+          "arguments": "{\"command\":\"python3 -c \\\"import whisper; model = whisper.load_model('base'); result = model.transcribe('/Users/fgh001/Downloads/a.mp3'); print(result['text'])\\\" > /Users/fgh001/Downloads/a.txt\"}"
+        }
+      },
+      {
+        "index": 1,
+        "id": "call_send_email",
+        "type": "function",
+        "function": {
+          "name": "exec",
+          "arguments": "{\"command\":\"mail -s 'Transcribed Audio' liuxiaohou@gmail.com < /Users/fgh001/Downloads/a.txt\"}"
+        }
+      }
+    ]
+  },
+  "logprobs": null,
+  "finish_reason": "tool_calls"
+}`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(qwenRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.object).toBe('chat.completion');
+      expect(res.body.model).toBe('qwen');
+      expect(res.body.choices?.[0]?.finish_reason).toBe('tool_calls');
+      expect(res.body.choices?.[0]?.message?.content).toContain('我来帮你处理');
+      expect(res.body.choices?.[0]?.message?.tool_calls).toHaveLength(2);
+      expect(res.body.choices?.[0]?.message?.tool_calls?.[0]?.id).toBe('call_transcribe_audio');
+      expect(res.body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name).toBe('exec');
+      expect(mockDm.update_current).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: 'assistant',
+          tool_calls: expect.any(Array),
+        })
+      );
+      expect(mockChat).toHaveBeenCalledTimes(1);
+    });
+
     it('Qwen 内容字段包含未转义双引号时也应修复并解析成功', async () => {
       mockDm.model = 'qwen';
       const qwenRequest = {
