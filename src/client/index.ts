@@ -29,6 +29,8 @@ WebClawProxy CLI 客户端
 选项：
   --url <地址>            服务地址（默认：http://localhost:3000）
   --model <模型名>        使用的模型（默认：gpt-4o）
+  --stream                开启流式请求（SSE）
+  --no-stream             关闭流式请求（默认）
   --system-file <路径>    系统提示词文件（文本文件，内容为字符串）
   --tools-file <路径>     工具定义文件（JSON，格式：{"tools": []}）
   --timeout <秒数>        请求超时秒数（默认：180）
@@ -41,7 +43,7 @@ WebClawProxy CLI 客户端
 示例：
   npm run client
   npm run client -- --model deepseek-chat
-  npm run client -- --model gpt-4o --system-file ./prompts/system.txt --tools-file ./prompts/tools.json
+  npm run client -- --stream --model gpt-4o --system-file ./prompts/system.txt --tools-file ./prompts/tools.json
   npm run client -- --url http://192.168.1.100:3000 --model qwen-max
   npm run client -- --session-id debug-session-001 --trace
 
@@ -50,6 +52,7 @@ WebClawProxy CLI 客户端
   /model <名称>  切换模型
   /system <文本> 设置系统提示词
   /trace [on|off] 查看或开关链路日志
+  /stream [on|off] 查看或开关流式请求
   /clear         清空对话历史
   /history       查看对话历史
   /config        查看当前配置
@@ -125,6 +128,7 @@ try {
 }
 
 const traceEnabled = hasFlag('--no-trace') ? false : true;
+const streamEnabled = hasFlag('--stream') ? true : false;
 
 const previewArg = getArg('--trace-preview');
 const previewChars = previewArg ? Number(previewArg) : 180;
@@ -149,6 +153,7 @@ const config: ClientConfig = {
   timeoutMs: getArg('--timeout') ? parseInt(getArg('--timeout')!, 10) * 1000 : 180000,
   sessionId: getArg('--session-id') ?? buildDefaultSessionId(),
   traceEnabled,
+  stream: streamEnabled,
   tracePreviewChars: Number.isFinite(previewChars) && previewChars > 0 ? previewChars : 180,
 };
 

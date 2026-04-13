@@ -14,10 +14,10 @@ export declare class OpenAIProtocol extends BaseProtocol {
      *
      * 提取规则：
      * - MODEL    = input.model
-     * - SYSTEM   = 若 messages[0].role === 'system'，取其 content；否则为空
-     * - HISTORY  = 仅剔除第 0 条 system 消息后，再去掉最后一条
+     * - SYSTEM   = 提取 messages 中所有 role=system 的文本内容并按顺序拼接
+     * - HISTORY  = 过滤掉所有 role=system 后，再去掉最后一条
      * - TOOLS    = input.tools || []
-     * - CURRENT  = 处理后消息列表的最后一条
+     * - CURRENT  = 过滤后消息列表的最后一条
      */
     parse(input: unknown, options?: {
         traceId?: string;

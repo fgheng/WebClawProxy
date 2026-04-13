@@ -73,6 +73,14 @@ function buildOpenAIJsonResponse(content = '你好！') {
   });
 }
 
+function parseSseDataLines(raw: string): string[] {
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice('data:'.length).trim());
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
 
@@ -166,6 +174,35 @@ describe('控制模块 API 测试', () => {
         .set('Content-Type', 'application/json');
 
       expect(res.status).toBe(200);
+    });
+
+    it('stream=true 时应按 SSE 伪流式返回 chat.completion.chunk 并以 [DONE] 结束', async () => {
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send({ ...openAIRequest, stream: true })
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('text/event-stream');
+
+      const dataLines = parseSseDataLines(res.text);
+      expect(dataLines.length).toBeGreaterThan(2);
+      expect(dataLines[dataLines.length - 1]).toBe('[DONE]');
+
+      const jsonChunks = dataLines
+        .slice(0, -1)
+        .map((line) => JSON.parse(line));
+
+      expect(jsonChunks[0].object).toBe('chat.completion.chunk');
+      expect(jsonChunks[0].choices?.[0]?.delta?.role).toBe('assistant');
+      expect(jsonChunks.some((c) => typeof c?.choices?.[0]?.delta?.content === 'string')).toBe(true);
+
+      const finalChunk = jsonChunks[jsonChunks.length - 1];
+      expect(finalChunk.choices?.[0]?.finish_reason).toBe('stop');
+      expect(finalChunk.usage).toBeDefined();
+      expect(finalChunk.usage.prompt_tokens_details).toEqual({ cached_tokens: 0 });
+      expect(finalChunk.usage.prompt_cache_hit_tokens).toBe(0);
+      expect(finalChunk.usage.prompt_cache_miss_tokens).toBe(0);
     });
 
     it('长输入应按 provider 限长分段发送，且遵循 start/end/all_end 协议', async () => {

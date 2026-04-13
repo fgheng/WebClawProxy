@@ -12,6 +12,9 @@ export declare class WebClawClient {
     setSystem(system: string): void;
     /** 切换模型（会清空历史） */
     setModel(model: string): void;
+    /** 开关流式请求 */
+    setStream(enabled: boolean): void;
+    isStreamEnabled(): boolean;
     /** 开关 trace 日志 */
     setTraceEnabled(enabled: boolean): void;
     isTraceEnabled(): boolean;
@@ -29,6 +32,7 @@ export declare class WebClawClient {
     healthCheck(): Promise<boolean>;
     private post;
     private get;
+    private parseSseResponse;
     private extractAssistantResponse;
     private buildDefaultSessionId;
     private buildTraceId;

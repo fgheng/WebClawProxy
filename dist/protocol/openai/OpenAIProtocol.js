@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenAIProtocol = void 0;
 const BaseProtocol_1 = require("../BaseProtocol");
 const types_1 = require("../types");
+const logger_1 = require("../../controller/logger");
 const uuid_1 = require("uuid");
 /**
  * OpenAI 协议转换器
@@ -13,7 +14,7 @@ const uuid_1 = require("uuid");
 class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
     logProtocolTrace(traceId, stage, payload) {
         try {
-            console.log(`[ProtocolTrace][${traceId}] stage=${stage} payload=${JSON.stringify(payload)}`);
+            console.log(`[ProtocolTrace][${traceId}] stage=${stage} payload=${(0, logger_1.stringifyLogPayload)(payload)}`);
         }
         catch {
             console.log(`[ProtocolTrace][${traceId}] stage=${stage} payload=[unserializable]`);
@@ -24,10 +25,10 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
      *
      * 提取规则：
      * - MODEL    = input.model
-     * - SYSTEM   = 若 messages[0].role === 'system'，取其 content；否则为空
-     * - HISTORY  = 仅剔除第 0 条 system 消息后，再去掉最后一条
+     * - SYSTEM   = 提取 messages 中所有 role=system 的文本内容并按顺序拼接
+     * - HISTORY  = 过滤掉所有 role=system 后，再去掉最后一条
      * - TOOLS    = input.tools || []
-     * - CURRENT  = 处理后消息列表的最后一条
+     * - CURRENT  = 过滤后消息列表的最后一条
      */
     parse(input, options) {
         const traceId = options?.traceId ?? `proto-${(0, uuid_1.v4)().replace(/-/g, '').slice(0, 8)}`;
@@ -53,31 +54,33 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
             has_tools: Array.isArray(req.tools),
             tools_count: Array.isArray(req.tools) ? req.tools.length : 0,
         });
-        // 2. 提取 SYSTEM
-        let system = '';
-        if (req.messages.length > 0 && req.messages[0].role === 'system') {
-            system = this.extractTextContent(req.messages[0]);
+        // 2. 提取 SYSTEM，并过滤掉所有 system 消息（保持其余消息原有顺序）
+        const systemParts = [];
+        const nonSystemMessages = [];
+        for (const msg of req.messages) {
+            if (msg.role === 'system') {
+                const part = this.extractTextContent(msg);
+                if (part !== '')
+                    systemParts.push(part);
+                continue;
+            }
+            nonSystemMessages.push(this.normalizeMessage(msg));
         }
-        // 3. 仅剔除第 0 条 system 消息，构造消息序列
-        const normalizedMessages = req.messages.map((m) => this.normalizeMessage(m));
-        const messagesWithoutLeadingSystem = normalizedMessages.length > 0 && normalizedMessages[0].role === 'system'
-            ? normalizedMessages.slice(1)
-            : normalizedMessages;
-        this.logProtocolTrace(traceId, 'after_leading_system_trim', {
+        const system = systemParts.join('\n\n');
+        this.logProtocolTrace(traceId, 'after_system_filter', {
             source,
-            removed_leading_system: normalizedMessages.length > 0 && normalizedMessages[0].role === 'system',
-            normalized_count: normalizedMessages.length,
-            after_trim_count: messagesWithoutLeadingSystem.length,
-            after_trim_roles: messagesWithoutLeadingSystem.map((m) => m.role),
+            system_parts_count: systemParts.length,
+            filtered_non_system_count: nonSystemMessages.length,
+            filtered_non_system_roles: nonSystemMessages.map((m) => m.role),
         });
-        // 4. 提取 TOOLS
+        // 3. 提取 TOOLS
         const tools = Array.isArray(req.tools) ? req.tools : [];
-        // 5. 提取 CURRENT（最后一条消息，从 HISTORY 中移除）
-        if (messagesWithoutLeadingSystem.length === 0) {
-            throw new types_1.ProtocolParseError(types_1.ProtocolType.OPENAI, 'OpenAI 请求 messages 中没有可用消息');
+        // 4. 提取 CURRENT（最后一条消息，从 HISTORY 中移除）
+        if (nonSystemMessages.length === 0) {
+            throw new types_1.ProtocolParseError(types_1.ProtocolType.OPENAI, 'OpenAI 请求 messages 中没有可用的非 system 消息');
         }
-        const history = messagesWithoutLeadingSystem.slice(0, -1);
-        const current = messagesWithoutLeadingSystem[messagesWithoutLeadingSystem.length - 1];
+        const history = nonSystemMessages.slice(0, -1);
+        const current = nonSystemMessages[nonSystemMessages.length - 1];
         this.logProtocolTrace(traceId, 'split_history_current', {
             source,
             model,
@@ -102,6 +105,7 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
     format(model, messagePayload, usage) {
         const now = Math.floor(Date.now() / 1000);
         const id = `chatcmpl-${(0, uuid_1.v4)().replace(/-/g, '').substring(0, 20)}`;
+        const systemFingerprint = `fp_${(0, uuid_1.v4)().replace(/-/g, '').substring(0, 10)}`;
         const message = {
             role: 'assistant',
             content: messagePayload.content ?? null,
@@ -136,7 +140,13 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
                 completion_tokens: usage?.completion_tokens ?? 0,
                 total_tokens: usage?.total_tokens ??
                     (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
+                prompt_tokens_details: {
+                    cached_tokens: 0,
+                },
+                prompt_cache_hit_tokens: 0,
+                prompt_cache_miss_tokens: 0,
             },
+            system_fingerprint: systemFingerprint,
         };
     }
     normalizeMessage(msg) {

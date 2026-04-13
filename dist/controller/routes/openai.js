@@ -123,8 +123,8 @@ function normalizeJsonLike(input) {
     catch {
         // ignore
     }
-    // 针对 message.content 等字段中“未转义双引号”做定向修复
-    const repairedQuoteFields = repairUnescapedQuotesInFields(noTrailingComma, ['content']);
+    // 针对 message.content / tool_calls.function.arguments 等字段中“未转义双引号”做定向修复
+    const repairedQuoteFields = repairUnescapedQuotesInFields(noTrailingComma, ['content', 'arguments']);
     try {
         const obj = JSON.parse(repairedQuoteFields);
         return JSON.stringify(obj);
@@ -136,9 +136,10 @@ function normalizeJsonLike(input) {
 function repairMalformedToolCallArguments(text) {
     // 兼容部分模型输出："arguments": "{"path":"downloads/player.txt"}"
     // 这种写法内部引号未转义，属于非法 JSON；这里做定向修复。
+    // 关键：不能仅凭是否包含 \" 判断是否已合法；复杂命令可能“部分已转义 + 部分未转义”。
     return text.replace(/("arguments"\s*:\s*)"\{([\s\S]*?)\}"/g, (_all, prefix, inner) => {
-        // 已经是合法转义（如 {\"path\":\"a\"}）时不再二次处理
-        if (/\\"/.test(inner)) {
+        const hasUnescapedQuote = /(^|[^\\])"/.test(inner);
+        if (!hasUnescapedQuote) {
             return _all;
         }
         const raw = `{${inner}}`;
@@ -500,7 +501,7 @@ function buildRequestTraceId(req) {
 }
 function logRequestTrace(traceId, stage, payload) {
     try {
-        console.log(`[RequestTrace][${traceId}] stage=${stage} payload=${JSON.stringify(payload)}`);
+        console.log(`[RequestTrace][${traceId}] stage=${stage} payload=${(0, logger_1.stringifyLogPayload)(payload)}`);
     }
     catch {
         console.log(`[RequestTrace][${traceId}] stage=${stage} payload=[unserializable]`);
@@ -596,6 +597,128 @@ function shouldUseFormatOnlyRetry(options) {
         return false;
     return options.originalPromptLength > threshold;
 }
+function initSseHeaders(res) {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+}
+function writeSseData(res, payload) {
+    if (payload === '[DONE]') {
+        res.write('data: [DONE]\n\n');
+        return;
+    }
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+function splitIntoParts(text, partSize = 2) {
+    const units = Array.from(text ?? '');
+    if (units.length === 0)
+        return [];
+    const chunks = [];
+    for (let i = 0; i < units.length; i += Math.max(1, partSize)) {
+        chunks.push(units.slice(i, i + Math.max(1, partSize)).join(''));
+    }
+    return chunks;
+}
+function buildStreamChunksFromFormattedResponse(formattedResponse) {
+    const id = String(formattedResponse?.id ?? `chatcmpl-${Date.now()}`);
+    const created = Number(formattedResponse?.created ?? Math.floor(Date.now() / 1000));
+    const model = String(formattedResponse?.model ?? 'unknown');
+    const systemFingerprint = typeof formattedResponse?.system_fingerprint === 'string'
+        ? formattedResponse.system_fingerprint
+        : undefined;
+    const choice = formattedResponse?.choices?.[0] ?? {};
+    const message = choice?.message ?? {};
+    const finishReason = typeof choice?.finish_reason === 'string' ? choice.finish_reason : 'stop';
+    const content = typeof message?.content === 'string' ? message.content : '';
+    const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    const base = {
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model,
+        system_fingerprint: systemFingerprint,
+    };
+    const chunks = [];
+    chunks.push({
+        ...base,
+        choices: [{ index: 0, delta: { role: 'assistant', content: '' }, logprobs: null, finish_reason: null }],
+    });
+    for (const part of splitIntoParts(content, 2)) {
+        chunks.push({
+            ...base,
+            choices: [{ index: 0, delta: { content: part }, logprobs: null, finish_reason: null }],
+        });
+    }
+    for (let i = 0; i < toolCalls.length; i++) {
+        const tc = toolCalls[i] ?? {};
+        const tcId = typeof tc?.id === 'string' ? tc.id : `call_${i}`;
+        const tcType = tc?.type === 'function' ? 'function' : 'function';
+        const fnName = typeof tc?.function?.name === 'string' ? tc.function.name : '';
+        const args = typeof tc?.function?.arguments === 'string' ? tc.function.arguments : '';
+        chunks.push({
+            ...base,
+            choices: [
+                {
+                    index: 0,
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: i,
+                                id: tcId,
+                                type: tcType,
+                                function: {
+                                    name: fnName,
+                                    arguments: '',
+                                },
+                            },
+                        ],
+                    },
+                    logprobs: null,
+                    finish_reason: null,
+                },
+            ],
+        });
+        for (const argPart of splitIntoParts(args, 2)) {
+            chunks.push({
+                ...base,
+                choices: [
+                    {
+                        index: 0,
+                        delta: {
+                            tool_calls: [
+                                {
+                                    index: i,
+                                    function: {
+                                        arguments: argPart,
+                                    },
+                                },
+                            ],
+                        },
+                        logprobs: null,
+                        finish_reason: null,
+                    },
+                ],
+            });
+        }
+    }
+    chunks.push({
+        ...base,
+        choices: [{ index: 0, delta: { content: '' }, logprobs: null, finish_reason: finishReason }],
+        usage: formattedResponse?.usage,
+    });
+    return chunks;
+}
+function sendSseStreamFromFormattedResponse(res, formattedResponse) {
+    initSseHeaders(res);
+    const chunks = buildStreamChunksFromFormattedResponse(formattedResponse);
+    for (const chunk of chunks) {
+        writeSseData(res, chunk);
+    }
+    writeSseData(res, '[DONE]');
+    res.end();
+}
 /**
  * POST /v1/chat/completions — OpenAI 兼容接口处理器
  */
@@ -608,6 +731,7 @@ async function chatCompletionsHandler(req, res, next) {
             method: req.method,
             path: req.path,
             model: requestBody?.model,
+            stream: requestBody?.stream === true,
             message_count: messageCount,
             cookie_present: Boolean(req.headers.cookie),
             authorization_present: Boolean(req.headers.authorization),
@@ -618,7 +742,7 @@ async function chatCompletionsHandler(req, res, next) {
         });
         (0, logger_1.logDebug)('chat_completions_request_body', {
             trace_id: traceId,
-            body_preview: JSON.stringify(requestBody ?? {}).slice(0, 5000),
+            body_preview: (0, logger_1.stringifyLogPayload)(requestBody ?? {}).slice(0, 5000),
         });
         // ===== Step 1: 解析协议 =====
         let internalReq;
@@ -804,10 +928,7 @@ async function chatCompletionsHandler(req, res, next) {
                 originalPromptLength: currentPrompt.length,
             });
             const retryBasePrompt = dm.get_format_only_retry_prompt();
-            const includeCurrentPrompt = !formatOnlyRetry;
-            const templatePrompt = includeCurrentPrompt
-                ? `${retryBasePrompt}\n\n---\n${dm.get_current_prompt()}`
-                : retryBasePrompt;
+            const templatePrompt = retryBasePrompt;
             try {
                 const retryResult = await webDriver.chat(site, sessionUrl, templatePrompt);
                 responseContent = retryResult.content;
@@ -815,7 +936,7 @@ async function chatCompletionsHandler(req, res, next) {
                 upstreamError = detectUpstreamServiceError(responseContent);
                 logRequestTrace(traceId, 'json_extract_retry', {
                     retry_index: retryCount + 1,
-                    prompt_mode: includeCurrentPrompt ? 'format_plus_user' : 'format_only',
+                    prompt_mode: 'format_only',
                     content_length: responseContent.length,
                     parsed_json: Boolean(parsedJson),
                     upstream_error: Boolean(upstreamError),
@@ -895,8 +1016,17 @@ async function chatCompletionsHandler(req, res, next) {
         });
         (0, logger_1.logDebug)('chat_completions_response_payload', {
             trace_id: traceId,
-            response_preview: JSON.stringify(formattedResponse).slice(0, 5000),
+            response_preview: (0, logger_1.stringifyLogPayload)(formattedResponse).slice(0, 5000),
         });
+        const isStream = requestBody?.stream === true;
+        if (isStream) {
+            logRequestTrace(traceId, 'response_stream_ready', {
+                model: internalReq.model,
+                finish_reason: formattedResponse.choices?.[0]?.finish_reason,
+            });
+            sendSseStreamFromFormattedResponse(res, formattedResponse);
+            return;
+        }
         res.json(formattedResponse);
     }
     catch (err) {

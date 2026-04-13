@@ -78,7 +78,8 @@ class ChatCLI {
             console.log((0, display_1.colorize)('  系统提示：', 'gray') + (0, display_1.colorize)(preview, 'yellow'));
         }
         console.log((0, display_1.colorize)('  会话ID：', 'gray') + (0, display_1.colorize)(cfg.sessionId, 'brightCyan') +
-            (0, display_1.colorize)('    Trace：', 'gray') + (0, display_1.colorize)(cfg.traceEnabled ? 'ON' : 'OFF', cfg.traceEnabled ? 'green' : 'yellow'));
+            (0, display_1.colorize)('    Trace：', 'gray') + (0, display_1.colorize)(cfg.traceEnabled ? 'ON' : 'OFF', cfg.traceEnabled ? 'green' : 'yellow') +
+            (0, display_1.colorize)('    Stream：', 'gray') + (0, display_1.colorize)(cfg.stream ? 'ON' : 'OFF', cfg.stream ? 'green' : 'yellow'));
         (0, display_1.printSeparator)();
         console.log((0, display_1.colorize)('  输入消息开始对话，输入 /help 查看所有命令', 'gray'));
         (0, display_1.printSeparator)();
@@ -105,6 +106,7 @@ class ChatCLI {
             ['/model <name>', '切换模型（自动清空对话历史）'],
             ['/system <text>', '设置系统提示词（自动清空历史）'],
             ['/trace [on|off]', '查看或开关客户端 trace 日志'],
+            ['/stream [on|off]', '查看或开关流式请求（SSE）'],
             ['/history', '显示当前对话历史'],
             ['/config', '显示当前配置信息'],
             ['/quit  /exit', '退出客户端'],
@@ -144,6 +146,8 @@ class ChatCLI {
         console.log((0, display_1.colorize)('  会话ID：', 'gray') + (0, display_1.colorize)(cfg.sessionId, 'brightCyan'));
         console.log((0, display_1.colorize)('  Trace日志：', 'gray') +
             (0, display_1.colorize)(cfg.traceEnabled ? '开启' : '关闭', cfg.traceEnabled ? 'green' : 'yellow'));
+        console.log((0, display_1.colorize)('  流式请求：', 'gray') +
+            (0, display_1.colorize)(cfg.stream ? '开启' : '关闭', cfg.stream ? 'green' : 'yellow'));
         console.log((0, display_1.colorize)('  系统提示：', 'gray') +
             (cfg.system
                 ? (0, display_1.colorize)(cfg.system.substring(0, 60) + (cfg.system.length > 60 ? '...' : ''), 'yellow')
@@ -229,6 +233,28 @@ class ChatCLI {
                     return true;
                 }
                 console.log((0, display_1.colorize)('  用法：/trace on 或 /trace off', 'yellow'));
+                return true;
+            }
+            case '/stream': {
+                if (!args) {
+                    const enabled = this.client.isStreamEnabled();
+                    console.log((0, display_1.colorize)('  当前 Stream 状态：', 'gray') +
+                        (0, display_1.colorize)(enabled ? 'ON' : 'OFF', enabled ? 'green' : 'yellow'));
+                    console.log((0, display_1.colorize)('  用法：/stream on 或 /stream off', 'gray'));
+                    return true;
+                }
+                const value = args.toLowerCase();
+                if (value === 'on') {
+                    this.client.setStream(true);
+                    console.log((0, display_1.colorize)('  ✓ 流式请求已开启', 'green'));
+                    return true;
+                }
+                if (value === 'off') {
+                    this.client.setStream(false);
+                    console.log((0, display_1.colorize)('  ✓ 流式请求已关闭', 'green'));
+                    return true;
+                }
+                console.log((0, display_1.colorize)('  用法：/stream on 或 /stream off', 'yellow'));
                 return true;
             }
             case '/history':

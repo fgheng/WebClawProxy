@@ -673,6 +673,181 @@ function shouldUseFormatOnlyRetry(options: {
   return options.originalPromptLength > threshold;
 }
 
+type StreamChunkDelta = {
+  role?: 'assistant';
+  content?: string;
+  tool_calls?: Array<{
+    index: number;
+    id?: string;
+    type?: 'function';
+    function?: {
+      name?: string;
+      arguments?: string;
+    };
+  }>;
+};
+
+type StreamChunk = {
+  id: string;
+  object: 'chat.completion.chunk';
+  created: number;
+  model: string;
+  system_fingerprint?: string;
+  choices: Array<{
+    index: 0;
+    delta: StreamChunkDelta;
+    logprobs: null;
+    finish_reason: string | null;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+  };
+};
+
+function initSseHeaders(res: Response): void {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+}
+
+function writeSseData(res: Response, payload: StreamChunk | '[DONE]'): void {
+  if (payload === '[DONE]') {
+    res.write('data: [DONE]\n\n');
+    return;
+  }
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function splitIntoParts(text: string, partSize = 2): string[] {
+  const units = Array.from(text ?? '');
+  if (units.length === 0) return [];
+  const chunks: string[] = [];
+  for (let i = 0; i < units.length; i += Math.max(1, partSize)) {
+    chunks.push(units.slice(i, i + Math.max(1, partSize)).join(''));
+  }
+  return chunks;
+}
+
+function buildStreamChunksFromFormattedResponse(formattedResponse: any): StreamChunk[] {
+  const id = String(formattedResponse?.id ?? `chatcmpl-${Date.now()}`);
+  const created = Number(formattedResponse?.created ?? Math.floor(Date.now() / 1000));
+  const model = String(formattedResponse?.model ?? 'unknown');
+  const systemFingerprint =
+    typeof formattedResponse?.system_fingerprint === 'string'
+      ? formattedResponse.system_fingerprint
+      : undefined;
+
+  const choice = formattedResponse?.choices?.[0] ?? {};
+  const message = choice?.message ?? {};
+  const finishReason = typeof choice?.finish_reason === 'string' ? choice.finish_reason : 'stop';
+  const content = typeof message?.content === 'string' ? message.content : '';
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+
+  const base = {
+    id,
+    object: 'chat.completion.chunk' as const,
+    created,
+    model,
+    system_fingerprint: systemFingerprint,
+  };
+
+  const chunks: StreamChunk[] = [];
+
+  chunks.push({
+    ...base,
+    choices: [{ index: 0, delta: { role: 'assistant', content: '' }, logprobs: null, finish_reason: null }],
+  });
+
+  for (const part of splitIntoParts(content, 2)) {
+    chunks.push({
+      ...base,
+      choices: [{ index: 0, delta: { content: part }, logprobs: null, finish_reason: null }],
+    });
+  }
+
+  for (let i = 0; i < toolCalls.length; i++) {
+    const tc = toolCalls[i] ?? {};
+    const tcId = typeof tc?.id === 'string' ? tc.id : `call_${i}`;
+    const tcType = tc?.type === 'function' ? 'function' : 'function';
+    const fnName = typeof tc?.function?.name === 'string' ? tc.function.name : '';
+    const args = typeof tc?.function?.arguments === 'string' ? tc.function.arguments : '';
+
+    chunks.push({
+      ...base,
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: i,
+                id: tcId,
+                type: tcType,
+                function: {
+                  name: fnName,
+                  arguments: '',
+                },
+              },
+            ],
+          },
+          logprobs: null,
+          finish_reason: null,
+        },
+      ],
+    });
+
+    for (const argPart of splitIntoParts(args, 2)) {
+      chunks.push({
+        ...base,
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: i,
+                  function: {
+                    arguments: argPart,
+                  },
+                },
+              ],
+            },
+            logprobs: null,
+            finish_reason: null,
+          },
+        ],
+      });
+    }
+  }
+
+  chunks.push({
+    ...base,
+    choices: [{ index: 0, delta: { content: '' }, logprobs: null, finish_reason: finishReason }],
+    usage: formattedResponse?.usage,
+  });
+
+  return chunks;
+}
+
+function sendSseStreamFromFormattedResponse(res: Response, formattedResponse: any): void {
+  initSseHeaders(res);
+  const chunks = buildStreamChunksFromFormattedResponse(formattedResponse);
+  for (const chunk of chunks) {
+    writeSseData(res, chunk);
+  }
+  writeSseData(res, '[DONE]');
+  res.end();
+}
+
 /**
  * POST /v1/chat/completions — OpenAI 兼容接口处理器
  */
@@ -689,6 +864,7 @@ export async function chatCompletionsHandler(
       method: req.method,
       path: req.path,
       model: requestBody?.model,
+      stream: requestBody?.stream === true,
       message_count: messageCount,
       cookie_present: Boolean(req.headers.cookie),
       authorization_present: Boolean(req.headers.authorization),
@@ -1013,6 +1189,17 @@ export async function chatCompletionsHandler(
       trace_id: traceId,
       response_preview: stringifyLogPayload(formattedResponse).slice(0, 5000),
     });
+
+    const isStream = requestBody?.stream === true;
+
+    if (isStream) {
+      logRequestTrace(traceId, 'response_stream_ready', {
+        model: internalReq.model,
+        finish_reason: formattedResponse.choices?.[0]?.finish_reason,
+      });
+      sendSseStreamFromFormattedResponse(res, formattedResponse);
+      return;
+    }
 
     res.json(formattedResponse);
 

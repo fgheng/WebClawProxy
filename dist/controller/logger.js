@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.stringifyLogPayload = stringifyLogPayload;
 exports.initServiceLogger = initServiceLogger;
 exports.isDebugLoggingEnabled = isDebugLoggingEnabled;
 exports.logDebug = logDebug;
@@ -40,6 +41,8 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 let loggerInitialized = false;
 let debugEnabled = false;
+let prettyJsonEnabled = false;
+let prettyJsonIndent = 2;
 let stream = null;
 function loadLoggingConfig() {
     try {
@@ -53,6 +56,10 @@ function loadLoggingConfig() {
             file_prefix: typeof logging.file_prefix === 'string' && logging.file_prefix.trim()
                 ? logging.file_prefix
                 : 'webclaw-proxy',
+            pretty_json: Boolean(logging.pretty_json),
+            pretty_json_indent: typeof logging.pretty_json_indent === 'number' && logging.pretty_json_indent > 0
+                ? Math.floor(logging.pretty_json_indent)
+                : 2,
         };
     }
     catch {
@@ -61,23 +68,29 @@ function loadLoggingConfig() {
             debug: false,
             dir: './data/logs',
             file_prefix: 'webclaw-proxy',
+            pretty_json: false,
+            pretty_json_indent: 2,
         };
+    }
+}
+function stringifyMaybeJson(value) {
+    if (typeof value === 'string')
+        return value;
+    return prettyJsonEnabled
+        ? JSON.stringify(value, null, prettyJsonIndent)
+        : JSON.stringify(value);
+}
+function stringifyLogPayload(payload) {
+    try {
+        return stringifyMaybeJson(payload);
+    }
+    catch {
+        return '[unserializable]';
     }
 }
 function toLine(level, args) {
     const time = new Date().toISOString();
-    const msg = args
-        .map((a) => {
-        if (typeof a === 'string')
-            return a;
-        try {
-            return JSON.stringify(a);
-        }
-        catch {
-            return String(a);
-        }
-    })
-        .join(' ');
+    const msg = args.map((a) => stringifyLogPayload(a)).join(' ');
     return `[${time}] [${level}] ${msg}\n`;
 }
 function initServiceLogger() {
@@ -86,6 +99,8 @@ function initServiceLogger() {
     loggerInitialized = true;
     const cfg = loadLoggingConfig();
     debugEnabled = cfg.debug;
+    prettyJsonEnabled = cfg.pretty_json;
+    prettyJsonIndent = cfg.pretty_json_indent;
     if (!cfg.enabled)
         return;
     const dir = path.isAbsolute(cfg.dir) ? cfg.dir : path.join(process.cwd(), cfg.dir);
@@ -120,6 +135,7 @@ function initServiceLogger() {
     console.debug = patch('debug', 'DEBUG');
     console.log(`[Logger] 文件日志已启用: ${filePath}`);
     console.log(`[Logger] Debug 模式: ${debugEnabled ? 'ON' : 'OFF'}`);
+    console.log(`[Logger] JSON 格式化: ${prettyJsonEnabled ? `ON (indent=${prettyJsonIndent})` : 'OFF'}`);
 }
 function isDebugLoggingEnabled() {
     return debugEnabled;
@@ -127,11 +143,6 @@ function isDebugLoggingEnabled() {
 function logDebug(stage, payload) {
     if (!debugEnabled)
         return;
-    try {
-        console.log(`[DebugFlow] stage=${stage} payload=${JSON.stringify(payload)}`);
-    }
-    catch {
-        console.log(`[DebugFlow] stage=${stage} payload=[unserializable]`);
-    }
+    console.log(`[DebugFlow] stage=${stage} payload=${stringifyLogPayload(payload)}`);
 }
 //# sourceMappingURL=logger.js.map

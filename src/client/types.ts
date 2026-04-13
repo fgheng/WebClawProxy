@@ -6,6 +6,8 @@ export interface ClientConfig {
   baseUrl: string;
   /** 使用的模型 */
   model: string;
+  /** 是否请求流式响应（SSE） */
+  stream?: boolean;
   /** 系统提示词（可选） */
   system?: string;
   /** 工具定义（可选） */
@@ -95,4 +97,5 @@ export type ClientCommand =
   | '/history'
   | '/config'
   | '/trace'
+  | '/stream'
   | '/reset';

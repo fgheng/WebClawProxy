@@ -27,7 +27,7 @@ function createApp() {
                 'x-session-id': req.headers['x-session-id'] ?? '',
                 authorization_present: Boolean(req.headers.authorization),
             },
-            body_preview: JSON.stringify(req.body ?? {}).slice(0, 2000),
+            body_preview: (0, logger_1.stringifyLogPayload)(req.body ?? {}).slice(0, 2000),
         });
         next();
     });

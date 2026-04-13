@@ -39,6 +39,7 @@ const path = __importStar(require("path"));
 const types_1 = require("./types");
 const hash_1 = require("./utils/hash");
 const prompt_1 = require("./utils/prompt");
+const logger_1 = require("../controller/logger");
 // 加载配置
 const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -570,7 +571,7 @@ class DataManager {
     }
     logDataTrace(stage, payload) {
         try {
-            console.log(`[DataTrace][${this.traceId}] stage=${stage} payload=${JSON.stringify(payload)}`);
+            console.log(`[DataTrace][${this.traceId}] stage=${stage} payload=${(0, logger_1.stringifyLogPayload)(payload)}`);
         }
         catch {
             console.log(`[DataTrace][${this.traceId}] stage=${stage} payload=[unserializable]`);

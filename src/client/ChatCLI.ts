@@ -58,7 +58,8 @@ export class ChatCLI {
     }
     console.log(
       colorize('  会话ID：', 'gray') + colorize(cfg.sessionId, 'brightCyan') +
-      colorize('    Trace：', 'gray') + colorize(cfg.traceEnabled ? 'ON' : 'OFF', cfg.traceEnabled ? 'green' : 'yellow')
+      colorize('    Trace：', 'gray') + colorize(cfg.traceEnabled ? 'ON' : 'OFF', cfg.traceEnabled ? 'green' : 'yellow') +
+      colorize('    Stream：', 'gray') + colorize(cfg.stream ? 'ON' : 'OFF', cfg.stream ? 'green' : 'yellow')
     );
 
     printSeparator();
@@ -89,6 +90,7 @@ export class ChatCLI {
       ['/model <name>', '切换模型（自动清空对话历史）'],
       ['/system <text>', '设置系统提示词（自动清空历史）'],
       ['/trace [on|off]', '查看或开关客户端 trace 日志'],
+      ['/stream [on|off]', '查看或开关流式请求（SSE）'],
       ['/history', '显示当前对话历史'],
       ['/config', '显示当前配置信息'],
       ['/quit  /exit', '退出客户端'],
@@ -137,6 +139,10 @@ export class ChatCLI {
     console.log(
       colorize('  Trace日志：', 'gray') +
       colorize(cfg.traceEnabled ? '开启' : '关闭', cfg.traceEnabled ? 'green' : 'yellow')
+    );
+    console.log(
+      colorize('  流式请求：', 'gray') +
+      colorize(cfg.stream ? '开启' : '关闭', cfg.stream ? 'green' : 'yellow')
     );
     console.log(
       colorize('  系统提示：', 'gray') +
@@ -242,6 +248,33 @@ export class ChatCLI {
         }
 
         console.log(colorize('  用法：/trace on 或 /trace off', 'yellow'));
+        return true;
+      }
+
+      case '/stream': {
+        if (!args) {
+          const enabled = this.client.isStreamEnabled();
+          console.log(
+            colorize('  当前 Stream 状态：', 'gray') +
+            colorize(enabled ? 'ON' : 'OFF', enabled ? 'green' : 'yellow')
+          );
+          console.log(colorize('  用法：/stream on 或 /stream off', 'gray'));
+          return true;
+        }
+
+        const value = args.toLowerCase();
+        if (value === 'on') {
+          this.client.setStream(true);
+          console.log(colorize('  ✓ 流式请求已开启', 'green'));
+          return true;
+        }
+        if (value === 'off') {
+          this.client.setStream(false);
+          console.log(colorize('  ✓ 流式请求已关闭', 'green'));
+          return true;
+        }
+
+        console.log(colorize('  用法：/stream on 或 /stream off', 'yellow'));
         return true;
       }
 

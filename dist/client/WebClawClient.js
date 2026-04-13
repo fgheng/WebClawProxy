@@ -47,6 +47,7 @@ class WebClawClient {
         this.config = {
             baseUrl: config.baseUrl.replace(/\/$/, ''),
             model: config.model,
+            stream: config.stream ?? false,
             system: config.system ?? '',
             tools: config.tools ?? [],
             timeoutMs: config.timeoutMs ?? 180000,
@@ -64,6 +65,14 @@ class WebClawClient {
     setModel(model) {
         this.config.model = model;
         this.clearHistory();
+    }
+    /** 开关流式请求 */
+    setStream(enabled) {
+        this.config.stream = enabled;
+        this.logTrace('stream_toggled', { enabled });
+    }
+    isStreamEnabled() {
+        return this.config.stream;
     }
     /** 开关 trace 日志 */
     setTraceEnabled(enabled) {
@@ -101,7 +110,7 @@ class WebClawClient {
             model: this.config.model,
             messages: requestMessages,
             tools: this.config.tools,
-            stream: false,
+            stream: this.config.stream,
         };
         this.logTrace('request_built', {
             trace_id: traceId,
@@ -113,6 +122,7 @@ class WebClawClient {
             user_content_preview: this.preview(userContent),
             system_enabled: Boolean(this.config.system),
             tools_count: this.config.tools.length,
+            stream: this.config.stream,
         });
         let responseData;
         try {
@@ -196,10 +206,14 @@ class WebClawClient {
                     this.logTrace('http_response', {
                         trace_id: traceId,
                         status_code: res.statusCode ?? 0,
+                        content_type: res.headers['content-type'] ?? '',
                         raw_preview: this.preview(data),
                     });
+                    const contentType = String(res.headers['content-type'] ?? '').toLowerCase();
                     try {
-                        const parsed = JSON.parse(data);
+                        const parsed = contentType.includes('text/event-stream')
+                            ? this.parseSseResponse(data, traceId)
+                            : JSON.parse(data);
                         if (res.statusCode && res.statusCode >= 400) {
                             const errMsg = parsed.error?.message ?? `HTTP ${res.statusCode}: ${data}`;
                             reject(new Error(errMsg));
@@ -265,6 +279,97 @@ class WebClawClient {
             });
             req.end();
         });
+    }
+    parseSseResponse(raw, traceId) {
+        const lines = raw
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line.startsWith('data:'));
+        const chunks = [];
+        for (const line of lines) {
+            const payload = line.slice('data:'.length).trim();
+            if (!payload || payload === '[DONE]')
+                continue;
+            try {
+                chunks.push(JSON.parse(payload));
+            }
+            catch {
+                // 忽略单条坏 chunk，继续聚合其他 chunk
+            }
+        }
+        if (chunks.length === 0) {
+            throw new Error('SSE 响应中未找到可解析的 chunk');
+        }
+        const first = chunks[0] ?? {};
+        const toolCallsByIndex = new Map();
+        const contentParts = [];
+        let finishReason = '';
+        let usage = {};
+        for (const chunk of chunks) {
+            const choice = chunk?.choices?.[0] ?? {};
+            const delta = choice?.delta ?? {};
+            if (typeof delta?.content === 'string') {
+                contentParts.push(delta.content);
+            }
+            if (Array.isArray(delta?.tool_calls)) {
+                for (const tc of delta.tool_calls) {
+                    const index = typeof tc?.index === 'number' ? tc.index : 0;
+                    const prev = toolCallsByIndex.get(index) ?? {
+                        index,
+                        id: tc?.id,
+                        type: tc?.type,
+                        function: {
+                            name: tc?.function?.name,
+                            arguments: '',
+                        },
+                    };
+                    if (tc?.id)
+                        prev.id = tc.id;
+                    if (tc?.type)
+                        prev.type = tc.type;
+                    if (tc?.function?.name) {
+                        prev.function.name = tc.function.name;
+                    }
+                    if (typeof tc?.function?.arguments === 'string') {
+                        prev.function.arguments += tc.function.arguments;
+                    }
+                    toolCallsByIndex.set(index, prev);
+                }
+            }
+            if (typeof choice?.finish_reason === 'string' && choice.finish_reason) {
+                finishReason = choice.finish_reason;
+            }
+            if (chunk?.usage && typeof chunk.usage === 'object') {
+                usage = chunk.usage;
+            }
+        }
+        const toolCalls = Array.from(toolCallsByIndex.values()).sort((a, b) => a.index - b.index);
+        const parsed = {
+            id: first?.id,
+            object: 'chat.completion',
+            created: first?.created,
+            model: first?.model,
+            choices: [
+                {
+                    index: 0,
+                    message: {
+                        role: 'assistant',
+                        content: contentParts.join(''),
+                        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+                    },
+                    finish_reason: finishReason || 'stop',
+                },
+            ],
+            usage,
+        };
+        this.logTrace('sse_aggregated', {
+            trace_id: traceId,
+            chunk_count: chunks.length,
+            content_length: parsed.choices?.[0]?.message?.content?.length ?? 0,
+            tool_call_count: toolCalls.length,
+            finish_reason: parsed.choices?.[0]?.finish_reason,
+        });
+        return parsed;
     }
     extractAssistantResponse(response, traceId) {
         if (response.error) {

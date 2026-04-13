@@ -6,6 +6,8 @@ export interface ClientConfig {
     baseUrl: string;
     /** 使用的模型 */
     model: string;
+    /** 是否请求流式响应（SSE） */
+    stream?: boolean;
     /** 系统提示词（可选） */
     system?: string;
     /** 工具定义（可选） */
@@ -80,5 +82,5 @@ export interface OpenAIResponseBody {
 /**
  * 客户端指令枚举
  */
-export type ClientCommand = '/help' | '/quit' | '/exit' | '/clear' | '/model' | '/system' | '/history' | '/config' | '/trace' | '/reset';
+export type ClientCommand = '/help' | '/quit' | '/exit' | '/clear' | '/model' | '/system' | '/history' | '/config' | '/trace' | '/stream' | '/reset';
 //# sourceMappingURL=types.d.ts.map
