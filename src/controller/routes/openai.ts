@@ -5,7 +5,7 @@ import { WebDriverManager } from '../../web-driver/WebDriverManager';
 import { SiteKey } from '../../web-driver/types';
 import { WebDriverError, WebDriverErrorCode } from '../../web-driver/types';
 import { ProtocolParseError } from '../../protocol/types';
-import { logDebug } from '../logger';
+import { logDebug, stringifyLogPayload } from '../logger';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -552,7 +552,7 @@ function logRequestTrace(
   payload: Record<string, unknown>
 ): void {
   try {
-    console.log(`[RequestTrace][${traceId}] stage=${stage} payload=${JSON.stringify(payload)}`);
+    console.log(`[RequestTrace][${traceId}] stage=${stage} payload=${stringifyLogPayload(payload)}`);
   } catch {
     console.log(`[RequestTrace][${traceId}] stage=${stage} payload=[unserializable]`);
   }
@@ -699,7 +699,7 @@ export async function chatCompletionsHandler(
     });
     logDebug('chat_completions_request_body', {
       trace_id: traceId,
-      body_preview: JSON.stringify(requestBody ?? {}).slice(0, 5000),
+      body_preview: stringifyLogPayload(requestBody ?? {}).slice(0, 5000),
     });
 
     // ===== Step 1: 解析协议 =====
@@ -1011,7 +1011,7 @@ export async function chatCompletionsHandler(
     });
     logDebug('chat_completions_response_payload', {
       trace_id: traceId,
-      response_preview: JSON.stringify(formattedResponse).slice(0, 5000),
+      response_preview: stringifyLogPayload(formattedResponse).slice(0, 5000),
     });
 
     res.json(formattedResponse);

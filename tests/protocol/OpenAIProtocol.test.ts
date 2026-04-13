@@ -374,7 +374,13 @@ describe('OpenAIProtocol.format()', () => {
     expect(result.choices[0].message.role).toBe('assistant');
     expect(result.choices[0].message.content).toBe('你好，我是 AI 助手');
     expect(result.choices[0].finish_reason).toBe('stop');
+    expect(result.system_fingerprint).toMatch(/^fp_/);
     expect(result.usage.prompt_tokens).toBe(100);
+    expect(result.usage.completion_tokens).toBe(20);
+    expect(result.usage.total_tokens).toBe(120);
+    expect(result.usage.prompt_tokens_details).toEqual({ cached_tokens: 0 });
+    expect(result.usage.prompt_cache_hit_tokens).toBe(0);
+    expect(result.usage.prompt_cache_miss_tokens).toBe(0);
   });
 
   it('包含 tool_calls 时 finish_reason 应该是 tool_calls', () => {
@@ -405,5 +411,8 @@ describe('OpenAIProtocol.format()', () => {
     expect(result.usage.prompt_tokens).toBe(7);
     expect(result.usage.completion_tokens).toBe(3);
     expect(result.usage.total_tokens).toBe(10);
+    expect(result.usage.prompt_tokens_details).toEqual({ cached_tokens: 0 });
+    expect(result.usage.prompt_cache_hit_tokens).toBe(0);
+    expect(result.usage.prompt_cache_miss_tokens).toBe(0);
   });
 });

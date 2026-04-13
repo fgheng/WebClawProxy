@@ -6,10 +6,14 @@ interface LoggingConfig {
   debug: boolean;
   dir: string;
   file_prefix: string;
+  pretty_json: boolean;
+  pretty_json_indent: number;
 }
 
 let loggerInitialized = false;
 let debugEnabled = false;
+let prettyJsonEnabled = false;
+let prettyJsonIndent = 2;
 let stream: fs.WriteStream | null = null;
 
 function loadLoggingConfig(): LoggingConfig {
@@ -26,6 +30,11 @@ function loadLoggingConfig(): LoggingConfig {
         typeof logging.file_prefix === 'string' && logging.file_prefix.trim()
           ? logging.file_prefix
           : 'webclaw-proxy',
+      pretty_json: Boolean(logging.pretty_json),
+      pretty_json_indent:
+        typeof logging.pretty_json_indent === 'number' && logging.pretty_json_indent > 0
+          ? Math.floor(logging.pretty_json_indent)
+          : 2,
     };
   } catch {
     return {
@@ -33,22 +42,30 @@ function loadLoggingConfig(): LoggingConfig {
       debug: false,
       dir: './data/logs',
       file_prefix: 'webclaw-proxy',
+      pretty_json: false,
+      pretty_json_indent: 2,
     };
+  }
+}
+
+function stringifyMaybeJson(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return prettyJsonEnabled
+    ? JSON.stringify(value, null, prettyJsonIndent)
+    : JSON.stringify(value);
+}
+
+export function stringifyLogPayload(payload: unknown): string {
+  try {
+    return stringifyMaybeJson(payload);
+  } catch {
+    return '[unserializable]';
   }
 }
 
 function toLine(level: string, args: unknown[]): string {
   const time = new Date().toISOString();
-  const msg = args
-    .map((a) => {
-      if (typeof a === 'string') return a;
-      try {
-        return JSON.stringify(a);
-      } catch {
-        return String(a);
-      }
-    })
-    .join(' ');
+  const msg = args.map((a) => stringifyLogPayload(a)).join(' ');
   return `[${time}] [${level}] ${msg}\n`;
 }
 
@@ -58,6 +75,8 @@ export function initServiceLogger(): void {
 
   const cfg = loadLoggingConfig();
   debugEnabled = cfg.debug;
+  prettyJsonEnabled = cfg.pretty_json;
+  prettyJsonIndent = cfg.pretty_json_indent;
   if (!cfg.enabled) return;
 
   const dir = path.isAbsolute(cfg.dir) ? cfg.dir : path.join(process.cwd(), cfg.dir);
@@ -94,6 +113,9 @@ export function initServiceLogger(): void {
 
   console.log(`[Logger] 文件日志已启用: ${filePath}`);
   console.log(`[Logger] Debug 模式: ${debugEnabled ? 'ON' : 'OFF'}`);
+  console.log(
+    `[Logger] JSON 格式化: ${prettyJsonEnabled ? `ON (indent=${prettyJsonIndent})` : 'OFF'}`
+  );
 }
 
 export function isDebugLoggingEnabled(): boolean {
@@ -102,9 +124,5 @@ export function isDebugLoggingEnabled(): boolean {
 
 export function logDebug(stage: string, payload: Record<string, unknown>): void {
   if (!debugEnabled) return;
-  try {
-    console.log(`[DebugFlow] stage=${stage} payload=${JSON.stringify(payload)}`);
-  } catch {
-    console.log(`[DebugFlow] stage=${stage} payload=[unserializable]`);
-  }
+  console.log(`[DebugFlow] stage=${stage} payload=${stringifyLogPayload(payload)}`);
 }

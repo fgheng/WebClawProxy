@@ -10,6 +10,7 @@ import {
   ToolCall,
 } from '../types';
 import { OpenAIRequest, OpenAIResponse, OpenAIMessage } from './types';
+import { stringifyLogPayload } from '../../controller/logger';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -21,7 +22,7 @@ import { v4 as uuidv4 } from 'uuid';
 export class OpenAIProtocol extends BaseProtocol {
   private logProtocolTrace(traceId: string, stage: string, payload: Record<string, unknown>): void {
     try {
-      console.log(`[ProtocolTrace][${traceId}] stage=${stage} payload=${JSON.stringify(payload)}`);
+      console.log(`[ProtocolTrace][${traceId}] stage=${stage} payload=${stringifyLogPayload(payload)}`);
     } catch {
       console.log(`[ProtocolTrace][${traceId}] stage=${stage} payload=[unserializable]`);
     }
@@ -142,6 +143,7 @@ export class OpenAIProtocol extends BaseProtocol {
   ): OpenAIResponse {
     const now = Math.floor(Date.now() / 1000);
     const id = `chatcmpl-${uuidv4().replace(/-/g, '').substring(0, 20)}`;
+    const systemFingerprint = `fp_${uuidv4().replace(/-/g, '').substring(0, 10)}`;
 
     const message: {
       role: string;
@@ -186,7 +188,13 @@ export class OpenAIProtocol extends BaseProtocol {
         total_tokens:
           usage?.total_tokens ??
           (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0),
+        prompt_tokens_details: {
+          cached_tokens: 0,
+        },
+        prompt_cache_hit_tokens: 0,
+        prompt_cache_miss_tokens: 0,
       },
+      system_fingerprint: systemFingerprint,
     };
   }
 

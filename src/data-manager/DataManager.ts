@@ -4,14 +4,14 @@ import { InternalRequest, Message, Tool } from '../protocol/types';
 import { DataManagerConfig, DataManagerError, DataManagerErrorCode } from './types';
 import type {} from './types';
 import { computeHashKey } from './utils/hash';
-import {
-  buildSystemPrompt,
+import { buildSystemPrompt,
   buildHistoryPrompt,
   buildCurrentPrompt,
   buildToolsPrompt,
   buildInitPrompt,
   buildCurrentPromptForWebSend,
 } from './utils/prompt';
+import { stringifyLogPayload } from '../controller/logger';
 import type {} from './utils/prompt';
 
 interface SessionIndexEntry {
@@ -692,7 +692,7 @@ export class DataManager {
 
   private logDataTrace(stage: string, payload: Record<string, unknown>): void {
     try {
-      console.log(`[DataTrace][${this.traceId}] stage=${stage} payload=${JSON.stringify(payload)}`);
+      console.log(`[DataTrace][${this.traceId}] stage=${stage} payload=${stringifyLogPayload(payload)}`);
     } catch {
       console.log(`[DataTrace][${this.traceId}] stage=${stage} payload=[unserializable]`);
     }
