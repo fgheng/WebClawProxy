@@ -3,16 +3,28 @@ import { Message, Tool, ContentItem } from '../../../src/protocol/types';
 function formatNonTextContentItem(item: ContentItem): string {
   const { type, ...rest } = item;
   if (Object.keys(rest).length === 0) {
-    return `[${type}]`;
+    return '';
   }
-  return `[${type}] ${JSON.stringify(rest)}`;
+  try {
+    return JSON.stringify(rest);
+  } catch {
+    return String(rest);
+  }
 }
 
-function formatToolCalls(toolCalls: Message['tool_calls']): string {
+function formatToolCallBlocks(toolCalls: Message['tool_calls']): string {
   if (!toolCalls || toolCalls.length === 0) {
     return '';
   }
-  return `<|tool_calls|>\n${JSON.stringify(toolCalls)}`;
+
+  return toolCalls
+    .map((toolCall) => {
+      const id = toolCall.id ?? '';
+      const name = toolCall.function?.name ?? '';
+      const args = toolCall.function?.arguments ?? '';
+      return [`<tool_call id="${id}">`, `name: ${name}`, `arguments: ${args}`, '</tool_call>'].join('\n');
+    })
+    .join('\n');
 }
 
 /**
@@ -68,10 +80,31 @@ export function buildHistoryPrompt(history: Message[]): string {
 
   return history
     .map((msg) => {
+      const role = msg.role;
+      if (role === 'system') {
+        return '';
+      }
+
       const contentStr = contentToString(msg.content);
-      const toolCallsStr = formatToolCalls(msg.tool_calls);
-      return [`<|role:${msg.role}|>`, contentStr, toolCallsStr].filter(Boolean).join('\n');
+
+      if (role === 'user') {
+        return [`<|user|>`, contentStr].filter(Boolean).join('\n');
+      }
+
+      if (role === 'assistant') {
+        const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
+        return [`<|assistant|>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
+      }
+
+      if (role === 'tool') {
+        const toolCallId = (msg as Message & { tool_call_id?: string }).tool_call_id;
+        const toolHeader = toolCallId ? `<|tool| id="${toolCallId}">` : '<|tool|>';
+        return [toolHeader, contentStr].filter(Boolean).join('\n');
+      }
+
+      return [`<|${role}|>`, contentStr].filter(Boolean).join('\n');
     })
+    .filter(Boolean)
     .join('\n\n');
 }
 
@@ -81,8 +114,8 @@ export function buildHistoryPrompt(history: Message[]): string {
  */
 export function buildCurrentPrompt(current: Message): string {
   const contentStr = contentToString(current.content);
-  const toolCallsStr = formatToolCalls(current.tool_calls);
-  return [contentStr, toolCallsStr].filter(Boolean).join('\n');
+  const toolCallBlocks = formatToolCallBlocks(current.tool_calls);
+  return [contentStr, toolCallBlocks].filter(Boolean).join('\n');
 }
 
 /**

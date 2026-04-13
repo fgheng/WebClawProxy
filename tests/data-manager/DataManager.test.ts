@@ -195,18 +195,18 @@ describe('Prompt 构造工具', () => {
         },
       ];
       const result = contentToString(content);
-      expect(result).toContain('[tool_result]');
       expect(result).toContain('"tool_call_id":"call_abc"');
       expect(result).toContain('"content":"a.md\\nb.md"');
       expect(result).toContain('"extra":{"code":0}');
+      expect(result).not.toContain('[tool_result]');
     });
 
-    it('image_url 类型应该显示占位符', () => {
+    it('image_url 类型应该保留除 type 外字段', () => {
       const content = [
         { type: 'image_url', image_url: 'https://example.com/img.jpg' },
       ];
-      expect(contentToString(content)).toContain('[image_url]');
       expect(contentToString(content)).toContain('"image_url":"https://example.com/img.jpg"');
+      expect(contentToString(content)).not.toContain('[image_url]');
     });
   });
 
@@ -222,19 +222,19 @@ describe('Prompt 构造工具', () => {
   });
 
   describe('buildHistoryPrompt', () => {
-    it('应该为每条消息添加 role 标记', () => {
+    it('应该按新 wrapper 输出 user/assistant', () => {
       const history = [
         { role: 'user', content: '你好' },
         { role: 'assistant', content: '你好，有什么可以帮你？' },
       ];
       const result = buildHistoryPrompt(history);
-      expect(result).toContain('<|role:user|>');
-      expect(result).toContain('<|role:assistant|>');
+      expect(result).toContain('<|user|>');
+      expect(result).toContain('<|assistant|>');
       expect(result).toContain('你好');
       expect(result).toContain('你好，有什么可以帮你？');
     });
 
-    it('assistant 含 tool_calls 时应写入 tool_calls 块', () => {
+    it('assistant 含 tool_calls 时应写入 <tool_call> 块', () => {
       const history = [
         {
           role: 'assistant',
@@ -249,9 +249,59 @@ describe('Prompt 构造工具', () => {
         },
       ];
       const result = buildHistoryPrompt(history as any);
-      expect(result).toContain('<|tool_calls|>');
-      expect(result).toContain('"id":"call_xyz"');
-      expect(result).toContain('"name":"read_file"');
+      expect(result).toContain('<tool_call id="call_xyz">');
+      expect(result).toContain('name: read_file');
+      expect(result).toContain('arguments: {"path":"a.md"}');
+      expect(result).toContain('</tool_call>');
+    });
+
+    it('role=tool 应包含 tool_call_id', () => {
+      const history = [
+        {
+          role: 'tool',
+          content: '{"temperature":30,"condition":"sunny"}',
+          tool_call_id: 'call_1',
+        },
+      ];
+      const result = buildHistoryPrompt(history as any);
+      expect(result).toContain('<|tool| id="call_1">');
+      expect(result).toContain('{"temperature":30,"condition":"sunny"}');
+    });
+
+    it('应严格保持 history 原顺序并跳过 system', () => {
+      const history = [
+        { role: 'system', content: 'S0' },
+        { role: 'user', content: 'u1' },
+        {
+          role: 'assistant',
+          content: 'a1',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function' as const,
+              function: { name: 'get_weather', arguments: '{"city":"beijing"}' },
+            },
+          ],
+        },
+        { role: 'tool', content: '北京天气晴', tool_call_id: 'call_1' },
+        { role: 'assistant', content: 'a2' },
+        { role: 'user', content: 'u2' },
+      ];
+
+      const result = buildHistoryPrompt(history as any);
+      expect(result).not.toContain('<|system|>');
+
+      const idxUser1 = result.indexOf('<|user|>\nu1');
+      const idxAssistant1 = result.indexOf('<|assistant|>\na1');
+      const idxTool = result.indexOf('<|tool| id="call_1">\n北京天气晴');
+      const idxAssistant2 = result.indexOf('<|assistant|>\na2');
+      const idxUser2 = result.lastIndexOf('<|user|>\nu2');
+
+      expect(idxUser1).toBeGreaterThanOrEqual(0);
+      expect(idxAssistant1).toBeGreaterThan(idxUser1);
+      expect(idxTool).toBeGreaterThan(idxAssistant1);
+      expect(idxAssistant2).toBeGreaterThan(idxTool);
+      expect(idxUser2).toBeGreaterThan(idxAssistant2);
     });
 
     it('空 history 应该返回空字符串', () => {
@@ -268,7 +318,7 @@ describe('Prompt 构造工具', () => {
       expect(result).not.toContain('<|');
     });
 
-    it('current 含 tool_calls 时应该拼接 tool_calls 信息', () => {
+    it('current 含 tool_calls 时应该拼接 <tool_call> 信息', () => {
       const current = {
         role: 'assistant',
         content: [{ type: 'text', text: '准备调用工具' }],
@@ -282,9 +332,9 @@ describe('Prompt 构造工具', () => {
       };
       const result = buildCurrentPrompt(current);
       expect(result).toContain('准备调用工具');
-      expect(result).toContain('<|tool_calls|>');
-      expect(result).toContain('"id":"call_1"');
-      expect(result).toContain('"name":"exec"');
+      expect(result).toContain('<tool_call id="call_1">');
+      expect(result).toContain('name: exec');
+      expect(result).toContain('arguments: {"command":"ls"}');
     });
   });
 
@@ -547,11 +597,11 @@ describe('DataManager', () => {
       expect(prompt).toContain('You are a helpful assistant.');
     });
 
-    it('get_history_prompt 应该包含 role 标记', () => {
+    it('get_history_prompt 应该包含新 role wrapper', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_history_prompt();
-      expect(prompt).toContain('<|role:user|>');
-      expect(prompt).toContain('<|role:assistant|>');
+      expect(prompt).toContain('<|user|>');
+      expect(prompt).toContain('<|assistant|>');
     });
 
     it('get_current_prompt 应该返回当前消息内容', () => {
