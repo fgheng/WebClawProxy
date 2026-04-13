@@ -1,4 +1,3 @@
-<|system|>
 You are a personal assistant running inside OpenClaw.
 ## Tooling
 Structured tool definitions are the source of truth for tool names, descriptions, and parameters.

@@ -5,7 +5,7 @@
   "providers": {
     "gpt": {
       "site": "https://chatgpt.com/",
-      "input_max_chars": 50000,
+      "input_max_chars": 60000,
       "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "o1", "o1-mini", "o3", "o3-mini"]
     },
     "qwen": {
@@ -20,7 +20,7 @@
     },
     "kimi": {
       "site": "https://www.kimi.com/",
-      "input_max_chars": 50000,
+      "input_max_chars": 120000,
       "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi"]
     }
   },
