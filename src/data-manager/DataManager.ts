@@ -114,10 +114,6 @@ export class DataManager {
         customConfig?.formatOnlyRetryTemplate ??
         config.defaults?.format_only_retry_template ??
         '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{response_schema_template}}',
-      sessionIndexMaxEntries:
-        customConfig?.sessionIndexMaxEntries ??
-        config.session_index?.max_entries ??
-        120,
     };
 
     this.ROOT_DIR = path.resolve(this.config.rootDir);
@@ -511,7 +507,7 @@ export class DataManager {
         sessions: { ...(parsed as SessionIndexFile).sessions },
         latest_hash_to_session: { ...(parsed as SessionIndexFile).latest_hash_to_session },
       };
-      return this.pruneSessionIndex(normalized);
+      return normalized;
     }
 
     // 兼容旧结构：{ hashes: Record<hash, { session_dir, ... }> }
@@ -548,50 +544,17 @@ export class DataManager {
       latest_hash_to_session[hash] = sessionDir;
     }
 
-    return this.pruneSessionIndex({ sessions, latest_hash_to_session });
+    return { sessions, latest_hash_to_session };
   }
 
   private saveSessionIndex(index: SessionIndexFile): void {
-    const pruned = this.pruneSessionIndex(index);
     const indexPath = this.getSessionIndexPath();
     fs.mkdirSync(path.dirname(indexPath), { recursive: true });
-    fs.writeFileSync(indexPath, JSON.stringify(pruned, null, 2), 'utf-8');
+    fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
     this.logDataTrace('save_session_index', {
       index_path: indexPath,
-      session_count: Object.keys(pruned.sessions).length,
-      max_entries: this.config.sessionIndexMaxEntries,
+      session_count: Object.keys(index.sessions).length,
     });
-  }
-
-  private pruneSessionIndex(index: SessionIndexFile): SessionIndexFile {
-    const max = this.config.sessionIndexMaxEntries;
-    if (!max || max <= 0) return index;
-
-    const entries = Object.entries(index.sessions);
-    if (entries.length <= max) return index;
-
-    entries.sort((a, b) => {
-      const ta = Date.parse(a[1].updated_at || a[1].created_at || '1970-01-01T00:00:00.000Z');
-      const tb = Date.parse(b[1].updated_at || b[1].created_at || '1970-01-01T00:00:00.000Z');
-      return tb - ta;
-    });
-
-    const kept = entries.slice(0, max);
-    const sessions: Record<string, SessionIndexEntry> = {};
-    const keptSessionSet = new Set<string>();
-    for (const [sessionDir, entry] of kept) {
-      sessions[sessionDir] = entry;
-      keptSessionSet.add(sessionDir);
-    }
-
-    const latest_hash_to_session: Record<string, string> = {};
-    for (const [hash, sessionDir] of Object.entries(index.latest_hash_to_session)) {
-      if (keptSessionSet.has(sessionDir) && sessions[sessionDir]?.latest_hash === hash) {
-        latest_hash_to_session[hash] = sessionDir;
-      }
-    }
-
-    return { sessions, latest_hash_to_session };
   }
 
   private defaultSessionEntry(latestHash: string, base?: Partial<SessionIndexEntry>): SessionIndexEntry {

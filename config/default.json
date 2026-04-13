@@ -39,9 +39,6 @@
     "max_prompt_tokens": 120000,
     "max_total_tokens": 128000
   },
-  "session_index": {
-    "max_entries": 120
-  },
   "web_input": {
     "_comment_retry_format_only_threshold_chars": "当首轮返回非 JSON 且需要重试时：若原始输入长度超过该阈值，则使用仅格式提醒模板；否则使用格式+用户内容模板。",
     "retry_format_only_threshold_chars":  500

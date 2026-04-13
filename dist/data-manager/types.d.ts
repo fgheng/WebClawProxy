@@ -14,8 +14,6 @@ export interface DataManagerConfig {
     userMessageTemplate?: string;
     /** JSON 重试时仅发送格式提醒的模板，支持 {{response_schema_template}} 占位符 */
     formatOnlyRetryTemplate?: string;
-    /** session-index 最多保留的 hash 条目数（按 updated_at 取最近） */
-    sessionIndexMaxEntries?: number;
 }
 /**
  * 模型分类信息

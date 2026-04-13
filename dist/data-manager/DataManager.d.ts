@@ -94,7 +94,6 @@ export declare class DataManager {
     private loadSessionIndex;
     private normalizeSessionIndex;
     private saveSessionIndex;
-    private pruneSessionIndex;
     private defaultSessionEntry;
     private getSessionDirByHash;
     private getSessionEntryByHash;
