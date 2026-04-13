@@ -756,7 +756,7 @@ export class WebDriverManager {
 
     const inputSelectorBySite: Record<SiteKey, string> = {
       gpt: '#prompt-textarea',
-      qwen: 'textarea, [contenteditable="true"]',
+      qwen: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
       deepseek: 'textarea, [contenteditable="true"]',
       kimi: 'textarea, [contenteditable="true"][class*="input"]',
     };

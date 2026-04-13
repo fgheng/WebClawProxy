@@ -13,7 +13,7 @@ const SELECTORS = {
   loginIndicator: '.user-avatar, [class*="avatar"], [class*="user-info"]',
   newChatButton: '[class*="new-chat"], button[title*="新建"], button[title*="New"]',
   newChatButtonAlt: 'button[class*="new"], [data-testid*="new"]',
-  inputArea: 'textarea, [contenteditable="true"]',
+  inputArea: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
   sendButton: 'button[class*="send"], button[type="submit"]',
   assistantMessage: [
     '[data-role="assistant"]',
@@ -102,25 +102,41 @@ export class QwenDriver extends BaseDriver {
     }
   }
 
+  async navigateToConversation(url: string): Promise<void> {
+    if (!this.isValidConversationUrl(url)) {
+      throw new WebDriverError(
+        WebDriverErrorCode.INVALID_SESSION_URL,
+        `无效的对话 URL: ${url}`
+      );
+    }
+
+    // Qwen 是偏 SPA 的页面，使用更轻的导航等待条件，避免卡在 domcontentloaded。
+    await this.page.goto(url, { waitUntil: 'commit', timeout: 15000 });
+    await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
+  }
+
   async sendMessage(text: string): Promise<void> {
     try {
       await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
 
       const beforeCount = await this.getAssistantMessageCount();
       this.pendingResponseBaseCount = beforeCount;
+      const canonicalText = this.canonicalizeForDispatch(text);
 
+      await this.clearInputArea();
       await this.fillInputRobustly(text);
       await this.sleep(200);
 
-      // 首轮发送尝试：点击发送按钮 -> Enter
-      await this.tryPrimarySend();
+      // 首轮发送尝试：优先按钮，必要时回退 Enter
+      const sendState = await this.waitForSendButtonStateAfterFill(canonicalText, 2000);
+      await this.tryPrimarySend(sendState);
 
-      let dispatched = await this.waitForDispatch(text, beforeCount, 2500);
+      let dispatched = await this.waitForDispatch(canonicalText, beforeCount, 2500);
 
       // 二次兜底：Ctrl/Cmd+Enter，再确认一次
       if (!dispatched) {
         await this.tryFallbackSend();
-        dispatched = await this.waitForDispatch(text, beforeCount, 2000);
+        dispatched = await this.waitForDispatch(canonicalText, beforeCount, 2000);
       }
 
       // 注意：Qwen 某些版本发送后输入框不会立即清空，不能在此直接判失败
@@ -252,14 +268,33 @@ export class QwenDriver extends BaseDriver {
     }, [SELECTORS.inputArea] as [string]);
   }
 
-  private async waitForDispatch(text: string, beforeCount: number, timeoutMs: number): Promise<boolean> {
+  private canonicalizeForDispatch(text: string): string {
+    return text.replace(/\s+/g, '').trim();
+  }
+
+  private async clearInputArea(): Promise<void> {
+    try {
+      await this.page.fill(SELECTORS.inputArea, '');
+    } catch {
+      // ignore
+    }
+
+    const remaining = await this.getInputText();
+    if (!remaining) return;
+
+    await this.page.click(SELECTORS.inputArea).catch(() => null);
+    await this.page.keyboard.press('Meta+A').catch(() => null);
+    await this.page.keyboard.press('Backspace').catch(() => null);
+    await this.sleep(80);
+  }
+
+  private async waitForDispatch(canonicalText: string, beforeCount: number, timeoutMs: number): Promise<boolean> {
     const start = Date.now();
-    const normalizedText = text.replace(/\s+/g, ' ').trim();
 
     while (Date.now() - start < timeoutMs) {
       await this.sleep(200);
 
-      const currentInput = (await this.getInputText()).replace(/\s+/g, ' ').trim();
+      const currentInput = this.canonicalizeForDispatch(await this.getInputText());
       const currentCount = await this.getAssistantMessageCount();
       const stopVisible = await this.page
         .waitForSelector(SELECTORS.stopButton, { timeout: 250, state: 'visible' })
@@ -271,22 +306,84 @@ export class QwenDriver extends BaseDriver {
       }
 
       // 输入框内容发生变化，也视为发送动作已触发
-      if (normalizedText && currentInput !== normalizedText) {
+      if (canonicalText && currentInput !== canonicalText) {
         return true;
       }
     }
 
-    const finalInput = (await this.getInputText()).replace(/\s+/g, ' ').trim();
-    return normalizedText ? finalInput !== normalizedText : false;
+    const finalInput = this.canonicalizeForDispatch(await this.getInputText());
+    return canonicalText ? finalInput !== canonicalText : false;
   }
 
-  private async tryPrimarySend(): Promise<void> {
-    try {
-      await this.page.waitForSelector(SELECTORS.sendButton, { timeout: 2000, state: 'visible' });
-      await this.page.click(SELECTORS.sendButton);
-      return;
-    } catch {
-      // ignore
+  private async waitForSendButtonStateAfterFill(
+    canonicalText: string,
+    timeoutMs: number
+  ): Promise<{ mounted: boolean; ready: boolean }> {
+    const start = Date.now();
+    let sawMounted = false;
+
+    while (Date.now() - start < timeoutMs) {
+      const state = await this.page
+        .evaluate(([inputSelector, sendButtonSelector, stopButtonSelector]: [string, string, string]) => {
+          const doc = (globalThis as any).document;
+          const getStyle = (globalThis as any).getComputedStyle;
+          const isVisible = (el: any) => {
+            if (!el) return false;
+            const style = getStyle?.(el);
+            const rect = el.getBoundingClientRect?.();
+            return !style || (
+              style.display !== 'none' &&
+              style.visibility !== 'hidden' &&
+              (rect ? rect.width > 0 && rect.height > 0 : true)
+            );
+          };
+
+          const input = doc.querySelector(inputSelector as string) as any;
+          const sendButton = doc.querySelector(sendButtonSelector as string) as any;
+          const stopButton = doc.querySelector(stopButtonSelector as string) as any;
+          const inputText = input ? String(input.value ?? input.textContent ?? '').replace(/\s+/g, '').trim() : '';
+
+          return {
+            inputCanonicalMatches: inputText === canonicalText,
+            sendButtonMounted: Boolean(sendButton),
+            sendButtonReady: Boolean(
+              sendButton &&
+              isVisible(sendButton) &&
+              !sendButton.disabled &&
+              sendButton.getAttribute?.('aria-disabled') !== 'true'
+            ),
+            stopVisible: isVisible(stopButton),
+          };
+        }, [SELECTORS.inputArea, SELECTORS.sendButton, SELECTORS.stopButton] as [string, string, string])
+        .catch(() => ({
+          inputCanonicalMatches: false,
+          sendButtonMounted: false,
+          sendButtonReady: false,
+          stopVisible: false,
+        }));
+
+      if (!state.stopVisible && state.sendButtonReady && state.inputCanonicalMatches) {
+        return { mounted: true, ready: true };
+      }
+      if (!state.inputCanonicalMatches) {
+        return { mounted: sawMounted || state.sendButtonMounted, ready: false };
+      }
+
+      sawMounted = sawMounted || state.sendButtonMounted;
+      await this.sleep(120);
+    }
+
+    return { mounted: sawMounted, ready: false };
+  }
+
+  private async tryPrimarySend(sendState: { mounted: boolean; ready: boolean }): Promise<void> {
+    if (sendState.ready || sendState.mounted) {
+      try {
+        await this.page.click(SELECTORS.sendButton, { timeout: 1000 });
+        return;
+      } catch {
+        // ignore
+      }
     }
 
     try {

@@ -614,12 +614,7 @@ describe('QwenDriver 运行态问题回归', () => {
 
     const mockPage = {
       $$: jest.fn().mockResolvedValue([]),
-      waitForSelector: jest
-        .fn()
-        // 输入框可见（sendMessage 起始检查）
-        .mockResolvedValueOnce({})
-        // 发送按钮不可见
-        .mockRejectedValue(new Error('not visible')),
+      waitForSelector: jest.fn().mockResolvedValue({}),
       evaluate: jest.fn().mockResolvedValue('原问题仍在输入框'),
       keyboard: { press: jest.fn().mockResolvedValue(undefined) },
       url: jest.fn().mockReturnValue('https://chat.qwen.ai/c/abc'),
@@ -630,6 +625,17 @@ describe('QwenDriver 运行态问题回归', () => {
 
     const driver = new QwenDriver(mockPage, { responseTimeoutMs: 2000 });
     jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+    jest.spyOn(driver as any, 'clearInputArea').mockResolvedValue(undefined);
+    jest.spyOn(driver as any, 'fillInputRobustly').mockResolvedValue(undefined);
+    jest
+      .spyOn(driver as any, 'waitForSendButtonStateAfterFill')
+      .mockResolvedValueOnce({ mounted: false, ready: false });
+    jest.spyOn(driver as any, 'tryPrimarySend').mockResolvedValue(undefined);
+    jest.spyOn(driver as any, 'tryFallbackSend').mockResolvedValue(undefined);
+    jest
+      .spyOn(driver as any, 'waitForDispatch')
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false);
 
     await expect(driver.sendMessage('原问题仍在输入框')).resolves.toBeUndefined();
   });
@@ -742,6 +748,33 @@ describe('Driver URL 验证', () => {
 
     expect(driver.isValidConversationUrl('https://www.kimi.com/chat/abc123')).toBe(true);
     expect(driver.isValidConversationUrl('https://www.kimi.com/')).toBe(false);
+  });
+
+  it('Qwen 跳转会话应使用轻量导航并等待输入框', async () => {
+    const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
+    const mockPage = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      url: jest.fn(),
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+    } as any;
+
+    const driver = new QwenDriver(mockPage);
+
+    await expect(driver.navigateToConversation('https://chat.qwen.ai/c/abc123')).resolves.toBeUndefined();
+    expect(mockPage.goto).toHaveBeenCalledWith('https://chat.qwen.ai/c/abc123', {
+      waitUntil: 'commit',
+      timeout: 15000,
+    });
+    expect(mockPage.waitForSelector).toHaveBeenCalledWith('textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])', {
+      timeout: 10000,
+      state: 'visible',
+    });
   });
 });
 
@@ -967,6 +1000,39 @@ describe('ChatGPTDriver 发送稳定性', () => {
 });
 
 describe('DeepSeek/Kimi 输入流程收敛', () => {
+  it('Qwen 发送前应先清空输入框再写入，并优先点击发送按钮', async () => {
+    const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
+
+    const mockPage = {
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+      evaluate: jest
+        .fn()
+        .mockResolvedValueOnce('') // clearInputArea 后读取
+        .mockResolvedValueOnce(undefined) // fillInputRobustly 事件补发
+        .mockResolvedValueOnce({
+          inputCanonicalMatches: true,
+          sendButtonMounted: true,
+          sendButtonReady: true,
+          stopVisible: false,
+        }) // waitForSendButtonStateAfterFill
+        .mockResolvedValueOnce(''), // waitForDispatch 时读取输入框
+      $$: jest.fn().mockResolvedValue([]),
+    } as any;
+
+    const driver = new QwenDriver(mockPage);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+
+    await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
+
+    expect(mockPage.fill).toHaveBeenNthCalledWith(1, 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])', '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(2, 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])', 'hello world');
+    expect(mockPage.click).toHaveBeenCalledWith('button[class*="send"], button[type="submit"]', { timeout: 1000 });
+    expect(mockPage.keyboard.press).not.toHaveBeenCalledWith('Enter');
+  });
+
   it('DeepSeek 发送前应先清空输入框再写入，并优先点击发送按钮', async () => {
     const { DeepSeekDriver } = await import('../../src/web-driver/drivers/DeepSeekDriver');
 
