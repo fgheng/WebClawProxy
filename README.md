@@ -243,6 +243,7 @@ WebClawProxy/
 - **运行时**: Node.js 18+
 
 ## TODO
+- [ ] 会话有效性预检方案（请求前判断 web session 是否存在）暂缓：当前已回滚，后续找到更优实现再恢复
 - [ ] 文档更新
 - [ ] session 分片还未测试
 - [ ] 接入 openclaw
