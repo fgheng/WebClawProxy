@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 export declare function preflightWebDriverSites(): Promise<void>;
 export declare function openConfiguredWebDriverSites(): Promise<void>;
+export declare function closeWebDriver(): Promise<void>;
 /**
  * POST /v1/chat/completions — OpenAI 兼容接口处理器
  */

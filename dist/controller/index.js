@@ -44,7 +44,7 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : (config.server?.port ?? 3000);
 (0, logger_1.initServiceLogger)();
 const app = (0, server_1.createApp)();
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`
 ╔══════════════════════════════════════════╗
 ║         WebClawProxy 服务已启动           ║
@@ -85,6 +85,39 @@ app.listen(PORT, () => {
             console.warn('[Startup] 站点登录预检失败，请按提示在浏览器登录：', err instanceof Error ? err.message : err);
         }
     })();
+});
+let isShuttingDown = false;
+async function gracefulShutdown(signal) {
+    if (isShuttingDown)
+        return;
+    isShuttingDown = true;
+    console.log(`\n[Shutdown] 收到 ${signal}，正在关闭服务与浏览器资源...`);
+    try {
+        await (0, openai_1.closeWebDriver)();
+        console.log('[Shutdown] 浏览器资源已关闭');
+    }
+    catch (err) {
+        console.warn('[Shutdown] 关闭浏览器资源失败：', err instanceof Error ? err.message : err);
+    }
+    await new Promise((resolve) => {
+        server.close((err) => {
+            if (err) {
+                console.warn('[Shutdown] 关闭 HTTP 服务失败：', err.message);
+            }
+            else {
+                console.log('[Shutdown] HTTP 服务已关闭');
+            }
+            resolve();
+        });
+        setTimeout(() => resolve(), 3000);
+    });
+    process.exit(0);
+}
+process.on('SIGINT', () => {
+    void gracefulShutdown('SIGINT');
+});
+process.on('SIGTERM', () => {
+    void gracefulShutdown('SIGTERM');
 });
 exports.default = app;
 //# sourceMappingURL=index.js.map

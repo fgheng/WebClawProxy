@@ -46,6 +46,10 @@ export async function openConfiguredWebDriverSites(): Promise<void> {
   await webDriver.openConfiguredSites(siteKeys);
 }
 
+export async function closeWebDriver(): Promise<void> {
+  await webDriver.close();
+}
+
 /**
  * 根据模型名称推断使用哪个网站
  * 优先使用 providers 映射（site + models 同源），并兼容旧配置。

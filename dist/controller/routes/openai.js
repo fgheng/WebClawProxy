@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.preflightWebDriverSites = preflightWebDriverSites;
 exports.openConfiguredWebDriverSites = openConfiguredWebDriverSites;
+exports.closeWebDriver = closeWebDriver;
 exports.chatCompletionsHandler = chatCompletionsHandler;
 exports.listModelsHandler = listModelsHandler;
 const protocol_1 = require("../../protocol");
@@ -67,6 +68,9 @@ async function openConfiguredWebDriverSites() {
     if (siteKeys.length === 0)
         return;
     await webDriver.openConfiguredSites(siteKeys);
+}
+async function closeWebDriver() {
+    await webDriver.close();
 }
 /**
  * 根据模型名称推断使用哪个网站

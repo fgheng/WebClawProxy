@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { createApp } from './server';
-import { preflightWebDriverSites, openConfiguredWebDriverSites } from './routes/openai';
+import { preflightWebDriverSites, openConfiguredWebDriverSites, closeWebDriver } from './routes/openai';
 import { initServiceLogger } from './logger';
 
 // 加载配置
@@ -14,7 +14,7 @@ initServiceLogger();
 
 const app = createApp();
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════╗
 ║         WebClawProxy 服务已启动           ║
@@ -58,5 +58,43 @@ app.listen(PORT, () => {
   })();
 });
 
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n[Shutdown] 收到 ${signal}，正在关闭服务与浏览器资源...`);
+
+  try {
+    await closeWebDriver();
+    console.log('[Shutdown] 浏览器资源已关闭');
+  } catch (err) {
+    console.warn('[Shutdown] 关闭浏览器资源失败：', err instanceof Error ? err.message : err);
+  }
+
+  await new Promise<void>((resolve) => {
+    server.close((err?: Error) => {
+      if (err) {
+        console.warn('[Shutdown] 关闭 HTTP 服务失败：', err.message);
+      } else {
+        console.log('[Shutdown] HTTP 服务已关闭');
+      }
+      resolve();
+    });
+
+    setTimeout(() => resolve(), 3000);
+  });
+
+  process.exit(0);
+}
+
+process.on('SIGINT', () => {
+  void gracefulShutdown('SIGINT');
+});
+
+process.on('SIGTERM', () => {
+  void gracefulShutdown('SIGTERM');
+});
 
 export default app;
