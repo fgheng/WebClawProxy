@@ -249,5 +249,6 @@ WebClawProxy/
 - [ ] 接入 openclaw
 - [ ] 内部再转换成 openai-reponses 协议？主要是该协议有状态，对于映射 webssion 比较合适
 - [ ] 前端支持多种协议 openai-chat responses anthropic gemini
+- [ ] 多媒体支持
 - [ ] 支持 GUI
 - [ ] 实现 webclaw
