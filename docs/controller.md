@@ -96,7 +96,7 @@ flowchart TD
     O -- 是 --> P[返回 429/503]
     O -- 否 --> Q{parsedJson?}
 
-    Q -- 否 --> R[最多 2 次 template 重试]
+    Q -- 否 --> R[最多 2 次格式重试]
     R --> M
 
     Q -- 是 --> S[dm.update_current assistant]
@@ -153,7 +153,7 @@ flowchart TD
    - 额度/限流类 → `429 rate_limit_error`
    - 服务繁忙/不可用类 → `503 service_unavailable`
 3. 若既不是 JSON 也不是上游错误，则最多重试 2 次：
-   - 发送 `dm.get_current_prompt_with_template()`
+   - 发送 `dm.get_format_only_retry_prompt()`（仅格式提醒模板，不拼接原问题）
 
 ### Step 8：落盘 assistant 消息
 

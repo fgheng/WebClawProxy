@@ -6,7 +6,7 @@
 
 1. **会话映射**：把一次请求（`model + system + history + tools`）映射到唯一磁盘目录。  
 2. **状态持久化**：保存 `system`、`history`、`tools`、`web_url`、`linked` 等状态。  
-3. **Prompt 构造**：为控制层提供 `init_prompt`、`current_prompt`、`current_prompt_with_template`。
+3. **Prompt 构造**：为控制层提供 `init_prompt`、`current_prompt`、`format_only_retry_prompt`。
 
 对应核心实现：`src/data-manager/DataManager.ts`
 
@@ -158,12 +158,13 @@ new DataManager(internalReq, customConfig?)
 
 来源：`defaults.init_prompt_template`
 
-## 6.6 `get_current_prompt_with_template()`
+## 6.6 `get_format_only_retry_prompt()`
 模板变量：
 - `{{response_schema_template}}`
-- `{{current}}`
 
-来源：`defaults.current_template`
+来源：`defaults.format_only_retry_template`
+
+用途：用于 JSON 解析失败后的重试提示，仅强调输出格式，不拼接原问题内容。
 
 ## 6.7 `get_usage()`
 
@@ -217,7 +218,7 @@ new DataManager(internalReq, customConfig?)
 - `DataManager`
 - `DataManagerConfig` / `DataManagerError` / `DataManagerErrorCode`
 - `computeHashKey` / `computeSystemHash` / `computeHistoryHash` / `computeToolsHash`
-- `buildSystemPrompt` / `buildHistoryPrompt` / `buildCurrentPrompt` / `buildToolsPrompt` / `buildInitPrompt` / `buildCurrentPromptWithTemplate`
+- `buildSystemPrompt` / `buildHistoryPrompt` / `buildCurrentPrompt` / `buildToolsPrompt` / `buildInitPrompt` / `contentToString`
 
 ---
 
