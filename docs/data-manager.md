@@ -71,22 +71,19 @@ new DataManager(internalReq, customConfig?)
 
 ## 4.2 `save_data()`
 
-`save_data()` 有两条路径：
+当前实现是**统一路径**（不再区分文档中的 A/B 双路径）：
 
-### A) 目录不存在或为空（全量写）
-- 创建目录
-- 写 `system`
-- 写 `history.jsonl`（`history + current`）
-- 写 `tools.json`
-- 再调用一次 `update_hash_key()`
+1. 记录当前 `oldHash`，并判断调用前 `history` 中是否已存在 user 消息。
+2. 若 `current` 与 `history` 尾项不同，则先将 `current` 追加到内存 `history`（尾项去重）。
+3. 以更新后的 `history` 调用 `update_hash_key()`，推进到新 hash：
+   - 非首轮（原始 history 已有 user）会继承旧 hash 的 session 链路。
+   - 首轮（原始 history 无 user）会强制新建 session，避免同首句命中旧会话。
+4. 在稳定的 `DATA_PATH` 下全量落盘：
+   - `system`
+   - `history.jsonl`（写入**已并入 current 的 history**）
+   - `tools.json`
 
-### B) 目录存在且非空（增量写）
-- 缺失则补写 `system/tools/history`
-- 存在 `history.jsonl` 时仅追加 `current`
-- 同步内存 `this.history = [...this.history, this.current]`
-- 调用 `update_hash_key()`（必要时重命名目录）
-
-> 说明：`update_hash_key()` 在 hash 变化时会尝试把旧目录重命名到新目录（保留已有文件与 linked 状态）。
+> 结论：`save_data()` 会把 `current` 归档进 `history` 后再保存（若未重复）。
 
 ---
 
