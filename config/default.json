@@ -57,6 +57,8 @@
     "dir": "./data/logs",
     "file_prefix": "webclaw-proxy",
     "pretty_json": true,
-    "pretty_json_indent": 4
+    "pretty_json_indent": 4,
+    "request_body_truncate_enabled": false,
+    "request_body_max_chars": 5000
   }
 }

@@ -133,8 +133,8 @@ export function buildHistoryPrompt(history: Message[]): string {
  * 构造 current prompt
  * 只提取 content 内容，不带 role 标记
  */
-export function buildCurrentPrompt(current: Message | Message[]): string {
-  const currentList = Array.isArray(current) ? current : [current];
+export function buildCurrentPrompt(current: Message[]): string {
+  const currentList = current;
   if (!currentList.length) return '';
 
   if (

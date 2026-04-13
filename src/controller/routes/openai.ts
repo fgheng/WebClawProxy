@@ -5,7 +5,7 @@ import { WebDriverManager } from '../../web-driver/WebDriverManager';
 import { SiteKey } from '../../web-driver/types';
 import { WebDriverError, WebDriverErrorCode } from '../../web-driver/types';
 import { ProtocolParseError } from '../../protocol/types';
-import { logDebug, stringifyLogPayload } from '../logger';
+import { logDebug, stringifyLogPayload, formatRequestBodyPreview } from '../logger';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -879,7 +879,7 @@ export async function chatCompletionsHandler(
     });
     logDebug('chat_completions_request_body', {
       trace_id: traceId,
-      body_preview: stringifyLogPayload(requestBody ?? {}).slice(0, 5000),
+      body_preview: formatRequestBodyPreview(requestBody ?? {}),
     });
 
     // ===== Step 1: 解析协议 =====

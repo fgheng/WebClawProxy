@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { chatCompletionsHandler, listModelsHandler } from './routes/openai';
-import { logDebug, stringifyLogPayload } from './logger';
+import { logDebug, formatRequestBodyPreview } from './logger';
 
 /**
  * 创建并配置 Express 应用
@@ -24,7 +24,7 @@ export function createApp() {
         'x-session-id': req.headers['x-session-id'] ?? '',
         authorization_present: Boolean(req.headers.authorization),
       },
-      body_preview: stringifyLogPayload(req.body ?? {}).slice(0, 2000),
+      body_preview: formatRequestBodyPreview(req.body ?? {}),
     });
     next();
   });

@@ -93,7 +93,7 @@ export class DataManager {
     this.system = request.system ?? '';
     this.history = [...(request.history ?? [])];
     this.tools = [...(request.tools ?? [])];
-    this.current = this.normalizeCurrentList(request.current as unknown as Message | Message[]);
+    this.current = this.normalizeCurrentList(request.current);
 
     this.config = {
       rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
@@ -294,7 +294,7 @@ export class DataManager {
     }));
   }
 
-  update_current(current: Message | Message[]): void {
+  update_current(current: Message[]): void {
     this.current = this.normalizeCurrentList(current);
   }
 
@@ -346,7 +346,7 @@ export class DataManager {
   }
 
   get_current_prompt(): string {
-    return buildCurrentPrompt(this.current as Message[]);
+    return buildCurrentPrompt(this.current);
   }
 
   get_tools_prompt(): string {
@@ -470,12 +470,9 @@ export class DataManager {
     fs.writeFileSync(toolsFile, JSON.stringify(sortedTools, null, 2), 'utf-8');
   }
 
-  private normalizeCurrentList(current: Message | Message[] | undefined | null): Message[] {
+  private normalizeCurrentList(current: Message[] | undefined | null): Message[] {
     if (!current) return [];
-    if (Array.isArray(current)) {
-      return current.filter(Boolean).map((msg) => ({ ...msg, content: msg.content ?? '' }));
-    }
-    return [{ ...current, content: current.content ?? '' }];
+    return current.filter(Boolean).map((msg) => ({ ...msg, content: msg.content ?? '' }));
   }
 
   private isSameAsHistoryTail(message: Message): boolean {

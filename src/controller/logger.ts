@@ -8,12 +8,16 @@ interface LoggingConfig {
   file_prefix: string;
   pretty_json: boolean;
   pretty_json_indent: number;
+  request_body_truncate_enabled: boolean;
+  request_body_max_chars: number;
 }
 
 let loggerInitialized = false;
 let debugEnabled = false;
 let prettyJsonEnabled = false;
 let prettyJsonIndent = 2;
+let requestBodyTruncateEnabled = true;
+let requestBodyMaxChars = 5000;
 let stream: fs.WriteStream | null = null;
 
 function loadLoggingConfig(): LoggingConfig {
@@ -35,6 +39,11 @@ function loadLoggingConfig(): LoggingConfig {
         typeof logging.pretty_json_indent === 'number' && logging.pretty_json_indent > 0
           ? Math.floor(logging.pretty_json_indent)
           : 2,
+      request_body_truncate_enabled: logging.request_body_truncate_enabled !== false,
+      request_body_max_chars:
+        typeof logging.request_body_max_chars === 'number' && logging.request_body_max_chars > 0
+          ? Math.floor(logging.request_body_max_chars)
+          : 5000,
     };
   } catch {
     return {
@@ -44,6 +53,8 @@ function loadLoggingConfig(): LoggingConfig {
       file_prefix: 'webclaw-proxy',
       pretty_json: false,
       pretty_json_indent: 2,
+      request_body_truncate_enabled: true,
+      request_body_max_chars: 5000,
     };
   }
 }
@@ -77,6 +88,8 @@ export function initServiceLogger(): void {
   debugEnabled = cfg.debug;
   prettyJsonEnabled = cfg.pretty_json;
   prettyJsonIndent = cfg.pretty_json_indent;
+  requestBodyTruncateEnabled = cfg.request_body_truncate_enabled;
+  requestBodyMaxChars = cfg.request_body_max_chars;
   if (!cfg.enabled) return;
 
   const dir = path.isAbsolute(cfg.dir) ? cfg.dir : path.join(process.cwd(), cfg.dir);
@@ -116,10 +129,17 @@ export function initServiceLogger(): void {
   console.log(
     `[Logger] JSON 格式化: ${prettyJsonEnabled ? `ON (indent=${prettyJsonIndent})` : 'OFF'}`
   );
+  console.log(
+    `[Logger] 请求体截断: ${requestBodyTruncateEnabled ? `ON (max=${requestBodyMaxChars})` : 'OFF'}`
+  );
 }
 
-export function isDebugLoggingEnabled(): boolean {
-  return debugEnabled;
+export function formatRequestBodyPreview(payload: unknown): string {
+  const raw = stringifyLogPayload(payload);
+  if (!requestBodyTruncateEnabled) {
+    return raw;
+  }
+  return raw.slice(0, requestBodyMaxChars);
 }
 
 export function logDebug(stage: string, payload: Record<string, unknown>): void {

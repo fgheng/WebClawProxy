@@ -543,9 +543,9 @@ describe('DataManager', () => {
       const firstSessionPath = dm1.DATA_PATH;
 
       // 推进到新 hash（u1 -> u1,u2）
-      dm1.update_current({ role: 'assistant', content: 'assistant_reply1' });
+      dm1.update_current([{ role: 'assistant', content: 'assistant_reply1' }]);
       await dm1.save_data();
-      dm1.update_current({ role: 'user', content: 'user_content2' });
+      dm1.update_current([{ role: 'user', content: 'user_content2' }]);
       await dm1.save_data();
 
       const req2: InternalRequest = {
@@ -587,7 +587,7 @@ describe('DataManager', () => {
       dm.update_web_url('https://example.com/session-1');
       const oldHash = dm.HASH_KEY;
 
-      dm.update_current({ role: 'assistant', content: '下一轮回复' });
+      dm.update_current([{ role: 'assistant', content: '下一轮回复' }]);
       await dm.save_data();
 
       expect(dm.HASH_KEY).toBe(oldHash);
@@ -601,9 +601,9 @@ describe('DataManager', () => {
   describe('update_current()', () => {
     it('应该更新 current 属性', () => {
       const dm = createTestDataManager();
-      const newCurrent = { role: 'user', content: '新的当前消息' };
+      const newCurrent = [{ role: 'user', content: '新的当前消息' }];
       dm.update_current(newCurrent);
-      expect(dm.current).toEqual([newCurrent]);
+      expect(dm.current).toEqual(newCurrent);
     });
   });
 
