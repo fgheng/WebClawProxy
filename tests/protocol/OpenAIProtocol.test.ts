@@ -27,7 +27,7 @@ describe('OpenAIProtocol.parse()', () => {
     expect(result.model).toBe('gpt-5.2');
   });
 
-  it('应该正确提取 system 字段（messages[0].role === system）', () => {
+  it('应该正确提取 system 字段（聚合所有 system 消息，按原顺序拼接）', () => {
     const result = protocol.parse(basicRequest);
     expect(result.system).toBe('You are a personal assistant running inside OpenClaw.\n');
   });
@@ -48,7 +48,7 @@ describe('OpenAIProtocol.parse()', () => {
     expect(result.current.role).toBe('user');
   });
 
-  it('仅应移除第 0 条 system，后续 system 消息应保留', () => {
+  it('应移除所有 system 消息并保持 history 相对顺序', () => {
     const req = {
       model: 'gpt-4o',
       messages: [
@@ -56,14 +56,34 @@ describe('OpenAIProtocol.parse()', () => {
         { role: 'user', content: '第一条' },
         { role: 'system', content: '系统提示词-中间' },
         { role: 'assistant', content: '回复' },
+        { role: 'system', content: [{ type: 'text', text: '系统提示词-末尾' }] },
         { role: 'user', content: '第二条' },
       ],
     };
     const result = protocol.parse(req);
-    expect(result.system).toBe('系统提示词-首条');
-    expect(result.history).toHaveLength(3);
-    expect(result.history[1].role).toBe('system');
+    expect(result.system).toBe('系统提示词-首条\n\n系统提示词-中间\n\n系统提示词-末尾');
+    expect(result.history).toHaveLength(2);
+    expect(result.history[0].role).toBe('user');
+    expect(result.history[0].content).toBe('第一条');
+    expect(result.history[1].role).toBe('assistant');
+    expect(result.history[1].content).toBe('回复');
     expect(result.current.content).toBe('第二条');
+  });
+
+  it('history 中不应包含任何 system 消息', () => {
+    const req = {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: 'S1' },
+        { role: 'user', content: 'u1' },
+        { role: 'system', content: 'S2' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+      ],
+    };
+    const result = protocol.parse(req);
+    expect(result.history.every((m) => m.role !== 'system')).toBe(true);
+    expect(result.current.role).toBe('user');
   });
 
   it('history 应该不包含 current 消息（最后一条已被提取）', () => {
@@ -78,6 +98,31 @@ describe('OpenAIProtocol.parse()', () => {
     const result = protocol.parse(req);
     expect(result.history).toHaveLength(2);
     expect(result.current.content).toBe('最新的一条');
+  });
+
+  it('多轮消息在移除 system 后应保持相对顺序', () => {
+    const req = {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: 'S0' },
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'system', content: 'S1' },
+        { role: 'user', content: 'u2' },
+        { role: 'assistant', content: 'a2' },
+        { role: 'user', content: 'u3-current' },
+      ],
+    };
+
+    const result = protocol.parse(req);
+    expect(result.history.map((m) => `${m.role}:${String(m.content)}`)).toEqual([
+      'user:u1',
+      'assistant:a1',
+      'user:u2',
+      'assistant:a2',
+    ]);
+    expect(result.current.role).toBe('user');
+    expect(result.current.content).toBe('u3-current');
   });
 
   it('应该正确提取 tools 字段', () => {
@@ -169,7 +214,7 @@ describe('OpenAIProtocol.parse()', () => {
     expect(result.tools).toHaveLength(2);
     expect(result.tools[0].function.name).toBe('read');
     expect(result.tools[1].function.name).toBe('memory_get');
-    expect(result.history).toHaveLength(0); // 第 0 条 system 被移除，user 是 current
+    expect(result.history).toHaveLength(0); // 所有 system 被移除，user 是 current
     expect(result.current.role).toBe('user');
   });
 

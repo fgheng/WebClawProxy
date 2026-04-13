@@ -108,10 +108,10 @@ abstract class BaseProtocol {
 | 内部字段 | 来源 |
 |----------|------|
 | `model` | `input.model` |
-| `system` | 若 `messages[0].role === 'system'`，取其 content；否则为空 |
-| `history` | 过滤掉所有 `role === 'system'` 的消息，再去掉最后一条 |
+| `system` | 提取 `messages` 中所有 `role === 'system'` 的文本内容并按原顺序拼接（以 `\n\n` 分隔） |
+| `history` | 过滤掉所有 `role === 'system'` 的消息后，再去掉最后一条 |
 | `tools` | `input.tools ?? []` |
-| `current` | `messages` 中最后一条非 system 消息 |
+| `current` | 过滤掉所有 system 后消息序列的最后一条 |
 
 **示例输入（OpenAI 请求）：**
 
@@ -150,6 +150,10 @@ abstract class BaseProtocol {
   "current": { "role": "user", "content": [{ "type": "text", "text": "你好" }] }
 }
 ```
+
+> 说明：
+> - `system` 会聚合所有 `role = system` 消息，拼接顺序与 `messages` 中出现顺序一致。
+> - `history` 会移除所有 `system` 消息，并严格保持剩余消息的相对顺序（不重排）。
 
 ---
 
