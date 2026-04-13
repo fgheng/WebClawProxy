@@ -1137,33 +1137,42 @@ export async function chatCompletionsHandler(
       content: responseContent,
     };
 
+    const persistAssistantCurrent = (assistantMessage: { role?: string; content?: any; tool_calls?: any[] }) => {
+      dm.clear_current();
+      dm.replace_current_with_assistant({
+        role: 'assistant',
+        content: assistantMessage.content ?? responseContent,
+        tool_calls: assistantMessage.tool_calls,
+      } as any);
+    };
+
     if (parsedJson) {
       try {
         const jsonResponse = JSON.parse(parsedJson) as any;
         parsedChoiceObj = jsonResponse?.choices?.[0] ?? jsonResponse;
 
         if (parsedChoiceObj?.message && typeof parsedChoiceObj.message === 'object') {
-          dm.update_current(parsedChoiceObj.message);
+          persistAssistantCurrent(parsedChoiceObj.message);
           messagePayload = {
             content: parsedChoiceObj.message.content ?? responseContent,
             tool_calls: parsedChoiceObj.message.tool_calls,
             finish_reason: parsedChoiceObj.finish_reason,
           };
         } else {
-          dm.update_current({
+          persistAssistantCurrent({
             role: 'assistant',
             content: responseContent,
           });
         }
       } catch {
         // JSON 解析失败，回退到纯文本包装
-        dm.update_current({
+        persistAssistantCurrent({
           role: 'assistant',
           content: responseContent,
         });
       }
     } else {
-      dm.update_current({
+      persistAssistantCurrent({
         role: 'assistant',
         content: responseContent,
       });

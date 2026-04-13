@@ -54,7 +54,7 @@ const mockRequest: InternalRequest = {
       },
     },
   ],
-  current: { role: 'user', content: '当前消息' },
+  current: [{ role: 'user', content: '当前消息' }],
 };
 
 const createTestDataManager = (request: InternalRequest = mockRequest) => {
@@ -310,31 +310,48 @@ describe('Prompt 构造工具', () => {
   });
 
   describe('buildCurrentPrompt', () => {
-    it('应该只返回 content 内容，不含 role 标记', () => {
-      const current = { role: 'user', content: '当前问题' };
+    it('current 为单条 user 时应只返回 content，不含 role 标记', () => {
+      const current = [{ role: 'user', content: '当前问题' }] as any;
       const result = buildCurrentPrompt(current);
       expect(result).toBe('当前问题');
       expect(result).not.toContain('user');
       expect(result).not.toContain('<|');
     });
 
-    it('current 含 tool_calls 时应该拼接 <tool_call> 信息', () => {
-      const current = {
-        role: 'assistant',
-        content: [{ type: 'text', text: '准备调用工具' }],
-        tool_calls: [
-          {
-            id: 'call_1',
-            type: 'function' as const,
-            function: { name: 'exec', arguments: '{"command":"ls"}' },
-          },
-        ],
-      };
+    it('current 含 assistant tool_calls 时应该拼接 <tool_call> 信息', () => {
+      const current = [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: '准备调用工具' }],
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function' as const,
+              function: { name: 'exec', arguments: '{"command":"ls"}' },
+            },
+          ],
+        },
+      ] as any;
       const result = buildCurrentPrompt(current);
       expect(result).toContain('准备调用工具');
       expect(result).toContain('<tool_call id="call_1">');
       expect(result).toContain('name: exec');
       expect(result).toContain('arguments: {"command":"ls"}');
+    });
+
+    it('current 含 tool+user 批次时应输出 role wrapper（tool 在前）', () => {
+      const current = [
+        { role: 'tool', content: '执行结果A', tool_call_id: 'call_a' },
+        { role: 'tool', content: '执行结果B', tool_call_id: 'call_b' },
+        { role: 'user', content: '请继续' },
+      ] as any;
+      const result = buildCurrentPrompt(current);
+      expect(result).toContain('<|tool| id="call_a">');
+      expect(result).toContain('执行结果A');
+      expect(result).toContain('<|tool| id="call_b">');
+      expect(result).toContain('执行结果B');
+      expect(result).toContain('<|user|>');
+      expect(result).toContain('请继续');
     });
   });
 
@@ -408,7 +425,8 @@ describe('DataManager', () => {
       expect(dm.system).toBe('You are a helpful assistant.');
       expect(dm.history).toHaveLength(2);
       expect(dm.tools).toHaveLength(1);
-      expect(dm.current.role).toBe('user');
+      expect(dm.current).toHaveLength(1);
+      expect(dm.current[0].role).toBe('user');
     });
 
     it('应该在初始化时计算 HASH_KEY', () => {
@@ -516,7 +534,7 @@ describe('DataManager', () => {
         system: 'You are a helpful assistant.',
         history: [],
         tools: [],
-        current: { role: 'user', content: 'user_content1' },
+        current: [{ role: 'user', content: 'user_content1' }],
       };
 
       const dm1 = createTestDataManager(req1);
@@ -535,7 +553,7 @@ describe('DataManager', () => {
         system: 'You are a helpful assistant.',
         history: [],
         tools: [],
-        current: { role: 'user', content: 'user_content1' },
+        current: [{ role: 'user', content: 'user_content1' }],
       };
 
       const dm2 = createTestDataManager(req2);
@@ -585,7 +603,7 @@ describe('DataManager', () => {
       const dm = createTestDataManager();
       const newCurrent = { role: 'user', content: '新的当前消息' };
       dm.update_current(newCurrent);
-      expect(dm.current).toEqual(newCurrent);
+      expect(dm.current).toEqual([newCurrent]);
     });
   });
 
@@ -682,17 +700,19 @@ describe('DataManager', () => {
     it('当 current 内容更长时，completion_tokens 应该不小于原值', () => {
       const dmShort = createTestDataManager({
         ...mockRequest,
-        current: { role: 'assistant', content: '短回复' },
+        current: [{ role: 'assistant', content: '短回复' }],
       });
       const shortUsage = dmShort.get_usage();
 
       const dmLong = createTestDataManager({
         ...mockRequest,
-        current: {
-          role: 'assistant',
-          content:
-            '这是一个更长的回复，用于测试 completion token 估算是否会随文本长度增加而变大。包含 English words and symbols 12345。',
-        },
+        current: [
+          {
+            role: 'assistant',
+            content:
+              '这是一个更长的回复，用于测试 completion token 估算是否会随文本长度增加而变大。包含 English words and symbols 12345。',
+          },
+        ],
       });
       const longUsage = dmLong.get_usage();
 

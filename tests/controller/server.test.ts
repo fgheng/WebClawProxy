@@ -11,7 +11,7 @@ const mockDm = {
   system: '',
   history: [],
   tools: [],
-  current: { role: 'user', content: '你好' },
+  current: [{ role: 'user', content: '你好' }],
   HASH_KEY: 'mock_hash',
   DATA_PATH: '/tmp/mock_data_path',
   save_data: jest.fn(),
@@ -27,6 +27,8 @@ const mockDm = {
   get_web_url: jest.fn(),
   cancel_linked: jest.fn(),
   update_current: jest.fn(),
+  clear_current: jest.fn(),
+  replace_current_with_assistant: jest.fn(),
   set_trace_id: jest.fn(),
   get_session_debug_info: jest.fn(),
 };
@@ -98,7 +100,7 @@ beforeEach(() => {
   mockDm.system = '';
   mockDm.history = [];
   mockDm.tools = [];
-  mockDm.current = { role: 'user', content: '你好' };
+  mockDm.current = [{ role: 'user', content: '你好' }];
   mockDm.HASH_KEY = 'mock_hash';
   mockDm.DATA_PATH = '/tmp/mock_data_path';
   mockDm.save_data.mockResolvedValue(undefined);
@@ -118,6 +120,8 @@ beforeEach(() => {
   mockDm.get_web_url.mockReturnValue('https://chat.deepseek.com/a/chat/s/mock');
   mockDm.cancel_linked.mockImplementation(() => undefined);
   mockDm.update_current.mockImplementation(() => undefined);
+  mockDm.clear_current.mockImplementation(() => undefined);
+  mockDm.replace_current_with_assistant.mockImplementation(() => undefined);
   mockDm.set_trace_id.mockImplementation(() => undefined);
   mockDm.get_session_debug_info.mockReturnValue({
     hash_key: 'mock_hash',
@@ -562,7 +566,7 @@ describe('控制模块 API 测试', () => {
       expect(res.body.choices?.[0]?.message?.tool_calls).toHaveLength(2);
       expect(res.body.choices?.[0]?.message?.tool_calls?.[0]?.id).toBe('call_transcribe_audio');
       expect(res.body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name).toBe('exec');
-      expect(mockDm.update_current).toHaveBeenCalledWith(
+      expect(mockDm.replace_current_with_assistant).toHaveBeenCalledWith(
         expect.objectContaining({
           role: 'assistant',
           tool_calls: expect.any(Array),
@@ -734,7 +738,7 @@ describe('OpenAI 协议解析集成测试', () => {
     expect(result.model).toBe('gpt-5.2');
     expect(result.system).toBe('You are a personal assistant.');
     expect(result.history).toHaveLength(2);
-    expect(result.current.content).toBe('请介绍一下你自己');
+    expect(result.current[0].content).toBe('请介绍一下你自己');
     expect(result.tools).toHaveLength(1);
   });
 });

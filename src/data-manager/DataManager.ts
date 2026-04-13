@@ -78,7 +78,7 @@ export class DataManager {
   system: string;
   history: Message[];
   tools: Tool[];
-  current: Message;
+  current: Message[];
 
   HASH_KEY: string = '';
   DATA_PATH: string = '';
@@ -93,7 +93,7 @@ export class DataManager {
     this.system = request.system ?? '';
     this.history = [...(request.history ?? [])];
     this.tools = [...(request.tools ?? [])];
-    this.current = request.current;
+    this.current = this.normalizeCurrentList(request.current as unknown as Message | Message[]);
 
     this.config = {
       rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
@@ -197,13 +197,15 @@ export class DataManager {
     this.logDataTrace('save_data_start', {
       old_hash: oldHash || '-',
       history_count_before: this.history.length,
-      current_role: this.current?.role,
-      current_content_type: this.current ? (Array.isArray(this.current.content) ? 'array' : typeof this.current.content) : 'none',
+      current_count: this.current.length,
+      current_roles: this.current.map((msg) => msg.role),
     });
 
-    // 先将 current 合并进 history（避免首轮写盘后内存 history 未更新造成 hash 链断裂）
-    if (this.current && !this.isSameAsHistoryTail(this.current)) {
-      this.history = [...this.history, this.current];
+    // 先将 current 批次合并进 history（避免首轮写盘后内存 history 未更新造成 hash 链断裂）
+    for (const msg of this.current) {
+      if (!this.isSameAsHistoryTail(msg)) {
+        this.history = [...this.history, msg];
+      }
     }
 
     // history 变化后推进到新 hash。
@@ -292,8 +294,22 @@ export class DataManager {
     }));
   }
 
-  update_current(current: Message): void {
-    this.current = current;
+  update_current(current: Message | Message[]): void {
+    this.current = this.normalizeCurrentList(current);
+  }
+
+  clear_current(): void {
+    this.current = [];
+  }
+
+  replace_current_with_assistant(message: Message): void {
+    this.current = [
+      {
+        ...message,
+        role: 'assistant',
+        content: message.content ?? '',
+      },
+    ];
   }
 
   /**
@@ -330,7 +346,7 @@ export class DataManager {
   }
 
   get_current_prompt(): string {
-    return buildCurrentPrompt(this.current);
+    return buildCurrentPrompt(this.current as Message[]);
   }
 
   get_tools_prompt(): string {
@@ -357,8 +373,8 @@ export class DataManager {
    * 则剔除该尾部，避免“当前轮消息”污染 init_prompt 的历史区块。
    */
   get_init_prompt_for_new_session(): string {
-    const historyForInit = this.isSameAsHistoryTail(this.current)
-      ? this.history.slice(0, -1)
+    const historyForInit = this.isSameAsHistoryTailBatch(this.current)
+      ? this.history.slice(0, this.history.length - this.current.length)
       : this.history;
 
     return buildInitPrompt({
@@ -454,10 +470,27 @@ export class DataManager {
     fs.writeFileSync(toolsFile, JSON.stringify(sortedTools, null, 2), 'utf-8');
   }
 
+  private normalizeCurrentList(current: Message | Message[] | undefined | null): Message[] {
+    if (!current) return [];
+    if (Array.isArray(current)) {
+      return current.filter(Boolean).map((msg) => ({ ...msg, content: msg.content ?? '' }));
+    }
+    return [{ ...current, content: current.content ?? '' }];
+  }
+
   private isSameAsHistoryTail(message: Message): boolean {
     if (!this.history.length) return false;
     const tail = this.history[this.history.length - 1];
     return JSON.stringify(tail) === JSON.stringify(message);
+  }
+
+  private isSameAsHistoryTailBatch(messages: Message[]): boolean {
+    if (!messages.length || this.history.length < messages.length) {
+      return false;
+    }
+
+    const tail = this.history.slice(this.history.length - messages.length);
+    return JSON.stringify(tail) === JSON.stringify(messages);
   }
 
   private getSessionIndexPath(): string {

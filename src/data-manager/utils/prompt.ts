@@ -27,6 +27,27 @@ function formatToolCallBlocks(toolCalls: Message['tool_calls']): string {
     .join('\n');
 }
 
+function formatCurrentMessage(msg: Message): string {
+  const contentStr = contentToString(msg.content);
+
+  if (msg.role === 'tool') {
+    const toolHeader = msg.tool_call_id ? `<|tool| id="${msg.tool_call_id}">` : '<|tool|>';
+    return [toolHeader, contentStr].filter(Boolean).join('\n');
+  }
+
+  if (msg.role === 'user') {
+    return [`<|user|>`, contentStr].filter(Boolean).join('\n');
+  }
+
+  if (msg.role === 'assistant') {
+    const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
+    return [`<|assistant|>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
+  }
+
+  const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
+  return [`<|${msg.role}|>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
+}
+
 /**
  * Prompt 构造工具函数集合
  * 负责将内部统一结构转换为各种 prompt 字符串
@@ -112,11 +133,24 @@ export function buildHistoryPrompt(history: Message[]): string {
  * 构造 current prompt
  * 只提取 content 内容，不带 role 标记
  */
-export function buildCurrentPrompt(current: Message): string {
-  const contentStr = contentToString(current.content);
-  const toolCallBlocks = formatToolCallBlocks(current.tool_calls);
-  return [contentStr, toolCallBlocks].filter(Boolean).join('\n');
+export function buildCurrentPrompt(current: Message | Message[]): string {
+  const currentList = Array.isArray(current) ? current : [current];
+  if (!currentList.length) return '';
+
+  if (
+    currentList.length === 1 &&
+    currentList[0].role === 'user' &&
+    (!currentList[0].tool_calls || currentList[0].tool_calls.length === 0)
+  ) {
+    return contentToString(currentList[0].content);
+  }
+
+  return currentList
+    .map((msg) => formatCurrentMessage(msg))
+    .filter(Boolean)
+    .join('\n\n');
 }
+
 
 /**
  * 构造 tools prompt

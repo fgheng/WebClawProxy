@@ -43,9 +43,10 @@ describe('OpenAIProtocol.parse()', () => {
     expect(result.system).toBe('');
   });
 
-  it('应该正确提取 current（最后一条消息）', () => {
+  it('应该正确提取 current（最后一条 user）', () => {
     const result = protocol.parse(basicRequest);
-    expect(result.current.role).toBe('user');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].role).toBe('user');
   });
 
   it('应移除所有 system 消息并保持 history 相对顺序', () => {
@@ -67,7 +68,8 @@ describe('OpenAIProtocol.parse()', () => {
     expect(result.history[0].content).toBe('第一条');
     expect(result.history[1].role).toBe('assistant');
     expect(result.history[1].content).toBe('回复');
-    expect(result.current.content).toBe('第二条');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].content).toBe('第二条');
   });
 
   it('history 中不应包含任何 system 消息', () => {
@@ -83,7 +85,8 @@ describe('OpenAIProtocol.parse()', () => {
     };
     const result = protocol.parse(req);
     expect(result.history.every((m) => m.role !== 'system')).toBe(true);
-    expect(result.current.role).toBe('user');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].role).toBe('user');
   });
 
   it('history 应该不包含 current 消息（最后一条已被提取）', () => {
@@ -97,7 +100,8 @@ describe('OpenAIProtocol.parse()', () => {
     };
     const result = protocol.parse(req);
     expect(result.history).toHaveLength(2);
-    expect(result.current.content).toBe('最新的一条');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].content).toBe('最新的一条');
   });
 
   it('多轮消息在移除 system 后应保持相对顺序', () => {
@@ -121,8 +125,9 @@ describe('OpenAIProtocol.parse()', () => {
       'user:u2',
       'assistant:a2',
     ]);
-    expect(result.current.role).toBe('user');
-    expect(result.current.content).toBe('u3-current');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].role).toBe('user');
+    expect(result.current[0].content).toBe('u3-current');
   });
 
   it('应该正确提取 tools 字段', () => {
@@ -215,7 +220,8 @@ describe('OpenAIProtocol.parse()', () => {
     expect(result.tools[0].function.name).toBe('read');
     expect(result.tools[1].function.name).toBe('memory_get');
     expect(result.history).toHaveLength(0); // 所有 system 被移除，user 是 current
-    expect(result.current.role).toBe('user');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].role).toBe('user');
   });
 
   it('多轮对话中应该正确切分 history 和 current', () => {
@@ -233,8 +239,9 @@ describe('OpenAIProtocol.parse()', () => {
     const result = protocol.parse(req);
 
     expect(result.history).toHaveLength(4); // 4条历史（排除system和current）
-    expect(result.current.role).toBe('user');
-    expect(result.current.content).toBe('第3轮问题（当前）');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].role).toBe('user');
+    expect(result.current[0].content).toBe('第3轮问题（当前）');
   });
 
   it('content 为字符串格式时应该保持不变', () => {
@@ -243,7 +250,8 @@ describe('OpenAIProtocol.parse()', () => {
       messages: [{ role: 'user', content: '这是字符串格式的内容' }],
     };
     const result = protocol.parse(req);
-    expect(result.current.content).toBe('这是字符串格式的内容');
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].content).toBe('这是字符串格式的内容');
   });
 
   it('content 为 ContentItem 数组时应该保持数组格式', () => {
@@ -260,8 +268,9 @@ describe('OpenAIProtocol.parse()', () => {
       ],
     };
     const result = protocol.parse(req);
-    expect(Array.isArray(result.current.content)).toBe(true);
-    const content = result.current.content as any[];
+    expect(result.current).toHaveLength(1);
+    expect(Array.isArray(result.current[0].content)).toBe(true);
+    const content = result.current[0].content as any[];
     expect(content).toHaveLength(2);
     expect(content[0].type).toBe('text');
     expect(content[1].type).toBe('image_url');
@@ -307,24 +316,70 @@ describe('OpenAIProtocol.parse()', () => {
     expect(result.history[1].tool_calls?.[0].id).toBe('call_xxx');
     expect(result.history[1].tool_calls?.[0].function?.name).toBe('exec');
 
-    const currentContent = result.current.content as any[];
+    const currentContent = result.current[0].content as any[];
     expect(currentContent[0].type).toBe('tool_result');
     expect(currentContent[0].tool_call_id).toBe('call_xxx');
   });
 
-  it('system 为数组格式时应该提取文本内容', () => {
+  it('尾段含 tool+user 时应提取全部并重排为 tool 在前、user 在后', () => {
     const req = {
       model: 'gpt-4o',
       messages: [
+        { role: 'user', content: 'u1' },
         {
-          role: 'system',
-          content: [{ type: 'text', text: '系统提示词内容' }],
+          role: 'assistant',
+          content: 'a1',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function' as const,
+              function: { name: 'read_file', arguments: '{"path":"a.md"}' },
+            },
+          ],
         },
-        { role: 'user', content: '你好' },
+        { role: 'tool', tool_call_id: 'call_1', content: 'tool-result-1' },
+        { role: 'tool', tool_call_id: 'call_2', content: 'tool-result-2' },
+        { role: 'user', content: '请继续总结' },
       ],
     };
-    const result = protocol.parse(req);
-    expect(result.system).toBe('系统提示词内容');
+
+    const result = protocol.parse(req as any);
+    expect(result.history.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(result.current.map((m) => m.role)).toEqual(['tool', 'tool', 'user']);
+    expect(result.current[0].tool_call_id).toBe('call_1');
+    expect(result.current[1].tool_call_id).toBe('call_2');
+    expect(result.current[2].content).toBe('请继续总结');
+  });
+
+  it('纯 user 尾段（无 tool）时应仅取最后一条 user', () => {
+    const req = {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+        { role: 'user', content: 'u3' },
+      ],
+    };
+    const result = protocol.parse(req as any);
+    expect(result.history.map((m) => `${m.role}:${String(m.content)}`)).toEqual([
+      'user:u1',
+      'assistant:a1',
+      'user:u2',
+    ]);
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].content).toBe('u3');
+  });
+
+  it('尾段为空候选（末尾 assistant）时应抛错', () => {
+    const req = {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+      ],
+    };
+    expect(() => protocol.parse(req as any)).toThrow(ProtocolParseError);
   });
 
   // ============================
