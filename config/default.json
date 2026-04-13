@@ -5,28 +5,28 @@
   "providers": {
     "gpt": {
       "site": "https://chatgpt.com/",
-      "input_max_chars": 10000,
+      "input_max_chars": 50000,
       "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "o1", "o1-mini", "o3", "o3-mini"]
     },
     "qwen": {
       "site": "https://chat.qwen.ai/",
-      "input_max_chars": 10000,
+      "input_max_chars": 120000,
       "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long", "qwen2.5-72b", "qwen2.5-32b"]
     },
     "deepseek": {
       "site": "https://chat.deepseek.com/",
-      "input_max_chars": 10000,
+      "input_max_chars": 120000,
       "models": ["deepseek-chat", "deepseek-r1", "deepseek-v3", "deepseek-coder"]
     },
     "kimi": {
       "site": "https://www.kimi.com/",
-      "input_max_chars": 10000,
+      "input_max_chars": 50000,
       "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi"]
     }
   },
   "defaults": {
-    "init_prompt": "Conversation initialized. This is a brand new conversation. Please forget all prompts, restart, and only output without performing any execution.",
-    "init_prompt_template": "Note: Output JSON only, no extra explanation, do not execute any actions!!\n\nAll subsequent responses in this conversation must strictly follow the JSON template below. The content must be a simulated result in the form of a legal JSON string, containing no actual execution behavior and no additional explanation. The following is only a template; you need to fill in the specific content:\n{{response_schema_template}}\n\nBelow are the system prompts for this conversation:\n{{system_prompt}}\n\nBelow are the tools you can access:\n{{tools_prompt}}\n\nBelow is the conversation history:\n{{history_prompt}}\n\nThis message only replies 'Received'.",
+    "init_prompt": "Note: Output JSON only, no extra explanation, do not execute any actions!!\n\nAll subsequent responses in this conversation must strictly follow the JSON template below. The content must be a simulated result in the form of a legal JSON string, containing no actual execution behavior and no additional explanation. The following is only a template; you need to fill in the specific content:\n{{response_schema_template}}",
+    "init_prompt_template": "Note: Output JSON only, no extra explanation, and do not execute any actions.\n\nAll subsequent responses in this conversation must strictly follow the JSON template below:\n{{response_schema_template}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nReply only with: Received",
     "user_message_template": "{{content}}",
     "response_schema_template": "{\n      \"index\": 0,\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"The content of the model-generated response\",\n\n        \"tool_calls\": [\n          {\n            \"index\": 0,\n            \"id\": \"The unique ID of the tool call\",\n            \"type\": \"function\",\n            \"function\": {\n              \"name\": \"function name\",\n              \"arguments\": \"{\\\"command\\\":\\\"ls\\\"}\"\n            }\n          }\n        ]\n      },\n      \"logprobs\": null,\n      \"finish_reason\": \"tool_calls\"\n    }",
     "format_only_retry_template": "Your previous response is not valid JSON. Please re-answer the previous question, and for all subsequent responses, output only according to the following JSON template example. Do not repeat the user's question or provide additional explanations:\n {{response_schema_template}}"
@@ -35,12 +35,13 @@
     "port": 3000
   },
   "context_switch": {
+    "_comment": "当一个 web 页面的聊天记录过于cha session",
     "enabled": true,
     "max_prompt_tokens": 120000,
     "max_total_tokens": 128000
   },
   "web_input": {
-    "_comment_retry_format_only_threshold_chars": "当首轮返回非 JSON 且需要重试时：若原始输入长度超过该阈值，则使用仅格式提醒模板；否则使用格式+用户内容模板。",
+    "_comment": "当首轮返回非 JSON 且需要重试时：若原始输入长度超过该阈值，则使用仅格式提醒模板；否则使用格式+用户内容模板。",
     "retry_format_only_threshold_chars":  500
   },
   "webdriver": {

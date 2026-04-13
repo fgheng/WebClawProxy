@@ -22,6 +22,21 @@ export interface ChatResult {
 }
 
 /**
+ * 发送到网页输入框时的统一分发模式
+ */
+export type PromptDispatchMode = 'chat' | 'init' | 'retry';
+
+/**
+ * 网页输入分发选项
+ */
+export interface PromptDispatchOptions {
+  /** 分发模式，决定超长分段时的尾段提示词 */
+  mode?: PromptDispatchMode;
+  /** chat 模式超长分段时，最后一段附带的结构化输出模板 */
+  responseSchemaTemplate?: string;
+}
+
+/**
  * WebDriverManager 初始化选项
  */
 export interface WebDriverManagerOptions {

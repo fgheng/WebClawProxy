@@ -10,6 +10,8 @@ import {
   SiteKey,
   InitConversationResult,
   ChatResult,
+  PromptDispatchMode,
+  PromptDispatchOptions,
   WebDriverManagerOptions,
   WebDriverError,
   WebDriverErrorCode,
@@ -39,6 +41,7 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 type ProviderConfig = {
   site?: string;
   models?: string[];
+  input_max_chars?: number;
 };
 
 function getSiteUrlsFromConfig(): Record<SiteKey, string> {
@@ -94,6 +97,12 @@ interface LoginProbeResult {
   status: ProbeStatus;
   score: number;
   reasons: string[];
+}
+
+interface InternalPromptDispatchOptions {
+  prompt: string;
+  mode: PromptDispatchMode;
+  responseSchemaTemplate?: string;
 }
 
 /**
@@ -179,7 +188,7 @@ export class WebDriverManager {
     site: SiteKey,
     initPrompt?: string
   ): Promise<InitConversationResult> {
-    const prompt = initPrompt ?? (config.defaults?.init_prompt ?? '对话初始化，这是一个全新的对话，请忘掉所有提示词，重新开始');
+    const prompt = initPrompt ?? this.resolveDefaultInitPrompt();
 
     await this.ensureBrowser();
     const driver = await this.getOrCreateDriver(site);
@@ -192,8 +201,11 @@ export class WebDriverManager {
     // 发送初始化提示词前，等待页面稳定，避免刚新建对话时输入被吞
     await this.waitForPageReadyBeforeSend(site);
 
-    // 3. 发送初始化提示词
-    await driver.sendMessage(prompt);
+    // 3. 发送初始化提示词（含超长分段保护）
+    await this.dispatchPrompt(site, driver, {
+      prompt,
+      mode: 'init',
+    });
 
     // 4. 等待 URL 从主页变为对话链接（URL 变化说明对话已建立）
     const url = await this.waitForConversationUrl(driver, site);
@@ -224,9 +236,10 @@ export class WebDriverManager {
   async chat(
     site: SiteKey,
     sessionUrl: string,
-    message: string
+    message: string,
+    options: PromptDispatchOptions = {}
   ): Promise<ChatResult> {
-    const driver = await this.executeSendFlow(site, sessionUrl, message);
+    const driver = await this.executeSendFlow(site, sessionUrl, message, options);
 
     // 6. 提取响应
     const content = await driver.extractResponse();
@@ -241,9 +254,10 @@ export class WebDriverManager {
   async sendOnly(
     site: SiteKey,
     sessionUrl: string,
-    message: string
+    message: string,
+    options: PromptDispatchOptions = {}
   ): Promise<void> {
-    await this.executeSendFlow(site, sessionUrl, message);
+    await this.executeSendFlow(site, sessionUrl, message, options);
   }
 
   /**
@@ -318,7 +332,8 @@ export class WebDriverManager {
   private async executeSendFlow(
     site: SiteKey,
     sessionUrl: string,
-    message: string
+    message: string,
+    options: PromptDispatchOptions = {}
   ): Promise<BaseDriver> {
     await this.ensureBrowser();
     const driver = await this.getOrCreateDriver(site);
@@ -346,13 +361,158 @@ export class WebDriverManager {
       await this.waitForPageReadyBeforeSend(site);
     }
 
-    // 4. 发送消息
-    await driver.sendMessage(message);
+    // 4. 发送消息（含超长分段保护）
+    await this.dispatchPrompt(site, driver, {
+      prompt: message,
+      mode: options.mode ?? 'chat',
+      responseSchemaTemplate: options.responseSchemaTemplate,
+    });
 
     // 5. 等待响应完成
     await driver.waitForResponse();
 
     return driver;
+  }
+
+  private resolveDefaultInitPrompt(): string {
+    const configured = config.defaults?.init_prompt;
+    if (typeof configured === 'string' && configured.trim() !== '') {
+      return this.renderInitPromptTemplate(configured);
+    }
+    return '对话初始化，这是一个全新的对话，请忘掉所有提示词，重新开始';
+  }
+
+  private renderInitPromptTemplate(template: string): string {
+    const responseSchemaTemplate = config.defaults?.response_schema_template ?? '';
+    return template.split('{{response_schema_template}}').join(responseSchemaTemplate);
+  }
+
+  private getInputMaxChars(site: SiteKey): number | undefined {
+    const providers = (config.providers ?? {}) as Record<string, ProviderConfig>;
+    const limit = providers[site]?.input_max_chars;
+    return typeof limit === 'number' && limit > 0 ? limit : undefined;
+  }
+
+  private splitPromptByLimit(prompt: string, maxChars?: number): string[] {
+    if (!maxChars || maxChars <= 0 || prompt.length <= maxChars) {
+      return [prompt];
+    }
+
+    const chunks: string[] = [];
+    let cursor = 0;
+    while (cursor < prompt.length) {
+      const end = Math.min(cursor + maxChars, prompt.length);
+      let cut = end;
+
+      if (end < prompt.length) {
+        const window = prompt.slice(cursor, end);
+        const paragraphCut = window.lastIndexOf('\n\n');
+        const lineCut = window.lastIndexOf('\n');
+        const softCut = Math.max(paragraphCut, lineCut);
+        if (softCut > Math.floor(maxChars * 0.4)) {
+          cut = cursor + softCut;
+        }
+      }
+
+      if (cut <= cursor) {
+        cut = end;
+      }
+
+      chunks.push(prompt.slice(cursor, cut));
+      cursor = cut;
+    }
+
+    return chunks.filter((chunk) => chunk.length > 0);
+  }
+
+  private buildChunkPrompt(options: {
+    chunk: string;
+    chunkIndex: number;
+    chunkTotal: number;
+    mode: PromptDispatchMode;
+    responseSchemaTemplate?: string;
+  }): string {
+    const { chunk, chunkIndex, chunkTotal, mode, responseSchemaTemplate } = options;
+    if (chunkTotal <= 1) return chunk;
+
+    const seq = `${chunkIndex + 1}/${chunkTotal}`;
+    const startMarker = `<|wc_chunk_start:${seq}|>`;
+    const endMarker = `<|wc_chunk_end:${seq}|>`;
+    const allEndMarker = '<|wc_all_chunks_end|>';
+    const wrappedChunk = [startMarker, chunk, endMarker].join('\n');
+
+    if (chunkIndex === 0) {
+      return [
+        `[Chunked input ${seq}] The remaining content is long and will be sent in chunks.`,
+        `When you see ${startMarker} to ${endMarker}, that indicates one content chunk.`,
+        `Before you see ${allEndMarker}, reply only with "Received" and do not provide the final answer.`,
+        '---',
+        wrappedChunk,
+        'Reply only with: Received',
+      ].join('\n');
+    }
+
+    if (chunkIndex < chunkTotal - 1) {
+      return [
+        `[Chunked input ${seq}] Middle chunk.`,
+        wrappedChunk,
+        'Reply only with: Received',
+      ].join('\n');
+    }
+
+    if (mode === 'init') {
+      return [
+        `[Chunked input ${seq}] Final chunk.`,
+        wrappedChunk,
+        allEndMarker,
+        'All initialization chunks have now been sent. Complete the initialization based on the full content and reply only with: Received',
+      ].join('\n');
+    }
+
+    if (mode === 'retry') {
+      return [
+        `[Chunked input ${seq}] Final chunk.`,
+        wrappedChunk,
+        allEndMarker,
+        'All chunks have now been sent. Please answer again based on the full chunked content.',
+        'Strictly follow the earlier instructions and do not add extra explanation.',
+      ].join('\n');
+    }
+
+    return [
+      `[Chunked input ${seq}] Final chunk.`,
+      wrappedChunk,
+      allEndMarker,
+      'All chunks have now been sent. Please provide the final answer based on the full chunked content.',
+      'Output strictly in the following format, with no extra explanation.',
+      responseSchemaTemplate ?? '',
+    ].join('\n');
+  }
+
+  private async dispatchPrompt(
+    site: SiteKey,
+    driver: BaseDriver,
+    options: InternalPromptDispatchOptions
+  ): Promise<void> {
+    const maxChars = this.getInputMaxChars(site);
+    const chunks = this.splitPromptByLimit(options.prompt, maxChars);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const prompt = this.buildChunkPrompt({
+        chunk: chunks[i],
+        chunkIndex: i,
+        chunkTotal: chunks.length,
+        mode: options.mode,
+        responseSchemaTemplate: options.responseSchemaTemplate,
+      });
+
+      await driver.sendMessage(prompt);
+
+      if (i < chunks.length - 1) {
+        await driver.waitForResponse();
+        await this.waitForPageReadyBeforeSend(site);
+      }
+    }
   }
 
   private async openSitePage(site: SiteKey): Promise<Page> {
@@ -659,27 +819,44 @@ export class WebDriverManager {
 
     while (Date.now() - start < profile.maxWaitMs && stableRounds < profile.requiredStableRounds) {
       const currentUrl = page.url?.() ?? '';
-      const inputReady = await page
-        .evaluate(([selector]: [string]) => {
-          const el = (globalThis as any).document.querySelector(selector as string) as any;
+      const pageReady = await page
+        .evaluate(([selector, siteKey]: [string, SiteKey]) => {
+          const doc = (globalThis as any).document;
+          const el = doc.querySelector(selector as string) as any;
           if (!el) return false;
 
-          const style = (globalThis as any).getComputedStyle?.(el);
-          const rect = el.getBoundingClientRect?.();
-          const visible = !style || (
-            style.display !== 'none' &&
-            style.visibility !== 'hidden' &&
-            (rect ? rect.width > 0 && rect.height > 0 : true)
-          );
+          const getStyle = (globalThis as any).getComputedStyle;
+          const isVisible = (node: any) => {
+            if (!node) return false;
+            const style = getStyle?.(node);
+            const rect = node.getBoundingClientRect?.();
+            return !style || (
+              style.display !== 'none' &&
+              style.visibility !== 'hidden' &&
+              (rect ? rect.width > 0 && rect.height > 0 : true)
+            );
+          };
 
-          const notDisabled = !el.disabled && el.getAttribute?.('aria-disabled') !== 'true';
-          return Boolean(visible && notDisabled);
-        }, [inputSelector] as [string])
+          const inputVisible = isVisible(el);
+          const inputEnabled = !el.disabled && el.getAttribute?.('aria-disabled') !== 'true';
+          if (!inputVisible || !inputEnabled) return false;
+
+          if (siteKey !== 'gpt') {
+            return true;
+          }
+
+          const stopButton = doc.querySelector('[data-testid="stop-button"]') as any;
+          const blockingOverlayVisible = Array.from(doc.querySelectorAll('[role="dialog"]')).some((node) => isVisible(node));
+
+          // ChatGPT 的发送按钮可能要在输入文本后才激活/挂载。
+          // 发送前稳定性判定只要求输入框本身可交互，且当前不在生成态、没有弹窗遮挡。
+          return Boolean(!stopButton && !blockingOverlayVisible);
+        }, [inputSelector, site] as [string, SiteKey])
         .catch(() => false);
 
       const ready = profile.requireUrlStability
-        ? Boolean(currentUrl && currentUrl === lastUrl && inputReady)
-        : Boolean(inputReady);
+        ? Boolean(currentUrl && currentUrl === lastUrl && pageReady)
+        : Boolean(pageReady);
 
       if (ready) {
         stableRounds++;

@@ -226,52 +226,15 @@ describe('控制模块 API 测试', () => {
         .set('Content-Type', 'application/json');
 
       expect(res.status).toBe(200);
-      expect(mockSendOnly).toHaveBeenCalledTimes(1);
-      expect(mockSendOnly).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('【分段输入 1/2】')
-      );
-      expect(mockSendOnly).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('<|wc_chunk_start:1/2|>')
-      );
-      expect(mockSendOnly).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('<|wc_chunk_end:1/2|>')
-      );
-      expect(mockSendOnly).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('请仅回复：收到')
-      );
-
+      expect(mockSendOnly).not.toHaveBeenCalled();
       expect(mockChat).toHaveBeenCalledWith(
         'gpt',
         'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('【分段输入 2/2】')
-      );
-      expect(mockChat).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('<|wc_chunk_start:2/2|>')
-      );
-      expect(mockChat).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('<|wc_chunk_end:2/2|>')
-      );
-      expect(mockChat).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('<|wc_all_chunks_end|>')
-      );
-      expect(mockChat).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        expect.stringContaining('请基于全部分段内容进行正式回答')
+        longPrompt,
+        expect.objectContaining({
+          mode: 'chat',
+          responseSchemaTemplate: expect.any(String),
+        })
       );
 
       expect(res.body.choices?.[0]?.message?.content).toBe('最后一段的最终回答');
@@ -295,7 +258,8 @@ describe('控制模块 API 测试', () => {
         2,
         'deepseek',
         'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        '仅格式提醒 prompt'
+        '仅格式提醒 prompt',
+        { mode: 'retry' }
       );
     });
 
@@ -316,7 +280,8 @@ describe('控制模块 API 测试', () => {
         2,
         'deepseek',
         'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        '仅格式提醒 prompt'
+        '仅格式提醒 prompt',
+        { mode: 'retry' }
       );
     });
 
@@ -346,7 +311,11 @@ describe('控制模块 API 测试', () => {
       expect(mockChat).toHaveBeenCalledWith(
         'deepseek',
         'https://chat.deepseek.com/a/chat/s/new_session_456',
-        '你好'
+        '你好',
+        expect.objectContaining({
+          mode: 'chat',
+          responseSchemaTemplate: expect.any(String),
+        })
       );
     });
 

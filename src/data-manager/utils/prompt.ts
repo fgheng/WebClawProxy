@@ -27,6 +27,12 @@ function formatToolCallBlocks(toolCalls: Message['tool_calls']): string {
     .join('\n');
 }
 
+function wrapBlock(tag: string, content: string): string {
+  const normalized = content.trim();
+  if (!normalized) return '';
+  return [`<|${tag}|>`, normalized, `</|${tag}|>`].join('\n');
+}
+
 function formatCurrentMessage(msg: Message): string {
   const contentStr = contentToString(msg.content);
 
@@ -81,10 +87,11 @@ export function contentToString(content: string | ContentItem[]): string {
  * 格式：
  * <|system|>
  * [system内容]
+ * </|system|>
  */
 export function buildSystemPrompt(system: string): string {
-  if (!system) return '';
-  return `<|system|>\n${system}`;
+  if (!system.trim()) return '';
+  return wrapBlock('system', system);
 }
 
 /**
@@ -99,7 +106,7 @@ export function buildSystemPrompt(system: string): string {
 export function buildHistoryPrompt(history: Message[]): string {
   if (!history || history.length === 0) return '';
 
-  return history
+  const entries = history
     .map((msg) => {
       const role = msg.role;
       if (role === 'system') {
@@ -127,6 +134,8 @@ export function buildHistoryPrompt(history: Message[]): string {
     })
     .filter(Boolean)
     .join('\n\n');
+
+  return wrapBlock('history', entries);
 }
 
 /**
@@ -155,26 +164,28 @@ export function buildCurrentPrompt(current: Message[]): string {
 /**
  * 构造 tools prompt
  * 格式：
- * Tool 1
- * Name: xxx
- * Description: xxx
- * Parameters:
+ * <|tools|>
+ * <|tool|>
+ * name: xxx
+ * description: xxx
+ * parameters:
  * - param(type, required): description
+ * </|tool|>
+ * </|tools|>
  */
 export function buildToolsPrompt(tools: Tool[]): string {
   if (!tools || tools.length === 0) return '';
 
-  return tools
-    .map((tool, index) => {
+  const toolBlocks = tools
+    .map((tool) => {
       const fn = tool.function;
       const lines: string[] = [
-        `Tool ${index + 1}`,
-        `Name: ${fn.name}`,
-        `Description: ${fn.description ?? ''}`,
+        `name: ${fn.name}`,
+        `description: ${fn.description ?? ''}`,
       ];
 
       if (fn.parameters?.properties) {
-        lines.push('Parameters:');
+        lines.push('parameters:');
         const required = fn.parameters.required ?? [];
         for (const [name, prop] of Object.entries(fn.parameters.properties)) {
           const type = prop.type ?? 'any';
@@ -184,12 +195,22 @@ export function buildToolsPrompt(tools: Tool[]): string {
           lines.push(`- ${name}(${type}${reqStr})${desc}`);
         }
       } else {
-        lines.push('Parameters: none');
+        lines.push('parameters: none');
       }
 
-      return lines.join('\n');
+      return wrapBlock('tool', lines.join('\n'));
     })
+    .filter(Boolean)
     .join('\n\n');
+
+  return wrapBlock('tools', toolBlocks);
+}
+
+function normalizePromptLayout(text: string): string {
+  return text
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**
@@ -205,11 +226,13 @@ export function buildInitPrompt(options: {
 }): string {
   const { template, responseSchemaTemplate, systemPrompt, toolsPrompt, historyPrompt } = options;
 
-  return template
-    .replace('{{response_schema_template}}', responseSchemaTemplate)
-    .replace('{{system_prompt}}', systemPrompt)
-    .replace('{{tools_prompt}}', toolsPrompt || '（无可用工具）')
-    .replace('{{history_prompt}}', historyPrompt || '（无历史记录）');
+  const rendered = template
+    .split('{{response_schema_template}}').join(responseSchemaTemplate)
+    .split('{{system_prompt}}').join(systemPrompt)
+    .split('{{tools_prompt}}').join(toolsPrompt)
+    .split('{{history_prompt}}').join(historyPrompt);
+
+  return normalizePromptLayout(rendered);
 }
 
 /**

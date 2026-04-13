@@ -66,7 +66,7 @@ const createTestDataManager = (request: InternalRequest = mockRequest) => {
     },
     responseSchemaTemplate: '{"test": "template"}',
     initPromptTemplate:
-      '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+      'Note: Output JSON only, no extra explanation, and do not execute any actions.\n\nAll subsequent responses in this conversation must strictly follow the JSON template below:\n{{response_schema_template}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nReply only with: Received',
     userMessageTemplate: '',
   });
 };
@@ -213,7 +213,7 @@ describe('Prompt 构造工具', () => {
   describe('buildSystemPrompt', () => {
     it('应该包含 system 标记和内容', () => {
       const result = buildSystemPrompt('You are a helpful assistant.');
-      expect(result).toBe('<|system|>\nYou are a helpful assistant.');
+      expect(result).toBe('<|system|>\nYou are a helpful assistant.\n</|system|>');
     });
 
     it('空 system 应该返回空字符串', () => {
@@ -228,6 +228,8 @@ describe('Prompt 构造工具', () => {
         { role: 'assistant', content: '你好，有什么可以帮你？' },
       ];
       const result = buildHistoryPrompt(history);
+      expect(result).toContain('<|history|>');
+      expect(result).toContain('</|history|>');
       expect(result).toContain('<|user|>');
       expect(result).toContain('<|assistant|>');
       expect(result).toContain('你好');
@@ -401,9 +403,12 @@ describe('Prompt 构造工具', () => {
         },
       ];
       const result = buildToolsPrompt(tools);
-      expect(result).toContain('Tool 1');
-      expect(result).toContain('Name: read_file');
-      expect(result).toContain('Description: Read a file');
+      expect(result).toContain('<|tools|>');
+      expect(result).toContain('<|tool|>');
+      expect(result).toContain('</|tool|>');
+      expect(result).toContain('</|tools|>');
+      expect(result).toContain('name: read_file');
+      expect(result).toContain('description: Read a file');
       expect(result).toContain('path(string, required)');
       expect(result).toContain('offset(number)');
     });
@@ -612,12 +617,15 @@ describe('DataManager', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_system_prompt();
       expect(prompt).toContain('<|system|>');
+      expect(prompt).toContain('</|system|>');
       expect(prompt).toContain('You are a helpful assistant.');
     });
 
     it('get_history_prompt 应该包含新 role wrapper', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_history_prompt();
+      expect(prompt).toContain('<|history|>');
+      expect(prompt).toContain('</|history|>');
       expect(prompt).toContain('<|user|>');
       expect(prompt).toContain('<|assistant|>');
     });
@@ -631,7 +639,8 @@ describe('DataManager', () => {
     it('get_tools_prompt 应该包含工具信息', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_tools_prompt();
-      expect(prompt).toContain('Tool 1');
+      expect(prompt).toContain('<|tools|>');
+      expect(prompt).toContain('<|tool|>');
       expect(prompt).toContain('read_file');
     });
 
@@ -639,16 +648,34 @@ describe('DataManager', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_init_prompt();
       expect(prompt).toContain('{"test": "template"}');
-      // 模板已替换，验证实际内容已填入
-      expect(prompt).toContain('<|system|>');  // system_prompt 已替换为实际内容
+      expect(prompt).toContain('<|system|>');
+      expect(prompt).toContain('<|tools|>');
+      expect(prompt).toContain('<|history|>');
+      expect(prompt).toContain('Reply only with: Received');
       expect(prompt).toBeTruthy();
+    });
+
+    it('get_init_prompt 在 system/history/tools 为空时不应输出对应 wrapper', () => {
+      const dm = createTestDataManager({
+        ...mockRequest,
+        system: '',
+        history: [],
+        tools: [],
+      });
+      const prompt = dm.get_init_prompt();
+      expect(prompt).not.toContain('<|system|>');
+      expect(prompt).not.toContain('<|tools|>');
+      expect(prompt).not.toContain('<|history|>');
+      expect(prompt).not.toContain('无可用工具');
+      expect(prompt).not.toContain('无历史记录');
+      expect(prompt).toContain('{"test": "template"}');
     });
 
     it('get_format_only_retry_prompt 应该包含响应模板', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_format_only_retry_prompt();
       expect(prompt).toContain('{"test": "template"}');
-      expect(prompt).toContain('合法 JSON');
+      expect(prompt).toContain('not valid JSON');
     });
 
     it('get_current_prompt_for_web_send 在模板非空时应进行包装替换', () => {
@@ -660,7 +687,7 @@ describe('DataManager', () => {
         },
         responseSchemaTemplate: '{"test": "template"}',
         initPromptTemplate:
-          '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+          'Note: Output JSON only, no extra explanation, and do not execute any actions.\n\nAll subsequent responses in this conversation must strictly follow the JSON template below:\n{{response_schema_template}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nReply only with: Received',
         userMessageTemplate: '注意：仅做输出，不执行任何操作！！\n{{content}}',
       });
 

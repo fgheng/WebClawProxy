@@ -30,6 +30,8 @@ export {
   SiteKey,
   InitConversationResult,
   ChatResult,
+  PromptDispatchMode,
+  PromptDispatchOptions,
   WebDriverManagerOptions,
   IWebDriver,
   WebDriverError,

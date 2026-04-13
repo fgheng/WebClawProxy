@@ -416,6 +416,73 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     );
   });
 
+  it('waitForPageReadyBeforeSend: gpt 不应把发送按钮挂载作为填充前置条件', async () => {
+    const mockPage = {
+      url: jest.fn().mockReturnValue('https://chatgpt.com/'),
+      waitForLoadState: jest.fn().mockResolvedValue(undefined),
+      evaluate: jest
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true),
+    } as any;
+
+    (manager as any).pageMap.set('gpt', mockPage);
+
+    await expect((manager as any).waitForPageReadyBeforeSend('gpt')).resolves.toBeUndefined();
+    expect(mockPage.evaluate).toHaveBeenCalledTimes(3);
+  });
+
+  it('initConversation: 初始化提示词超长时应自动分段发送，最后一段仅要求回复 Received', async () => {
+    const longPrompt = 'I'.repeat(13050);
+    const mockDriver = {
+      createNewConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+    } as any;
+
+    jest.spyOn(manager as any, 'ensureBrowser').mockResolvedValue(undefined);
+    jest.spyOn(manager as any, 'getOrCreateDriver').mockResolvedValue(mockDriver);
+    jest.spyOn(manager as any, 'waitForConversationUrl').mockResolvedValue('https://chatgpt.com/c/abc');
+    jest.spyOn(manager as any, 'waitForPageReadyBeforeSend').mockResolvedValue(undefined);
+    jest.spyOn(manager as any, 'getInputMaxChars').mockReturnValue(10000);
+
+    await expect(manager.initConversation('gpt', longPrompt)).resolves.toEqual({
+      url: 'https://chatgpt.com/c/abc',
+    });
+
+    expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('[Chunked input 1/2]')
+    );
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('Reply only with: Received')
+    );
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('[Chunked input 2/2] Final chunk.')
+    );
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('All initialization chunks have now been sent. Complete the initialization based on the full content and reply only with: Received')
+    );
+    expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
+  });
+
+  it('默认 init_prompt 应支持引用 {{response_schema_template}}', () => {
+    const rendered = (manager as any).renderInitPromptTemplate(
+      'prefix {{response_schema_template}} suffix'
+    );
+
+    expect(rendered).toContain('prefix ');
+    expect(rendered).toContain('suffix');
+    expect(rendered).not.toContain('{{response_schema_template}}');
+    expect(rendered).toContain('"message"');
+    expect(rendered).toContain('"finish_reason"');
+  });
+
   it('chat: 跳转会话后应先等待页面稳定再发送消息', async () => {
     const mockDriver = {
       isValidConversationUrl: jest.fn().mockReturnValue(true),
@@ -442,6 +509,48 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     expect(readySpy.mock.invocationCallOrder[0]).toBeLessThan(
       mockDriver.sendMessage.mock.invocationCallOrder[0]
     );
+  });
+
+  it('chat: 长消息应在 WebDriverManager 内部自动分段发送', async () => {
+    const longPrompt = 'A'.repeat(13050);
+    const mockDriver = {
+      isValidConversationUrl: jest.fn().mockReturnValue(true),
+      getConversationUrl: jest.fn().mockResolvedValue('https://chatgpt.com/c/new'),
+      navigateToConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+      extractResponse: jest.fn().mockResolvedValue('ok'),
+    } as any;
+
+    jest.spyOn(manager as any, 'ensureBrowser').mockResolvedValue(undefined);
+    jest.spyOn(manager as any, 'getOrCreateDriver').mockResolvedValue(mockDriver);
+    jest.spyOn(manager as any, 'waitForPageReadyBeforeSend').mockResolvedValue(undefined);
+    jest.spyOn(manager as any, 'getInputMaxChars').mockReturnValue(10000);
+
+    const result = await manager.chat('gpt', 'https://chatgpt.com/c/new', longPrompt, {
+      mode: 'chat',
+      responseSchemaTemplate: '{"message":{"content":"x"}}',
+    });
+    expect(result).toEqual({ content: 'ok' });
+
+    expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('<|wc_chunk_start:1/2|>')
+    );
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('Reply only with: Received')
+    );
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('<|wc_all_chunks_end|>')
+    );
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('Output strictly in the following format, with no extra explanation.')
+    );
+    expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 
   it('sendOnly: 应执行发送与等待，但不提取响应内容', async () => {
@@ -633,5 +742,128 @@ describe('Driver URL 验证', () => {
 
     expect(driver.isValidConversationUrl('https://www.kimi.com/chat/abc123')).toBe(true);
     expect(driver.isValidConversationUrl('https://www.kimi.com/')).toBe(false);
+  });
+});
+
+describe('ChatGPTDriver 发送稳定性', () => {
+  it('首次投递未确认时应恢复并重试发送', async () => {
+    const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
+
+    const mockPage = {
+      waitForSelector: jest.fn().mockImplementation((selector: string) => {
+        if (selector === '[data-testid="send-button"]' || selector === '#prompt-textarea') {
+          return Promise.resolve({});
+        }
+        return Promise.reject(new Error('not visible'));
+      }),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+      evaluate: jest.fn().mockResolvedValue('hello world'),
+      url: jest.fn().mockReturnValue('https://chatgpt.com/'),
+      $: jest.fn().mockResolvedValue(null),
+    } as any;
+
+    const driver = new ChatGPTDriver(mockPage);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+    jest.spyOn(driver as any, 'dismissDialogs').mockResolvedValue(undefined);
+    jest
+      .spyOn(driver as any, 'waitForSendButtonStateAfterFill')
+      .mockResolvedValueOnce({ mounted: true, ready: true })
+      .mockResolvedValueOnce({ mounted: true, ready: true });
+    jest
+      .spyOn(driver as any, 'waitForDispatch')
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const recoverSpy = jest
+      .spyOn(driver as any, 'recoverFromUndispatchedMessage')
+      .mockResolvedValue(undefined);
+
+    await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
+
+    expect(mockPage.fill).toHaveBeenCalledTimes(4);
+    expect(mockPage.fill).toHaveBeenNthCalledWith(1, '#prompt-textarea', '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(2, '#prompt-textarea', 'hello world');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(3, '#prompt-textarea', '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(4, '#prompt-textarea', 'hello world');
+    expect(mockPage.click).toHaveBeenCalledWith('[data-testid="send-button"]', { timeout: 1000 });
+    expect(recoverSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('按钮已挂载但未判定 ready 时也应优先尝试点击发送', async () => {
+    const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
+
+    const mockPage = {
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+      evaluate: jest.fn().mockResolvedValue('hello world'),
+      url: jest.fn().mockReturnValue('https://chatgpt.com/'),
+      $: jest.fn().mockResolvedValue(null),
+    } as any;
+
+    const driver = new ChatGPTDriver(mockPage);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+    jest.spyOn(driver as any, 'dismissDialogs').mockResolvedValue(undefined);
+    jest
+      .spyOn(driver as any, 'waitForSendButtonStateAfterFill')
+      .mockResolvedValueOnce({ mounted: true, ready: false });
+    jest.spyOn(driver as any, 'waitForDispatch').mockResolvedValueOnce(true);
+
+    await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
+
+    expect(mockPage.click).toHaveBeenCalledWith('[data-testid="send-button"]', { timeout: 1000 });
+    expect(mockPage.keyboard.press).toHaveBeenCalledWith('Meta+A');
+    expect(mockPage.keyboard.press).toHaveBeenCalledWith('Backspace');
+    expect(mockPage.keyboard.press).not.toHaveBeenCalledWith('Enter');
+  });
+
+  it('发送前应先显式清空输入框再写入新内容', async () => {
+    const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
+
+    const mockPage = {
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+      evaluate: jest
+        .fn()
+        .mockResolvedValueOnce('') // clearInputArea 后读取
+        .mockResolvedValueOnce('hello world'), // 填入正文后读取
+      url: jest.fn().mockReturnValue('https://chatgpt.com/'),
+      $: jest.fn().mockResolvedValue(null),
+    } as any;
+
+    const driver = new ChatGPTDriver(mockPage);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+    jest.spyOn(driver as any, 'dismissDialogs').mockResolvedValue(undefined);
+    jest
+      .spyOn(driver as any, 'waitForSendButtonStateAfterFill')
+      .mockResolvedValueOnce({ mounted: true, ready: true });
+    jest.spyOn(driver as any, 'waitForDispatch').mockResolvedValueOnce(true);
+
+    await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
+
+    expect(mockPage.fill).toHaveBeenNthCalledWith(1, '#prompt-textarea', '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(2, '#prompt-textarea', 'hello world');
+  });
+
+  it('初始化首发时若 URL 已切到新对话，应视为已投递', async () => {
+    const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
+
+    const mockPage = {
+      waitForSelector: jest.fn().mockRejectedValue(new Error('not visible')),
+      url: jest
+        .fn()
+        .mockReturnValueOnce('https://chatgpt.com/')
+        .mockReturnValueOnce('https://chatgpt.com/c/new-session'),
+      evaluate: jest.fn().mockResolvedValue('still same input'),
+    } as any;
+
+    const driver = new ChatGPTDriver(mockPage);
+    jest.spyOn(driver as any, 'sleep').mockResolvedValue(undefined);
+
+    await expect((driver as any).waitForDispatch('still same input', 'https://chatgpt.com/', 500)).resolves.toBe(true);
   });
 });

@@ -105,7 +105,7 @@ export class DataManager {
       initPromptTemplate:
         customConfig?.initPromptTemplate ??
         config.defaults?.init_prompt_template ??
-        '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+        'Note: Output JSON only, no extra explanation, and do not execute any actions.\n\nAll subsequent responses in this conversation must strictly follow the JSON template below:\n{{response_schema_template}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nReply only with: Received',
       userMessageTemplate:
         customConfig?.userMessageTemplate ??
         config.defaults?.user_message_template ??

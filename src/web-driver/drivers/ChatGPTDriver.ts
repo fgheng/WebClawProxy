@@ -80,32 +80,74 @@ export class ChatGPTDriver extends BaseDriver {
     try {
       await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
 
-      const normalizedText = text.replace(/\s+/g, ' ').trim();
+      const normalizedText = this.normalizeForInputComparison(text);
+      const canonicalText = this.canonicalizeForDispatch(text);
       let dispatched = false;
+      let dispatchAnchorUrl = this.page.url();
+      this.debugLog('send:start', {
+        url: dispatchAnchorUrl,
+        textLength: text.length,
+        normalizedLength: normalizedText.length,
+        canonicalLength: canonicalText.length,
+        preview: this.previewText(normalizedText),
+      });
 
       for (let i = 0; i < 3; i++) {
+        await this.dismissDialogs();
+        await this.clearInputArea();
         await this.page.fill(SELECTORS.inputArea, text);
 
         const currentInput = await this.getInputText();
-        if (normalizedText && currentInput !== normalizedText) {
+        const currentCanonicalInput = this.canonicalizeForDispatch(currentInput);
+        const inputMatches = !canonicalText || currentCanonicalInput === canonicalText;
+        this.debugLog('send:after_fill', {
+          attempt: i + 1,
+          inputLength: currentInput.length,
+          canonicalInputLength: currentCanonicalInput.length,
+          inputMatches,
+          preview: this.previewText(currentInput),
+        });
+        if (!inputMatches) {
+          this.debugLog('send:fill_mismatch', {
+            attempt: i + 1,
+            expectedLength: normalizedText.length,
+            actualLength: currentInput.length,
+            expectedCanonicalLength: canonicalText.length,
+            actualCanonicalLength: currentCanonicalInput.length,
+            expectedPreview: this.previewText(normalizedText),
+            actualPreview: this.previewText(currentInput),
+          });
           await this.sleep(150);
           continue;
         }
 
-        try {
-          await this.page.waitForSelector(SELECTORS.sendButton, { timeout: 3000, state: 'visible' });
-          await this.page.click(SELECTORS.sendButton);
-        } catch {
-          await this.page.keyboard.press('Enter');
-        }
+        const sendState = await this.waitForSendButtonStateAfterFill(canonicalText, i === 0 ? 2500 : 1500);
+        const triggerMethod = await this.triggerSend(sendState);
+        this.debugLog('send:triggered', {
+          attempt: i + 1,
+          triggerMethod,
+          sendState,
+          anchorUrl: dispatchAnchorUrl,
+        });
 
-        dispatched = await this.waitForDispatch(normalizedText, 1800);
+        dispatched = await this.waitForDispatch(canonicalText, dispatchAnchorUrl, 3200);
+        this.debugLog('send:dispatch_result', {
+          attempt: i + 1,
+          dispatched,
+          currentUrl: this.page.url(),
+        });
         if (dispatched) break;
 
+        await this.recoverFromUndispatchedMessage();
+        dispatchAnchorUrl = this.page.url();
         await this.sleep(200);
       }
 
       if (!dispatched) {
+        this.debugLog('send:failed', {
+          finalUrl: this.page.url(),
+          finalInputPreview: this.previewText(await this.getInputText()),
+        });
         throw new WebDriverError(
           WebDriverErrorCode.SEND_MESSAGE_FAILED,
           'ChatGPT 发送后未确认投递（输入可能未生效）'
@@ -188,26 +230,218 @@ export class ChatGPTDriver extends BaseDriver {
     }, [SELECTORS.inputArea] as [string]);
   }
 
-  private async waitForDispatch(normalizedText: string, timeoutMs: number): Promise<boolean> {
+  private async waitForDispatch(
+    canonicalText: string,
+    beforeUrl: string,
+    timeoutMs: number
+  ): Promise<boolean> {
     const start = Date.now();
+    let rounds = 0;
 
     while (Date.now() - start < timeoutMs) {
       await this.sleep(200);
+      rounds++;
+
+      const currentUrl = this.page.url();
+      if (currentUrl && currentUrl !== beforeUrl) {
+        this.debugLog('dispatch:url_changed', {
+          rounds,
+          beforeUrl,
+          currentUrl,
+        });
+        return true;
+      }
 
       const stopVisible = await this.page
         .waitForSelector(SELECTORS.stopButton, { timeout: 250, state: 'visible' })
         .then(() => true)
         .catch(() => false);
-      if (stopVisible) return true;
+      if (stopVisible) {
+        this.debugLog('dispatch:stop_visible', { rounds, currentUrl });
+        return true;
+      }
 
       const currentInput = await this.getInputText();
-      if (!normalizedText || currentInput !== normalizedText) {
+      const currentCanonicalInput = this.canonicalizeForDispatch(currentInput);
+      if (!canonicalText || currentCanonicalInput !== canonicalText) {
+        this.debugLog('dispatch:input_changed', {
+          rounds,
+          currentUrl,
+          currentInputLength: currentInput.length,
+          canonicalInputLength: currentCanonicalInput.length,
+          currentInputPreview: this.previewText(currentInput),
+        });
         return true;
       }
     }
 
     const finalInput = await this.getInputText();
-    return !normalizedText || finalInput !== normalizedText;
+    const finalCanonicalInput = this.canonicalizeForDispatch(finalInput);
+    this.debugLog('dispatch:timeout', {
+      beforeUrl,
+      currentUrl: this.page.url(),
+      finalInputLength: finalInput.length,
+      finalCanonicalLength: finalCanonicalInput.length,
+      finalInputPreview: this.previewText(finalInput),
+    });
+    return !canonicalText || finalCanonicalInput !== canonicalText;
+  }
+
+  private async waitForSendButtonStateAfterFill(
+    canonicalText: string,
+    timeoutMs: number
+  ): Promise<{ mounted: boolean; ready: boolean }> {
+    const start = Date.now();
+    let sawMounted = false;
+    let rounds = 0;
+
+    while (Date.now() - start < timeoutMs) {
+      await this.dismissDialogs();
+      rounds++;
+
+      const state = await this.page
+        .evaluate(([inputSelector, sendButtonSelector, overlaySelector, stopButtonSelector]: [string, string, string, string]) => {
+          const doc = (globalThis as any).document;
+          const getStyle = (globalThis as any).getComputedStyle;
+          const isVisible = (el: any) => {
+            if (!el) return false;
+            const style = getStyle?.(el);
+            const rect = el.getBoundingClientRect?.();
+            return !style || (
+              style.display !== 'none' &&
+              style.visibility !== 'hidden' &&
+              (rect ? rect.width > 0 && rect.height > 0 : true)
+            );
+          };
+
+          const input = doc.querySelector(inputSelector as string) as any;
+          const sendButton = doc.querySelector(sendButtonSelector as string) as any;
+          const overlayVisible = Array.from(doc.querySelectorAll(overlaySelector as string)).some((el) => isVisible(el));
+          const stopVisible = Array.from(doc.querySelectorAll(stopButtonSelector as string)).some((el) => isVisible(el));
+
+          const inputText = input
+            ? (((input.value ?? input.textContent ?? '') as string).replace(/\s+/g, ' ').trim())
+            : '';
+
+          const sendButtonReady = Boolean(
+            sendButton &&
+            isVisible(sendButton) &&
+            !sendButton.disabled &&
+            sendButton.getAttribute?.('aria-disabled') !== 'true'
+          );
+
+          return {
+            inputCanonicalMatches: inputText.replace(/\s+/g, '') === canonicalText,
+            sendButtonMounted: Boolean(sendButton),
+            sendButtonReady,
+            overlayVisible,
+            stopVisible,
+          };
+        }, [SELECTORS.inputArea, SELECTORS.sendButton, SELECTORS.modalOverlay, SELECTORS.stopButton] as [string, string, string, string])
+        .catch(() => ({
+          inputCanonicalMatches: false,
+          sendButtonMounted: false,
+          sendButtonReady: false,
+          overlayVisible: false,
+          stopVisible: false,
+        }));
+
+      this.debugLog('send:button_probe', {
+        rounds,
+        state,
+      });
+
+      if (!state.overlayVisible && !state.stopVisible && state.sendButtonReady && state.inputCanonicalMatches) {
+        return { mounted: true, ready: true };
+      }
+
+      if (!state.inputCanonicalMatches) {
+        return { mounted: sawMounted || state.sendButtonMounted, ready: false };
+      }
+
+      sawMounted = sawMounted || state.sendButtonMounted;
+
+      // 发送按钮节点已挂载但暂未就绪时，继续等待前端事件绑定稳定。
+      if (state.sendButtonMounted || state.overlayVisible) {
+        await this.sleep(120);
+        continue;
+      }
+
+      await this.sleep(120);
+    }
+
+    return { mounted: sawMounted, ready: false };
+  }
+
+  private async triggerSend(sendState: { mounted: boolean; ready: boolean }): Promise<'button' | 'dom_button' | 'enter'> {
+    if (sendState.ready || sendState.mounted) {
+      const clickMethod = await this.clickSendButton().catch(() => null);
+      if (clickMethod) return clickMethod;
+    }
+
+    await this.page.keyboard.press('Enter');
+    return 'enter';
+  }
+
+  private async clickSendButton(): Promise<'button' | 'dom_button' | null> {
+    try {
+      await this.page.click(SELECTORS.sendButton, { timeout: 1000 });
+      return 'button';
+    } catch {
+      // 回退到 DOM 原生 click，避免某些覆盖层/动画导致 Playwright click 失败。
+    }
+
+    const clicked = await this.page
+      .evaluate(([selector]: [string]) => {
+        const button = (globalThis as any).document.querySelector(selector as string) as any;
+        if (!button) return false;
+        if (button.disabled || button.getAttribute?.('aria-disabled') === 'true') return false;
+        button.click?.();
+        return true;
+      }, [SELECTORS.sendButton] as [string])
+      .catch(() => false);
+
+    return clicked ? 'dom_button' : null;
+  }
+
+  private async clearInputArea(): Promise<void> {
+    try {
+      await this.page.fill(SELECTORS.inputArea, '');
+    } catch {
+      // 某些运行态 fill('') 会失败，回退到模拟用户清空。
+    }
+
+    const existingText = await this.getInputText();
+    if (!existingText) {
+      this.debugLog('send:clear_input', { method: 'fill-empty', cleared: true });
+      return;
+    }
+
+    await this.page.click(SELECTORS.inputArea).catch(() => null);
+    await this.page.keyboard.press('Meta+A').catch(() => null);
+    await this.page.keyboard.press('Backspace').catch(() => null);
+    await this.sleep(80);
+
+    const finalText = await this.getInputText();
+    this.debugLog('send:clear_input', {
+      method: 'fill-empty+select-all',
+      beforeLength: existingText.length,
+      afterLength: finalText.length,
+      cleared: !finalText,
+      preview: this.previewText(finalText),
+    });
+  }
+
+  private async recoverFromUndispatchedMessage(): Promise<void> {
+    this.debugLog('send:recover:start', { url: this.page.url() });
+    await this.dismissDialogs();
+    await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 3000, state: 'visible' }).catch(() => null);
+    await this.page.click(SELECTORS.inputArea).catch(() => null);
+    await this.sleep(180);
+    this.debugLog('send:recover:end', {
+      url: this.page.url(),
+      inputPreview: this.previewText(await this.getInputText()),
+    });
   }
 
   /**
@@ -230,6 +464,27 @@ export class ChatGPTDriver extends BaseDriver {
       await this.sleep(300);
     } catch {
       // 忽略
+    }
+  }
+
+  private previewText(text: string, maxLength = 120): string {
+    if (!text) return '';
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+  }
+
+  private normalizeForInputComparison(text: string): string {
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
+  private canonicalizeForDispatch(text: string): string {
+    return text.replace(/\s+/g, '').trim();
+  }
+
+  private debugLog(stage: string, payload: Record<string, unknown>): void {
+    try {
+      console.log(`[ChatGPTDriver][${stage}] ${JSON.stringify(payload)}`);
+    } catch {
+      console.log(`[ChatGPTDriver][${stage}]`, payload);
     }
   }
 }
