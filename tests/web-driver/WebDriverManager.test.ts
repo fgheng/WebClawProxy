@@ -575,6 +575,81 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     expect(mockDriver.extractResponse).not.toHaveBeenCalled();
     expect(mockDriver.navigateToConversation).not.toHaveBeenCalled();
   });
+
+  it('同一 provider 的并发 chat 应串行执行', async () => {
+    const firstDriver = {
+      isValidConversationUrl: jest.fn().mockReturnValue(true),
+      getConversationUrl: jest.fn().mockResolvedValue('https://chatgpt.com/c/one'),
+      navigateToConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 20))),
+      extractResponse: jest.fn().mockResolvedValue('first'),
+    } as any;
+
+    const secondDriver = {
+      isValidConversationUrl: jest.fn().mockReturnValue(true),
+      getConversationUrl: jest.fn().mockResolvedValue('https://chatgpt.com/c/two'),
+      navigateToConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+      extractResponse: jest.fn().mockResolvedValue('second'),
+    } as any;
+
+    jest.spyOn(manager as any, 'ensureBrowser').mockResolvedValue(undefined);
+    jest
+      .spyOn(manager as any, 'getOrCreateDriver')
+      .mockResolvedValueOnce(firstDriver)
+      .mockResolvedValueOnce(secondDriver);
+    jest.spyOn(manager as any, 'waitForPageReadyBeforeSend').mockResolvedValue(undefined);
+
+    const p1 = manager.chat('gpt', 'https://chatgpt.com/c/one', 'hello-1');
+    const p2 = manager.chat('gpt', 'https://chatgpt.com/c/two', 'hello-2');
+
+    await Promise.all([p1, p2]);
+
+    expect(firstDriver.sendMessage).toHaveBeenCalledWith('hello-1');
+    expect(secondDriver.sendMessage).toHaveBeenCalledWith('hello-2');
+    expect(firstDriver.waitForResponse.mock.invocationCallOrder[0]).toBeLessThan(
+      secondDriver.sendMessage.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('不同 provider 的并发 chat 允许并行开始', async () => {
+    const gptDriver = {
+      isValidConversationUrl: jest.fn().mockReturnValue(true),
+      getConversationUrl: jest.fn().mockResolvedValue('https://chatgpt.com/c/one'),
+      navigateToConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+      extractResponse: jest.fn().mockResolvedValue('gpt'),
+    } as any;
+
+    const qwenDriver = {
+      isValidConversationUrl: jest.fn().mockReturnValue(true),
+      getConversationUrl: jest.fn().mockResolvedValue('https://chat.qwen.ai/c/two'),
+      navigateToConversation: jest.fn().mockResolvedValue(undefined),
+      sendMessage: jest.fn().mockResolvedValue(undefined),
+      waitForResponse: jest.fn().mockResolvedValue(undefined),
+      extractResponse: jest.fn().mockResolvedValue('qwen'),
+    } as any;
+
+    jest.spyOn(manager as any, 'ensureBrowser').mockResolvedValue(undefined);
+    jest
+      .spyOn(manager as any, 'getOrCreateDriver')
+      .mockImplementation(async (...args: unknown[]) => {
+        const [site] = args as [SiteKey];
+        return site === 'gpt' ? gptDriver : qwenDriver;
+      });
+    jest.spyOn(manager as any, 'waitForPageReadyBeforeSend').mockResolvedValue(undefined);
+
+    await Promise.all([
+      manager.chat('gpt', 'https://chatgpt.com/c/one', 'hello-gpt'),
+      manager.chat('qwen', 'https://chat.qwen.ai/c/two', 'hello-qwen'),
+    ]);
+
+    expect(gptDriver.sendMessage).toHaveBeenCalledWith('hello-gpt');
+    expect(qwenDriver.sendMessage).toHaveBeenCalledWith('hello-qwen');
+  });
 });
 
 describe('QwenDriver 运行态问题回归', () => {

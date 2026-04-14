@@ -164,6 +164,8 @@ export class WebDriverManager {
   /** 每个 SiteKey 对应一个 Page 和 Driver */
   private pageMap: Map<SiteKey, Page> = new Map();
   private driverMap: Map<SiteKey, BaseDriver> = new Map();
+  /** 每个 provider 一条串行链，避免同一站点并发抢占同一个 page/driver */
+  private siteTaskTails: Map<SiteKey, Promise<void>> = new Map();
 
   constructor(options: WebDriverManagerOptions = {}) {
     this.options = {
@@ -189,41 +191,43 @@ export class WebDriverManager {
     site: SiteKey,
     initPrompt?: string
   ): Promise<InitConversationResult> {
-    const prompt = initPrompt ?? this.resolveDefaultInitPrompt();
+    return this.runWithSiteLock(site, async () => {
+      const prompt = initPrompt ?? this.resolveDefaultInitPrompt();
 
-    await this.ensureBrowser();
-    const driver = await this.getOrCreateDriver(site);
+      await this.ensureBrowser();
+      const driver = await this.getOrCreateDriver(site);
 
-    // 登录态检查已由服务启动预检承担；初始化流程不再重复判断
+      // 登录态检查已由服务启动预检承担；初始化流程不再重复判断
 
-    // 2. 新建对话
-    await driver.createNewConversation();
+      // 2. 新建对话
+      await driver.createNewConversation();
 
-    // 发送初始化提示词前，等待页面稳定，避免刚新建对话时输入被吞
-    await this.waitForPageReadyBeforeSend(site);
+      // 发送初始化提示词前，等待页面稳定，避免刚新建对话时输入被吞
+      await this.waitForPageReadyBeforeSend(site);
 
-    // 3. 发送初始化提示词（含超长分段保护）
-    await this.dispatchPrompt(site, driver, {
-      prompt,
-      mode: 'init',
+      // 3. 发送初始化提示词（含超长分段保护）
+      await this.dispatchPrompt(site, driver, {
+        prompt,
+        mode: 'init',
+      });
+
+      // 4. 等待 URL 从主页变为对话链接（URL 变化说明对话已建立）
+      const url = await this.waitForConversationUrl(driver, site);
+
+      // 5. 等待模型完成对初始化提示词的回复
+      //    这一步非常重要：确保初始化提示词被模型完整接收并回复后
+      //    才返回 sessionUrl，避免 chat() 过早跳入页面导致上下文丢失
+      console.log(`[WebDriver] 等待 ${site} 初始化回复完成...`);
+      try {
+        await driver.waitForResponse();
+        console.log(`[WebDriver] ${site} 初始化回复已完成`);
+      } catch {
+        // 即使等待超时也继续（已获取 URL 就足够了）
+        console.warn(`[WebDriver] ${site} 初始化回复等待超时，继续执行`);
+      }
+
+      return { url };
     });
-
-    // 4. 等待 URL 从主页变为对话链接（URL 变化说明对话已建立）
-    const url = await this.waitForConversationUrl(driver, site);
-
-    // 5. 等待模型完成对初始化提示词的回复
-    //    这一步非常重要：确保初始化提示词被模型完整接收并回复后
-    //    才返回 sessionUrl，避免 chat() 过早跳入页面导致上下文丢失
-    console.log(`[WebDriver] 等待 ${site} 初始化回复完成...`);
-    try {
-      await driver.waitForResponse();
-      console.log(`[WebDriver] ${site} 初始化回复已完成`);
-    } catch {
-      // 即使等待超时也继续（已获取 URL 就足够了）
-      console.warn(`[WebDriver] ${site} 初始化回复等待超时，继续执行`);
-    }
-
-    return { url };
   }
 
   /**
@@ -240,12 +244,14 @@ export class WebDriverManager {
     message: string,
     options: PromptDispatchOptions = {}
   ): Promise<ChatResult> {
-    const driver = await this.executeSendFlow(site, sessionUrl, message, options);
+    return this.runWithSiteLock(site, async () => {
+      const driver = await this.executeSendFlow(site, sessionUrl, message, options);
 
-    // 6. 提取响应
-    const content = await driver.extractResponse();
+      // 6. 提取响应
+      const content = await driver.extractResponse();
 
-    return { content };
+      return { content };
+    });
   }
 
   /**
@@ -258,7 +264,9 @@ export class WebDriverManager {
     message: string,
     options: PromptDispatchOptions = {}
   ): Promise<void> {
-    await this.executeSendFlow(site, sessionUrl, message, options);
+    await this.runWithSiteLock(site, async () => {
+      await this.executeSendFlow(site, sessionUrl, message, options);
+    });
   }
 
   /**
@@ -565,6 +573,7 @@ export class WebDriverManager {
     }
     this.pageMap.clear();
     this.driverMap.clear();
+    this.siteTaskTails.clear();
   }
 
   // ==============================
@@ -591,6 +600,7 @@ export class WebDriverManager {
     // 清理旧状态
     this.pageMap.clear();
     this.driverMap.clear();
+    this.siteTaskTails.clear();
 
     const userDataDir = getUserDataDir();
     const userAgent = buildUserAgent();
@@ -746,6 +756,28 @@ export class WebDriverManager {
     `);
 
     console.log('[WebDriver] 浏览器已启动（Stealth 模式已激活）');
+  }
+
+  private async runWithSiteLock<T>(site: SiteKey, task: () => Promise<T>): Promise<T> {
+    const previous = this.siteTaskTails.get(site) ?? Promise.resolve();
+
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    this.siteTaskTails.set(site, previous.catch(() => undefined).then(() => current));
+
+    await previous.catch(() => undefined);
+
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.siteTaskTails.get(site) === current) {
+        this.siteTaskTails.delete(site);
+      }
+    }
   }
 
   /**
