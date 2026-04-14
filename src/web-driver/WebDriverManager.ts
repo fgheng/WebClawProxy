@@ -26,6 +26,7 @@ import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-co
 import { BrowserBackend, BrowserBackendName } from './backends/types';
 import { PlaywrightLaunchBackend } from './backends/PlaywrightLaunchBackend';
 import { ElectronCdpBackend } from './backends/ElectronCdpBackend';
+import { loadAppConfig } from '../config/app-config';
 
 // 注册 Stealth 插件（全局只需一次）
 // Stealth 插件消除以下自动化特征：
@@ -40,8 +41,7 @@ import { ElectronCdpBackend } from './backends/ElectronCdpBackend';
 chromium.use(StealthPlugin());
 
 // 加载配置
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+const config = loadAppConfig();
 
 function getSiteUrlsFromConfig(): Record<SiteKey, string> {
   const providers = getNormalizedProviderConfigMap();

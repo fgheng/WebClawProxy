@@ -1,6 +1,5 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import type { SiteKey } from '../web-driver/types';
+import { loadAppConfig } from './app-config';
 
 export type ProviderMode = 'web' | 'forward';
 
@@ -41,8 +40,7 @@ export type NormalizedProviderConfig = {
   forward: ForwardModeConfig;
 };
 
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const appConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
+const appConfig = loadAppConfig() as {
   providers?: Record<string, RawProviderConfig>;
 };
 
@@ -97,4 +95,3 @@ export function getNormalizedProviderConfig(providerKey: string): NormalizedProv
   if (!provider) return undefined;
   return normalizeProviderConfig(provider);
 }
-

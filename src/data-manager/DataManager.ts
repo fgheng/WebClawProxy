@@ -13,6 +13,7 @@ import { buildSystemPrompt,
 } from './utils/prompt';
 import { stringifyLogPayload } from '../controller/logger';
 import type {} from './utils/prompt';
+import { loadAppConfig } from '../config/app-config';
 
 interface SessionIndexEntry {
   /** 当前会话最新 hash（每会话仅保留一个可命中 hash） */
@@ -41,8 +42,7 @@ interface LegacySessionIndexFile {
 }
 
 // 加载配置
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+const config = loadAppConfig();
 
 /**
  * 模型分类查找

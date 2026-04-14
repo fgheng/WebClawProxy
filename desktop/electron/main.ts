@@ -3,6 +3,8 @@ import * as path from 'path';
 import { BrowserViewManager } from './browser-view-manager';
 import { readProviderSites, type ProviderKey } from './provider-sites';
 import { ServiceManager } from './service-manager';
+import { readProviderModels } from './provider-models';
+import { ShellTerminalManager } from './shell-terminal-manager';
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 const APP_DATA_ROOT = path.join(process.cwd(), '.electron-data');
@@ -12,7 +14,9 @@ const CDP_PORT = '9222';
 
 let browserViewManager: BrowserViewManager | null = null;
 let serviceManager: ServiceManager | null = null;
+let shellTerminalManager: ShellTerminalManager | null = null;
 let providerSites: Record<ProviderKey, string> = {} as Record<ProviderKey, string>;
+let providerModels: Record<ProviderKey, string[]> = {} as Record<ProviderKey, string[]>;
 
 app.setPath('userData', path.join(APP_DATA_ROOT, 'user-data'));
 app.setPath('sessionData', path.join(APP_DATA_ROOT, 'session-data'));
@@ -44,11 +48,13 @@ async function createMainWindow(): Promise<BrowserWindow> {
   }
 
   providerSites = readProviderSites(PROJECT_ROOT);
+  providerModels = readProviderModels(PROJECT_ROOT);
   browserViewManager = new BrowserViewManager({ providerSites });
   const initialProvider = (Object.keys(providerSites)[0] ?? 'gpt') as ProviderKey;
   await browserViewManager.attach(window, initialProvider);
 
   serviceManager = new ServiceManager(PROJECT_ROOT, 'electron-cdp', CDP_URL, window);
+  shellTerminalManager = new ShellTerminalManager(PROJECT_ROOT, window);
 
   return window;
 }
@@ -73,18 +79,36 @@ app.whenReady().then(() => {
   ipcMain.handle('browser:openDevTools', async () => {
     await browserViewManager?.openDevTools();
   });
+  ipcMain.handle(
+    'browser:setBounds',
+    async (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+      browserViewManager?.setBounds(bounds);
+    }
+  );
+  ipcMain.handle('browser:setSplitRatio', async (_event, ratio: number) => {
+    browserViewManager?.setSplitRatio(ratio);
+  });
   ipcMain.handle('desktop:getState', async () => {
     return {
       currentProvider: browserViewManager?.getCurrentProvider() ?? null,
       providerSites,
+      providerModels,
       currentUrl: browserViewManager?.getCurrentUrl() ?? '',
       serviceStatus: serviceManager?.getStatus() ?? 'stopped',
+      apiBaseUrl: 'http://127.0.0.1:3000',
       cdpUrl: CDP_URL,
     };
   });
   ipcMain.handle('service:start', async () => ({ status: await serviceManager?.start() ?? 'stopped' }));
   ipcMain.handle('service:stop', async () => ({ status: await serviceManager?.stop() ?? 'stopped' }));
   ipcMain.handle('service:restart', async () => ({ status: await serviceManager?.restart() ?? 'stopped' }));
+  ipcMain.handle('terminal:init', async () => await shellTerminalManager?.ensureStarted());
+  ipcMain.handle('terminal:write', async (_event, command: string) => {
+    await shellTerminalManager?.write(command);
+  });
+  ipcMain.handle('terminal:interrupt', async () => {
+    await shellTerminalManager?.interrupt();
+  });
 
   void createMainWindow();
 

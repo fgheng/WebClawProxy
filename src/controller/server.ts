@@ -30,10 +30,16 @@ export function createApp() {
   });
 
   // CORS（支持各种 AI 客户端）
-  app.use((_req: Request, res: Response, next: NextFunction) => {
+  app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    const requestedHeaders = req.headers['access-control-request-headers'];
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      typeof requestedHeaders === 'string' && requestedHeaders.trim().length > 0
+        ? requestedHeaders
+        : 'Content-Type, Authorization, x-trace-id, x-session-id'
+    );
     next();
   });
 

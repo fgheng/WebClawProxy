@@ -6,8 +6,6 @@ import { SiteKey } from '../../web-driver/types';
 import { WebDriverError, WebDriverErrorCode } from '../../web-driver/types';
 import { ProtocolParseError } from '../../protocol/types';
 import { logDebug, stringifyLogPayload, formatRequestBodyPreview } from '../logger';
-import * as fs from 'fs';
-import * as path from 'path';
 import {
   type ForwardModeConfig,
   getNormalizedProviderConfig,
@@ -16,9 +14,9 @@ import {
   normalizeProviderConfig,
   type NormalizedProviderConfig,
 } from '../../config/provider-config';
+import { loadAppConfig } from '../../config/app-config';
 
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+const config = loadAppConfig();
 
 const protocol = new OpenAIProtocol();
 const webDriver = new WebDriverManager();

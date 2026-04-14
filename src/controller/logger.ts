@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { loadAppConfig } from '../config/app-config';
 
 interface LoggingConfig {
   enabled: boolean;
@@ -22,8 +23,7 @@ let stream: fs.WriteStream | null = null;
 
 function loadLoggingConfig(): LoggingConfig {
   try {
-    const configPath = path.join(process.cwd(), 'config', 'default.json');
-    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
+    const raw = loadAppConfig() as Record<string, any>;
     const logging = (raw.logging ?? {}) as Record<string, any>;
 
     return {

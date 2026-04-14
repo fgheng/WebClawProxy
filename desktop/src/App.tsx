@@ -1,52 +1,52 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { WebClawPanel } from './panels/WebClawPanel';
 
-type WorkspaceTabKey = 'logs' | 'terminal' | 'trace' | 'sessions' | 'errors';
+type WorkspaceTabKey = 'webclaw' | 'terminal' | 'config' | 'logs' | 'errors';
 
 const tabs: { key: WorkspaceTabKey; label: string }[] = [
-  { key: 'logs', label: '服务日志' },
+  { key: 'webclaw', label: 'webclaw' },
   { key: 'terminal', label: '终端' },
-  { key: 'trace', label: '请求追踪' },
-  { key: 'sessions', label: '会话状态' },
+  { key: 'config', label: '配置' },
+  { key: 'logs', label: '日志' },
   { key: 'errors', label: '错误' },
 ];
 
-const terminalLines = [
-  '~/Workspace/WebClawProxy',
-  '$ npm run dev',
-  '[server] listening on 3000',
-  '[WebDriver] 启动打开站点：gpt -> https://chatgpt.com/',
-  '[WebDriver] 启动打开站点：qwen -> https://chat.qwen.ai/',
-];
-
-const requests = [
-  { id: 'req-1776101', provider: 'gpt', status: 'running' },
-  { id: 'req-1776102', provider: 'qwen', status: 'success' },
-  { id: 'req-1776103', provider: 'kimi', status: 'failed' },
-  { id: 'req-1776104', provider: 'glm', status: 'queued' },
-];
-
-const providerRows = [
-  ['gpt', 'busy', '1', 'req-1776101', 'https://chatgpt.com/c/xxx'],
-  ['qwen', 'idle', '0', '-', 'https://chat.qwen.ai/c/yyy'],
-  ['deepseek', 'idle', '0', '-', 'https://chat.deepseek.com/'],
-  ['kimi', 'busy', '2', 'req-1776108', 'https://www.kimi.com/'],
-  ['glm', 'idle', '0', '-', 'https://chatglm.cn/'],
-];
-
-const errors = [
-  '12:03:11  qwen   SEND_MESSAGE_FAILED',
-  '12:04:22  glm    RESPONSE_EXTRACTION_FAILED',
-  '12:05:01  gpt    waitForDispatch timeout',
-];
+const MIN_BROWSER_HEIGHT = 360;
+const MIN_PANEL_HEIGHT = 280;
+const SPLIT_DIVIDER_HEIGHT = 8;
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<WorkspaceTabKey>('logs');
+  const [activeTab, setActiveTab] = useState<WorkspaceTabKey>('webclaw');
   const [currentProvider, setCurrentProvider] = useState('gpt');
   const [providerSites, setProviderSites] = useState<Record<string, string>>({});
+  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
   const [serviceStatus, setServiceStatus] = useState('stopped');
+  const [apiBaseUrl, setApiBaseUrl] = useState('http://127.0.0.1:3000');
   const [serviceLogs, setServiceLogs] = useState<string[]>([
     '等待服务日志...',
   ]);
+  const [terminalLines, setTerminalLines] = useState<string[]>([]);
+  const [terminalStatus, setTerminalStatus] = useState('stopped');
+  const [terminalShell, setTerminalShell] = useState('/bin/zsh');
+  const [terminalCwd, setTerminalCwd] = useState('/Users/fgh001/Workspace/WebClawProxy');
+  const [terminalPid, setTerminalPid] = useState<number | null>(null);
+  const [logTypeFilter, setLogTypeFilter] = useState('all');
+  const [logProviderFilter, setLogProviderFilter] = useState('all');
+  const [logSearch, setLogSearch] = useState('');
+  const [logAutoScroll, setLogAutoScroll] = useState(true);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [splitRatio, setSplitRatio] = useState(() => {
+    const saved = window.localStorage.getItem('webclaw:split-ratio');
+    const parsed = saved ? Number(saved) : 0.56;
+    return Number.isFinite(parsed) ? Math.min(0.75, Math.max(0.38, parsed)) : 0.56;
+  });
+  const splitPaneRef = useRef<HTMLDivElement | null>(null);
+  const browserPaneRef = useRef<HTMLDivElement | null>(null);
+
+  const pushError = useCallback((message: string) => {
+    setErrors((prev) => [`${new Date().toLocaleTimeString()} ${message}`, ...prev].slice(0, 100));
+    setActiveTab('errors');
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -54,7 +54,9 @@ export default function App() {
       if (!mounted || !state) return;
       setCurrentProvider((state.currentProvider as string | null) ?? 'gpt');
       setProviderSites(state.providerSites);
+      setProviderModels(state.providerModels);
       setServiceStatus(state.serviceStatus);
+      setApiBaseUrl(state.apiBaseUrl);
     });
 
     const disposeLog = window.webclawDesktop?.onServiceLog?.((event) => {
@@ -69,87 +71,298 @@ export default function App() {
     });
     const disposeStatus = window.webclawDesktop?.onServiceStatus?.((event) => {
       setServiceStatus(event.status);
+      setServiceLogs((prev) => [
+        ...prev,
+        `${new Date(event.timestamp).toLocaleTimeString()} [STAT] service -> ${event.status}`,
+      ].slice(-300));
+    });
+    const disposeError = window.webclawDesktop?.onServiceError?.((event) => {
+      const line = `${new Date(event.timestamp).toLocaleTimeString()} [FAIL] ${event.message}`;
+      setServiceLogs((prev) => [...prev, line].slice(-300));
+      pushError(event.message);
+      window.alert(event.message);
+    });
+    const disposeTerminalOutput = window.webclawDesktop?.onTerminalOutput?.((event) => {
+      const prefix = event.stream === 'stderr' ? '[ERR ]' : event.stream === 'system' ? '[SYS ]' : '';
+      const lines = event.message
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0)
+        .map((line) => `${prefix}${line}`);
+      if (lines.length === 0) return;
+      setTerminalLines((prev) => [...prev, ...lines].slice(-500));
+    });
+    const disposeTerminalStatus = window.webclawDesktop?.onTerminalStatus?.((event) => {
+      setTerminalStatus(event.status);
+      setTerminalShell(event.shell);
+      setTerminalCwd(event.cwd);
+      setTerminalPid(event.pid);
+    });
+    void window.webclawDesktop?.initTerminal?.().then((state) => {
+      if (!mounted || !state) return;
+      setTerminalStatus(state.status);
+      setTerminalShell(state.shell);
+      setTerminalCwd(state.cwd);
+      setTerminalPid(state.pid);
     });
 
     return () => {
       mounted = false;
       disposeLog?.();
       disposeStatus?.();
+      disposeError?.();
+      disposeTerminalOutput?.();
+      disposeTerminalStatus?.();
     };
+  }, [pushError]);
+
+  const syncBrowserBounds = useCallback(() => {
+    const pane = browserPaneRef.current;
+    if (!pane) return;
+    const rect = pane.getBoundingClientRect();
+    void window.webclawDesktop?.setBrowserBounds?.({
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    });
   }, []);
 
-  async function handleProviderChange(provider: string) {
+  useEffect(() => {
+    window.localStorage.setItem('webclaw:split-ratio', String(splitRatio));
+    const raf = window.requestAnimationFrame(syncBrowserBounds);
+    return () => window.cancelAnimationFrame(raf);
+  }, [splitRatio, syncBrowserBounds]);
+
+  useEffect(() => {
+    const container = splitPaneRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const minRatio = Math.min(0.72, Math.max(0.42, MIN_BROWSER_HEIGHT / rect.height));
+    const maxRatio = Math.max(minRatio, Math.min(0.72, 1 - MIN_PANEL_HEIGHT / rect.height));
+    if (splitRatio < minRatio || splitRatio > maxRatio) {
+      setSplitRatio(Math.min(maxRatio, Math.max(minRatio, splitRatio)));
+    }
+  }, [splitRatio]);
+
+  useEffect(() => {
+    const onResize = () => syncBrowserBounds();
+    window.addEventListener('resize', onResize);
+    const observer = new ResizeObserver(() => {
+      const container = splitPaneRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const minRatio = Math.min(0.72, Math.max(0.42, MIN_BROWSER_HEIGHT / rect.height));
+        const maxRatio = Math.max(minRatio, Math.min(0.72, 1 - MIN_PANEL_HEIGHT / rect.height));
+        setSplitRatio((prev) => Math.min(maxRatio, Math.max(minRatio, prev)));
+      }
+      syncBrowserBounds();
+    });
+    if (browserPaneRef.current) observer.observe(browserPaneRef.current);
+    if (splitPaneRef.current) observer.observe(splitPaneRef.current);
+    const raf = window.requestAnimationFrame(syncBrowserBounds);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      observer?.disconnect();
+      window.cancelAnimationFrame(raf);
+    };
+  }, [syncBrowserBounds]);
+
+  const handleProviderChange = useCallback(async (provider: string) => {
     setCurrentProvider(provider);
     await window.webclawDesktop?.selectProvider?.(provider);
-  }
+  }, []);
 
-  async function handleStartService() {
-    const result = await window.webclawDesktop?.startService?.();
-    if (result?.status) setServiceStatus(result.status);
-  }
+  const handleStartService = useCallback(async () => {
+    await window.webclawDesktop?.startService?.();
+  }, []);
 
-  async function handleStopService() {
-    const result = await window.webclawDesktop?.stopService?.();
-    if (result?.status) setServiceStatus(result.status);
-  }
+  const handleStopService = useCallback(async () => {
+    await window.webclawDesktop?.stopService?.();
+  }, []);
 
-  async function handleRestartService() {
-    const result = await window.webclawDesktop?.restartService?.();
-    if (result?.status) setServiceStatus(result.status);
+  const handleToggleService = useCallback(async () => {
+    if (serviceStatus === 'running') {
+      const confirmed = window.confirm('确认停止 WebClaw 服务吗？');
+      if (!confirmed) return;
+      await handleStopService();
+      return;
+    }
+
+    if (serviceStatus === 'starting' || serviceStatus === 'stopping') return;
+    const confirmed = window.confirm('确认启动 WebClaw 服务吗？');
+    if (!confirmed) return;
+    await handleStartService();
+  }, [handleStartService, handleStopService, serviceStatus]);
+
+  const handleTerminalCommand = useCallback(async (command: string) => {
+    const trimmed = command.trim();
+    if (!trimmed) return;
+    setTerminalLines((prev) => [...prev, `$ ${trimmed}`].slice(-500));
+    try {
+      await window.webclawDesktop?.writeTerminal?.(trimmed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTerminalLines((prev) => [...prev, `[ERR ] ${message}`].slice(-500));
+      pushError(message);
+    }
+  }, [pushError]);
+
+  const handleTerminalInterrupt = useCallback(async () => {
+    setTerminalLines((prev) => [...prev, '^C'].slice(-500));
+    await window.webclawDesktop?.interruptTerminal?.();
+  }, []);
+
+  function handleSplitDragStart(event: React.PointerEvent<HTMLDivElement>) {
+    const container = splitPaneRef.current;
+    if (!container) return;
+
+    const startRect = container.getBoundingClientRect();
+    const onMove = (moveEvent: PointerEvent) => {
+      const offsetY = moveEvent.clientY - startRect.top;
+      const minRatio = Math.min(0.72, Math.max(0.42, MIN_BROWSER_HEIGHT / startRect.height));
+      const maxRatio = Math.max(minRatio, Math.min(0.72, 1 - MIN_PANEL_HEIGHT / startRect.height));
+      const ratio = offsetY / startRect.height;
+      setSplitRatio(Math.min(maxRatio, Math.max(minRatio, ratio)));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    event.preventDefault();
   }
 
   const panel = useMemo(() => {
+    const filteredLogLines = serviceLogs.filter((line) => {
+      const lower = line.toLowerCase();
+      const typeMatches =
+        logTypeFilter === 'all' ||
+        (logTypeFilter === 'stdout' && line.includes('[LOG ]')) ||
+        (logTypeFilter === 'stderr' && line.includes('[ERR ]')) ||
+        (logTypeFilter === 'status' && line.includes('[STAT]')) ||
+        (logTypeFilter === 'fail' && line.includes('[FAIL]'));
+      const providerMatches =
+        logProviderFilter === 'all' || lower.includes(logProviderFilter.toLowerCase());
+      const searchMatches =
+        logSearch.trim() === '' || lower.includes(logSearch.trim().toLowerCase());
+      return typeMatches && providerMatches && searchMatches;
+    });
+
     switch (activeTab) {
-      case 'logs':
-        return <ServiceLogsPanel logLines={serviceLogs} />;
+      case 'webclaw':
+        return (
+          <WebClawPanel
+            apiBaseUrl={apiBaseUrl}
+            currentProvider={currentProvider}
+            providerModels={providerModels}
+            serviceStatus={serviceStatus}
+            onProviderChange={handleProviderChange}
+            onError={pushError}
+          />
+        );
+      case 'config':
+        return <ConfigPanel apiBaseUrl={apiBaseUrl} providerModels={providerModels} providerSites={providerSites} />;
       case 'terminal':
-        return <TerminalPanel />;
-      case 'trace':
-        return <RequestTracePanel />;
-      case 'sessions':
-        return <SessionStatePanel />;
+        return (
+          <TerminalPanel
+            lines={terminalLines}
+            status={terminalStatus}
+            shell={terminalShell}
+            cwd={terminalCwd}
+            pid={terminalPid}
+            onRunCommand={handleTerminalCommand}
+            onInterrupt={handleTerminalInterrupt}
+          />
+        );
+      case 'logs':
+        return (
+          <ServiceLogsPanel
+            logLines={filteredLogLines}
+            providerOptions={Object.keys(providerSites)}
+            logTypeFilter={logTypeFilter}
+            logProviderFilter={logProviderFilter}
+            logSearch={logSearch}
+            autoScroll={logAutoScroll}
+            onTypeChange={setLogTypeFilter}
+            onProviderChange={setLogProviderFilter}
+            onSearchChange={setLogSearch}
+            onAutoScrollChange={setLogAutoScroll}
+          />
+        );
       case 'errors':
-        return <ErrorPanel />;
+        return <ErrorPanel errors={errors} />;
       default:
         return null;
     }
-  }, [activeTab, serviceLogs]);
+  }, [activeTab, apiBaseUrl, currentProvider, errors, handleProviderChange, handleTerminalCommand, handleTerminalInterrupt, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalCwd, terminalLines, terminalPid, terminalShell, terminalStatus]);
 
   return (
     <div className="console-shell">
-      <div className="main-split-pane">
+      <div
+        className="main-split-pane"
+        ref={splitPaneRef}
+        style={{
+          gridTemplateRows: `calc((100% - ${SPLIT_DIVIDER_HEIGHT}px) * ${splitRatio}) ${SPLIT_DIVIDER_HEIGHT}px calc((100% - ${SPLIT_DIVIDER_HEIGHT}px) * ${1 - splitRatio})`,
+        }}
+      >
         <section className="browser-workspace">
-          <div className="browser-toolbar">
-            <div className="toolbar-left">
-              <select value={currentProvider} onChange={(e) => void handleProviderChange(e.target.value)}>
+          <div className="browser-pane" ref={browserPaneRef} />
+        </section>
+
+        <div
+          className="split-divider"
+          onPointerDown={handleSplitDragStart}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="调整浏览器与面板高度"
+        >
+          <span className="split-divider-handle" />
+        </div>
+
+        <section className="bottom-workspace">
+          <div className="workspace-tabs">
+            <div className="tabs-left">
+              <button
+                className="service-toggle"
+                onClick={() => void handleToggleService()}
+                title={serviceStatus === 'running' ? '停止服务' : serviceStatus === 'starting' ? '正在启动' : '启动服务'}
+                disabled={serviceStatus === 'starting' || serviceStatus === 'stopping'}
+              >
+                <span
+                  className={`service-toggle-ring ${
+                    serviceStatus === 'running'
+                      ? 'running'
+                      : serviceStatus === 'starting'
+                        ? 'starting'
+                        : serviceStatus === 'stopping'
+                          ? 'stopping'
+                          : 'stopped'
+                  }`}
+                >
+                  <span
+                    className={`service-toggle-icon ${
+                      serviceStatus === 'running'
+                        ? 'stop'
+                        : serviceStatus === 'starting' || serviceStatus === 'stopping'
+                          ? 'spinner'
+                          : 'play'
+                    }`}
+                  />
+                </span>
+              </button>
+              <select
+                className="control-provider-select"
+                value={currentProvider}
+                onChange={(e) => void handleProviderChange(e.target.value)}
+              >
                 {Object.keys(providerSites).map((provider) => (
                   <option key={provider} value={provider}>
                     {provider}
                   </option>
                 ))}
               </select>
-              <button>返回</button>
-              <button>前进</button>
-              <button>刷新</button>
-              <button>主页</button>
-            </div>
-
-            <div className="toolbar-right">
-              <button onClick={() => void window.webclawDesktop?.openBrowserDevTools?.()}>DevTools</button>
-              <button
-                onClick={() => void window.webclawDesktop?.openExternal?.(providerSites[currentProvider] ?? '')}
-              >
-                外部打开
-              </button>
-            </div>
-          </div>
-
-          <div className="browser-pane" />
-        </section>
-
-        <section className="bottom-workspace">
-          <div className="workspace-tabs">
-            <div className="tabs-left">
               {tabs.map((tab) => (
                 <button
                   key={tab.key}
@@ -159,27 +372,6 @@ export default function App() {
                   {tab.label}
                 </button>
               ))}
-            </div>
-
-            <div className="tabs-actions">
-              {serviceStatus === 'running' ? (
-                <>
-                  <button className="icon-button" title="停止服务" onClick={() => void handleStopService()}>
-                    ■
-                  </button>
-                  <button className="icon-button" title="重启服务" onClick={() => void handleRestartService()}>
-                    ↻
-                  </button>
-                </>
-              ) : serviceStatus === 'starting' || serviceStatus === 'stopping' ? (
-                <button className="icon-button" title="服务处理中" disabled>
-                  ...
-                </button>
-              ) : (
-                <button className="icon-button" title="启动服务" onClick={() => void handleStartService()}>
-                  ▶
-                </button>
-              )}
             </div>
           </div>
 
@@ -196,30 +388,128 @@ export default function App() {
   );
 }
 
-function ServiceLogsPanel({ logLines }: { logLines: string[] }) {
+function TerminalPanel({
+  lines,
+  status,
+  shell,
+  cwd,
+  pid,
+  onRunCommand,
+  onInterrupt,
+}: {
+  lines: string[];
+  status: string;
+  shell: string;
+  cwd: string;
+  pid: number | null;
+  onRunCommand: (command: string) => Promise<void>;
+  onInterrupt: () => Promise<void>;
+}) {
+  const terminalRef = useRef<HTMLDivElement | null>(null);
+  const [command, setCommand] = useState('');
+
+  useEffect(() => {
+    const container = terminalRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [lines]);
+
+  async function handleSubmit() {
+    const value = command.trim();
+    if (!value) return;
+    setCommand('');
+    await onRunCommand(value);
+  }
+
+  return (
+    <div className="panel-shell terminal-panel">
+      <div className="panel-toolbar">
+        <span className="terminal-badge mono">{shell}</span>
+        <span className="terminal-status mono">status: {status}</span>
+        <span className="terminal-status mono">pid: {pid ?? '-'}</span>
+      </div>
+
+      <div className="terminal-view mono" ref={terminalRef}>
+        <div className="terminal-line terminal-line-muted">{cwd}</div>
+        {lines.map((line, index) => (
+          <div key={`${index}-${line}`} className="terminal-line">{line}</div>
+        ))}
+      </div>
+
+      <div className="terminal-inputbar">
+        <div className="terminal-prompt mono">$</div>
+        <input
+          value={command}
+          placeholder="输入命令并回车执行"
+          onChange={(e) => setCommand(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void handleSubmit();
+            }
+          }}
+        />
+        <button onClick={() => void handleSubmit()} disabled={!command.trim()}>执行</button>
+        <button onClick={() => void onInterrupt()}>Ctrl+C</button>
+      </div>
+    </div>
+  );
+}
+
+function ServiceLogsPanel({
+  logLines,
+  providerOptions,
+  logTypeFilter,
+  logProviderFilter,
+  logSearch,
+  autoScroll,
+  onTypeChange,
+  onProviderChange,
+  onSearchChange,
+  onAutoScrollChange,
+}: {
+  logLines: string[];
+  providerOptions: string[];
+  logTypeFilter: string;
+  logProviderFilter: string;
+  logSearch: string;
+  autoScroll: boolean;
+  onTypeChange: (value: string) => void;
+  onProviderChange: (value: string) => void;
+  onSearchChange: (value: string) => void;
+  onAutoScrollChange: (value: boolean) => void;
+}) {
+  const logListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const container = logListRef.current;
+    if (!container || !autoScroll) return;
+    container.scrollTop = container.scrollHeight;
+  }, [autoScroll, logLines]);
+
   return (
     <div className="panel-shell">
       <div className="panel-toolbar">
-        <select>
-          <option>all</option>
-          <option>info</option>
-          <option>warn</option>
-          <option>error</option>
-          <option>debug</option>
+        <select value={logTypeFilter} onChange={(e) => onTypeChange(e.target.value)}>
+          <option value="all">all</option>
+          <option value="stdout">stdout</option>
+          <option value="stderr">stderr</option>
+          <option value="status">status</option>
+          <option value="fail">fail</option>
         </select>
-        <select>
-          <option>all providers</option>
-          <option>gpt</option>
-          <option>qwen</option>
-          <option>deepseek</option>
-          <option>kimi</option>
-          <option>glm</option>
+        <select value={logProviderFilter} onChange={(e) => onProviderChange(e.target.value)}>
+          <option value="all">all providers</option>
+          {providerOptions.map((provider) => (
+            <option key={provider} value={provider}>{provider}</option>
+          ))}
         </select>
-        <input placeholder="搜索日志..." />
-        <label className="checkbox-inline"><input type="checkbox" defaultChecked /> Auto Scroll</label>
+        <input value={logSearch} onChange={(e) => onSearchChange(e.target.value)} placeholder="搜索日志..." />
+        <label className="checkbox-inline">
+          <input type="checkbox" checked={autoScroll} onChange={(e) => onAutoScrollChange(e.target.checked)} /> Auto Scroll
+        </label>
       </div>
 
-      <div className="log-list">
+      <div className="log-list" ref={logListRef}>
         {logLines.map((line, index) => (
           <div key={`${index}-${line}`} className="log-line mono">{line}</div>
         ))}
@@ -228,118 +518,62 @@ function ServiceLogsPanel({ logLines }: { logLines: string[] }) {
   );
 }
 
-function TerminalPanel() {
+function ConfigPanel({
+  apiBaseUrl,
+  providerModels,
+  providerSites,
+}: {
+  apiBaseUrl: string;
+  providerModels: Record<string, string[]>;
+  providerSites: Record<string, string>;
+}) {
   return (
     <div className="panel-shell">
-      <div className="panel-toolbar">
-        <button>新建终端</button>
-        <button>发送 Ctrl+C</button>
-        <button>清屏</button>
-      </div>
-
-      <div className="terminal-view mono">
-        {terminalLines.map((line) => (
-          <div key={line}>{line}</div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RequestTracePanel() {
-  return (
-    <div className="trace-grid">
-      <div className="trace-list panel-box">
-        <div className="panel-title">Request List</div>
-        {requests.map((item) => (
-          <div key={item.id} className="trace-item">
-            <span className="mono">{item.id}</span>
-            <span>{item.provider}</span>
-            <span className="badge">{item.status}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="trace-detail panel-box">
-        <div className="panel-title">Request Detail</div>
+      <div className="panel-box">
+        <div className="panel-title">当前配置</div>
         <div className="detail-list mono">
-          <div>Provider : gpt</div>
-          <div>Model    : gpt-4o</div>
-          <div>Session  : https://chatgpt.com/c/demo</div>
-          <div>Request  : req-1776101</div>
-          <div>------------------------------</div>
-          <div>[1] request_received</div>
-          <div>[2] init_conversation</div>
-          <div>[3] wait_page_ready</div>
-          <div>[4] send_message</div>
-          <div>[5] wait_for_response</div>
-          <div>[6] extract_response</div>
+          <div>API Base URL: {apiBaseUrl}</div>
+          <div>Provider Count: {Object.keys(providerSites).length}</div>
         </div>
       </div>
-    </div>
-  );
-}
 
-function SessionStatePanel() {
-  return (
-    <div className="panel-shell session-panel">
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Provider</th>
-              <th>Status</th>
-              <th>Queue</th>
-              <th>Locked By</th>
-              <th>Current URL</th>
+              <th>Site</th>
+              <th>Models</th>
             </tr>
           </thead>
           <tbody>
-            {providerRows.map((row) => (
-              <tr key={row[0]}>
-                {row.map((cell) => (
-                  <td key={cell} className={cell.startsWith('https://') ? 'mono' : undefined}>{cell}</td>
-                ))}
+            {Object.keys(providerSites).map((provider) => (
+              <tr key={provider}>
+                <td>{provider}</td>
+                <td className="mono">{providerSites[provider]}</td>
+                <td className="mono">{(providerModels[provider] ?? []).join(', ')}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-
-      <div className="panel-box provider-detail">
-        <div className="panel-title">Selected Provider Detail</div>
-        <div className="detail-list mono">
-          <div>Last request id: req-1776101</div>
-          <div>Last error     : none</div>
-          <div>Driver ready   : true</div>
-          <div>Page visible   : true</div>
-          <div>Lock age       : 12s</div>
-        </div>
-      </div>
     </div>
   );
 }
 
-function ErrorPanel() {
+function ErrorPanel({ errors }: { errors: string[] }) {
   return (
-    <div className="trace-grid">
-      <div className="panel-box">
-        <div className="panel-title">Error List</div>
+    <div className="panel-shell">
+      <div className="panel-box provider-detail">
+        <div className="panel-title">错误</div>
         <div className="log-list">
-          {errors.map((error) => (
-            <div key={error} className="log-line mono">{error}</div>
-          ))}
-        </div>
-      </div>
-
-      <div className="panel-box">
-        <div className="panel-title">Error Detail</div>
-        <div className="detail-list mono">
-          <div>Request : req-1776107007763</div>
-          <div>Provider: qwen</div>
-          <div>Code    : SEND_MESSAGE_FAILED</div>
-          <div>Cause   : page.fill timeout on readonly ime-text-area</div>
-          <div>Stack   : at QwenDriver.fillInputRobustly(...)</div>
+          {errors.length === 0 ? (
+            <div className="log-line mono">暂无错误</div>
+          ) : (
+            errors.map((error, index) => (
+              <div key={`${index}-${error}`} className="log-line mono">{error}</div>
+            ))
+          )}
         </div>
       </div>
     </div>

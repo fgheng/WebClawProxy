@@ -15,6 +15,7 @@ import { ChatCLI } from './ChatCLI';
 import { ClientConfig } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { loadAppConfig } from '../config/app-config';
 
 // 解析命令行参数
 const args = process.argv.slice(2);
@@ -50,10 +51,12 @@ WebClawProxy CLI 客户端
 客户端内置命令（在对话中使用）：
   /help          显示帮助
   /model <名称>  切换模型
+  /provider <名称> 切换 provider
   /system <文本> 设置系统提示词
   /trace [on|off] 查看或开关链路日志
   /stream [on|off] 查看或开关流式请求
   /clear         清空对话历史
+  /new           新建本地对话上下文
   /history       查看对话历史
   /config        查看当前配置
   /quit          退出
@@ -116,12 +119,9 @@ function buildDefaultSessionId(): string {
 // 尝试从配置文件读取默认端口
 let defaultPort = 3000;
 try {
-  const configPath = path.join(process.cwd(), 'config', 'default.json');
-  if (fs.existsSync(configPath)) {
-    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    if (cfg.server?.port) {
-      defaultPort = cfg.server.port;
-    }
+  const cfg = loadAppConfig();
+  if (cfg.server?.port) {
+    defaultPort = cfg.server.port;
   }
 } catch {
   // 忽略配置读取失败

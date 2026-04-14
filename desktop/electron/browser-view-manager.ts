@@ -6,15 +6,23 @@ type BrowserViewManagerOptions = {
 };
 
 const TOP_STATUS_BAR_HEIGHT = 0;
-const TOP_AREA_RATIO = 0.56;
 const BROWSER_PADDING_X = 18;
 const BROWSER_AREA_TOP = 72;
-const BOTTOM_ACTION_BAR_HEIGHT = 40;
+const BOTTOM_ACTION_BAR_HEIGHT = 24;
+
+type ViewBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export class BrowserViewManager {
   private window: BrowserWindow | null = null;
   private views = new Map<ProviderKey, BrowserView>();
   private currentProvider: ProviderKey | null = null;
+  private splitRatio = 0.56;
+  private explicitBounds: ViewBounds | null = null;
 
   constructor(private readonly options: BrowserViewManagerOptions) {}
 
@@ -78,23 +86,42 @@ export class BrowserViewManager {
     return this.views.get(this.currentProvider)?.webContents.getURL() ?? '';
   }
 
+  setSplitRatio(ratio: number): void {
+    this.splitRatio = Math.min(0.75, Math.max(0.38, ratio));
+    this.updateBounds();
+  }
+
+  setBounds(bounds: ViewBounds): void {
+    this.explicitBounds = bounds;
+    this.updateBounds();
+  }
+
   private updateBounds(): void {
     if (!this.window || !this.currentProvider) return;
     const view = this.views.get(this.currentProvider);
     if (!view) return;
 
-    const [windowWidth, windowHeight] = this.window.getContentSize();
-    const mainHeight = windowHeight - TOP_STATUS_BAR_HEIGHT - BOTTOM_ACTION_BAR_HEIGHT;
-    const topAreaHeight = Math.floor(mainHeight * TOP_AREA_RATIO);
-    const width = Math.max(640, windowWidth - BROWSER_PADDING_X * 2);
-    const height = Math.max(280, topAreaHeight - (BROWSER_AREA_TOP - TOP_STATUS_BAR_HEIGHT) - 12);
+    if (this.explicitBounds) {
+      view.setBounds({
+        x: this.explicitBounds.x,
+        y: this.explicitBounds.y,
+        width: Math.max(320, this.explicitBounds.width),
+        height: Math.max(200, this.explicitBounds.height),
+      });
+    } else {
+      const [windowWidth, windowHeight] = this.window.getContentSize();
+      const mainHeight = windowHeight - TOP_STATUS_BAR_HEIGHT - BOTTOM_ACTION_BAR_HEIGHT;
+      const topAreaHeight = Math.floor(mainHeight * this.splitRatio);
+      const width = Math.max(640, windowWidth - BROWSER_PADDING_X * 2);
+      const height = Math.max(280, topAreaHeight - (BROWSER_AREA_TOP - TOP_STATUS_BAR_HEIGHT) - 12);
 
-    view.setBounds({
-      x: BROWSER_PADDING_X,
-      y: BROWSER_AREA_TOP,
-      width,
-      height,
-    });
+      view.setBounds({
+        x: BROWSER_PADDING_X,
+        y: BROWSER_AREA_TOP,
+        width,
+        height,
+      });
+    }
     view.setAutoResize({ width: true, height: true });
   }
 }
