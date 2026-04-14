@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
   initTerminal: () => ipcRenderer.invoke('terminal:init'),
   writeTerminal: (command: string) => ipcRenderer.invoke('terminal:write', command),
   interruptTerminal: () => ipcRenderer.invoke('terminal:interrupt'),
+  resizeTerminal: (cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', cols, rows),
   onServiceLog: (callback: (event: { stream: 'stdout' | 'stderr'; message: string; timestamp: number }) => void) => {
     const listener = (_event: unknown, payload: { stream: 'stdout' | 'stderr'; message: string; timestamp: number }) => {
       callback(payload);
@@ -37,11 +38,11 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
     return () => ipcRenderer.removeListener('service:error', listener);
   },
   onTerminalOutput: (
-    callback: (event: { stream: 'stdout' | 'stderr' | 'system'; message: string; timestamp: number }) => void
+    callback: (event: { stream: 'stdout' | 'system'; message: string; timestamp: number }) => void
   ) => {
     const listener = (
       _event: unknown,
-      payload: { stream: 'stdout' | 'stderr' | 'system'; message: string; timestamp: number }
+      payload: { stream: 'stdout' | 'system'; message: string; timestamp: number }
     ) => {
       callback(payload);
     };

@@ -109,6 +109,9 @@ app.whenReady().then(() => {
   ipcMain.handle('terminal:interrupt', async () => {
     await shellTerminalManager?.interrupt();
   });
+  ipcMain.handle('terminal:resize', async (_event, cols: number, rows: number) => {
+    await shellTerminalManager?.resize(cols, rows);
+  });
 
   void createMainWindow();
 

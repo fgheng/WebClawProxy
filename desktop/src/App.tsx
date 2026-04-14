@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WebClawPanel } from './panels/WebClawPanel';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 
 type WorkspaceTabKey = 'webclaw' | 'terminal' | 'config' | 'logs' | 'errors';
 
@@ -25,7 +28,7 @@ export default function App() {
   const [serviceLogs, setServiceLogs] = useState<string[]>([
     '等待服务日志...',
   ]);
-  const [terminalLines, setTerminalLines] = useState<string[]>([]);
+  const [terminalChunks, setTerminalChunks] = useState<string[]>([]);
   const [terminalStatus, setTerminalStatus] = useState('stopped');
   const [terminalShell, setTerminalShell] = useState('/bin/zsh');
   const [terminalCwd, setTerminalCwd] = useState('/Users/fgh001/Workspace/WebClawProxy');
@@ -83,13 +86,7 @@ export default function App() {
       window.alert(event.message);
     });
     const disposeTerminalOutput = window.webclawDesktop?.onTerminalOutput?.((event) => {
-      const prefix = event.stream === 'stderr' ? '[ERR ]' : event.stream === 'system' ? '[SYS ]' : '';
-      const lines = event.message
-        .split(/\r?\n/)
-        .filter((line) => line.length > 0)
-        .map((line) => `${prefix}${line}`);
-      if (lines.length === 0) return;
-      setTerminalLines((prev) => [...prev, ...lines].slice(-500));
+      setTerminalChunks((prev) => [...prev, event.message].slice(-1200));
     });
     const disposeTerminalStatus = window.webclawDesktop?.onTerminalStatus?.((event) => {
       setTerminalStatus(event.status);
@@ -194,24 +191,6 @@ export default function App() {
     await handleStartService();
   }, [handleStartService, handleStopService, serviceStatus]);
 
-  const handleTerminalCommand = useCallback(async (command: string) => {
-    const trimmed = command.trim();
-    if (!trimmed) return;
-    setTerminalLines((prev) => [...prev, `$ ${trimmed}`].slice(-500));
-    try {
-      await window.webclawDesktop?.writeTerminal?.(trimmed);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setTerminalLines((prev) => [...prev, `[ERR ] ${message}`].slice(-500));
-      pushError(message);
-    }
-  }, [pushError]);
-
-  const handleTerminalInterrupt = useCallback(async () => {
-    setTerminalLines((prev) => [...prev, '^C'].slice(-500));
-    await window.webclawDesktop?.interruptTerminal?.();
-  }, []);
-
   function handleSplitDragStart(event: React.PointerEvent<HTMLDivElement>) {
     const container = splitPaneRef.current;
     if (!container) return;
@@ -267,13 +246,11 @@ export default function App() {
       case 'terminal':
         return (
           <TerminalPanel
-            lines={terminalLines}
+            chunks={terminalChunks}
             status={terminalStatus}
             shell={terminalShell}
             cwd={terminalCwd}
             pid={terminalPid}
-            onRunCommand={handleTerminalCommand}
-            onInterrupt={handleTerminalInterrupt}
           />
         );
       case 'logs':
@@ -296,7 +273,7 @@ export default function App() {
       default:
         return null;
     }
-  }, [activeTab, apiBaseUrl, currentProvider, errors, handleProviderChange, handleTerminalCommand, handleTerminalInterrupt, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalCwd, terminalLines, terminalPid, terminalShell, terminalStatus]);
+  }, [activeTab, apiBaseUrl, currentProvider, errors, handleProviderChange, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalChunks, terminalCwd, terminalPid, terminalShell, terminalStatus]);
 
   return (
     <div className="console-shell">
@@ -389,37 +366,87 @@ export default function App() {
 }
 
 function TerminalPanel({
-  lines,
+  chunks,
   status,
   shell,
   cwd,
   pid,
-  onRunCommand,
-  onInterrupt,
 }: {
-  lines: string[];
+  chunks: string[];
   status: string;
   shell: string;
   cwd: string;
   pid: number | null;
-  onRunCommand: (command: string) => Promise<void>;
-  onInterrupt: () => Promise<void>;
 }) {
-  const terminalRef = useRef<HTMLDivElement | null>(null);
-  const [command, setCommand] = useState('');
+  const terminalHostRef = useRef<HTMLDivElement | null>(null);
+  const terminalInstanceRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const renderedChunkCountRef = useRef(0);
 
   useEffect(() => {
-    const container = terminalRef.current;
-    if (!container) return;
-    container.scrollTop = container.scrollHeight;
-  }, [lines]);
+    const host = terminalHostRef.current;
+    if (!host) return;
 
-  async function handleSubmit() {
-    const value = command.trim();
-    if (!value) return;
-    setCommand('');
-    await onRunCommand(value);
-  }
+    const fitAddon = new FitAddon();
+    const terminal = new Terminal({
+      cursorBlink: true,
+      convertEol: false,
+      fontSize: 11,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      theme: {
+        background: '#0b1220',
+        foreground: '#e2e8f0',
+      },
+    });
+
+    terminal.loadAddon(fitAddon);
+    terminal.open(host);
+    fitAddon.fit();
+    terminal.focus();
+
+    terminalInstanceRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+    renderedChunkCountRef.current = 0;
+
+    const applySize = () => {
+      fitAddon.fit();
+      void window.webclawDesktop?.resizeTerminal?.(terminal.cols, terminal.rows);
+    };
+
+    const observer = new ResizeObserver(() => applySize());
+    observer.observe(host);
+
+    const dataDisposable = terminal.onData((data) => {
+      void window.webclawDesktop?.writeTerminal?.(data);
+    });
+
+    const keyDisposable = terminal.onKey(({ domEvent }) => {
+      if ((domEvent.ctrlKey || domEvent.metaKey) && domEvent.key.toLowerCase() === 'c') {
+        void window.webclawDesktop?.interruptTerminal?.();
+      }
+    });
+
+    applySize();
+
+    return () => {
+      observer.disconnect();
+      dataDisposable.dispose();
+      keyDisposable.dispose();
+      terminal.dispose();
+      terminalInstanceRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const terminal = terminalInstanceRef.current;
+    if (!terminal) return;
+    for (let index = renderedChunkCountRef.current; index < chunks.length; index += 1) {
+      terminal.write(chunks[index]);
+    }
+    renderedChunkCountRef.current = chunks.length;
+    terminal.focus();
+  }, [chunks]);
 
   return (
     <div className="panel-shell terminal-panel">
@@ -429,29 +456,8 @@ function TerminalPanel({
         <span className="terminal-status mono">pid: {pid ?? '-'}</span>
       </div>
 
-      <div className="terminal-view mono" ref={terminalRef}>
-        <div className="terminal-line terminal-line-muted">{cwd}</div>
-        {lines.map((line, index) => (
-          <div key={`${index}-${line}`} className="terminal-line">{line}</div>
-        ))}
-      </div>
-
-      <div className="terminal-inputbar">
-        <div className="terminal-prompt mono">$</div>
-        <input
-          value={command}
-          placeholder="输入命令并回车执行"
-          onChange={(e) => setCommand(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              void handleSubmit();
-            }
-          }}
-        />
-        <button onClick={() => void handleSubmit()} disabled={!command.trim()}>执行</button>
-        <button onClick={() => void onInterrupt()}>Ctrl+C</button>
-      </div>
+      <div className="terminal-meta mono">{cwd}</div>
+      <div className="terminal-view" ref={terminalHostRef} />
     </div>
   );
 }

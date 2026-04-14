@@ -273,7 +273,7 @@ select {
 }
 
 .terminal-panel {
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr;
 }
 
 .trace-grid {
@@ -328,40 +328,22 @@ select {
 }
 
 .terminal-view {
-  white-space: pre-wrap;
-  line-height: 1.7;
-  font-size: 11px;
+  min-height: 0;
+  padding: 6px;
 }
 
-.terminal-line {
-  padding: 2px 0;
-}
-
-.terminal-line-muted {
+.terminal-meta {
+  font-size: 10px;
   color: #94a3b8;
+  padding: 0 4px;
 }
 
-.terminal-inputbar {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  gap: 8px;
-  align-items: center;
-  border: 1px solid #1e293b;
-  border-radius: 12px;
-  background: #0b1220;
-  padding: 8px 10px;
+.terminal-view .xterm {
+  height: 100%;
 }
 
-.terminal-prompt {
-  color: #86efac;
-  font-size: 11px;
-}
-
-.terminal-inputbar input {
-  height: 30px;
-  min-width: 0;
-  font-size: 11px;
-  background: #111827;
+.terminal-view .xterm-viewport {
+  overflow-y: auto !important;
 }
 
 .trace-list,

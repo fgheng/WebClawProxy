@@ -1,11 +1,10 @@
 import { BrowserWindow } from 'electron';
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { IPty, spawn } from 'node-pty';
 
 type TerminalStatus = 'stopped' | 'running';
-type TerminalStream = 'stdout' | 'stderr' | 'system';
 
 export class ShellTerminalManager {
-  private proc: ChildProcessWithoutNullStreams | null = null;
+  private proc: IPty | null = null;
   private status: TerminalStatus = 'stopped';
   private readonly shellPath: string;
 
@@ -39,43 +38,44 @@ export class ShellTerminalManager {
     if (!this.proc) {
       throw new Error('终端进程未启动');
     }
-    this.proc.stdin.write(`${command}\n`);
+    this.proc.write(command);
   }
 
   async interrupt(): Promise<void> {
     if (!this.proc) return;
-    this.proc.kill('SIGINT');
+    this.proc.write('\u0003');
+  }
+
+  async resize(cols: number, rows: number): Promise<void> {
+    if (!this.proc) return;
+    this.proc.resize(Math.max(20, cols), Math.max(8, rows));
   }
 
   private startProcess(): void {
     this.proc = spawn(this.shellPath, [], {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 32,
       cwd: this.cwd,
       env: {
         ...process.env,
         TERM: process.env.TERM || 'xterm-256color',
       },
-      stdio: 'pipe',
     });
 
     this.setStatus('running');
-    this.emitOutput(`Shell started: ${this.shellPath}`, 'system');
-    this.emitOutput(`Working directory: ${this.cwd}`, 'system');
+    this.emitOutput(`\r\n[SYS ] Shell started: ${this.shellPath}\r\n`, 'system');
+    this.emitOutput(`[SYS ] Working directory: ${this.cwd}\r\n`, 'system');
 
-    this.proc.stdout.on('data', (chunk) => this.emitOutput(String(chunk), 'stdout'));
-    this.proc.stderr.on('data', (chunk) => this.emitOutput(String(chunk), 'stderr'));
-    this.proc.on('exit', (code, signal) => {
-      this.emitOutput(`Shell exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`, 'system');
-      this.proc = null;
-      this.setStatus('stopped');
-    });
-    this.proc.on('error', (error) => {
-      this.emitOutput(`Shell error: ${error.message}`, 'stderr');
+    this.proc.onData((data) => this.emitOutput(data, 'stdout'));
+    this.proc.onExit(({ exitCode, signal }) => {
+      this.emitOutput(`\r\n[SYS ] Shell exited (code=${exitCode ?? 'null'}, signal=${signal ?? 'null'})\r\n`, 'system');
       this.proc = null;
       this.setStatus('stopped');
     });
   }
 
-  private emitOutput(message: string, stream: TerminalStream): void {
+  private emitOutput(message: string, stream: 'stdout' | 'system'): void {
     this.window.webContents.send('terminal:output', {
       stream,
       message,

@@ -24,6 +24,7 @@ declare global {
       initTerminal: () => Promise<{ status: string; shell: string; cwd: string; pid: number | null } | undefined>;
       writeTerminal: (command: string) => Promise<void>;
       interruptTerminal: () => Promise<void>;
+      resizeTerminal: (cols: number, rows: number) => Promise<void>;
       onServiceLog: (
         callback: (event: { stream: 'stdout' | 'stderr'; message: string; timestamp: number }) => void
       ) => () => void;
@@ -34,7 +35,7 @@ declare global {
         callback: (event: { message: string; timestamp: number }) => void
       ) => () => void;
       onTerminalOutput: (
-        callback: (event: { stream: 'stdout' | 'stderr' | 'system'; message: string; timestamp: number }) => void
+        callback: (event: { stream: 'stdout' | 'system'; message: string; timestamp: number }) => void
       ) => () => void;
       onTerminalStatus: (
         callback: (event: { status: string; timestamp: number; shell: string; cwd: string; pid: number | null }) => void
