@@ -432,17 +432,20 @@ export class WebDriverManager {
     if (chunkTotal <= 1) return chunk;
 
     const seq = `${chunkIndex + 1}/${chunkTotal}`;
-    const startMarker = `<|wc_chunk_start:${seq}|>`;
-    const endMarker = `<|wc_chunk_end:${seq}|>`;
-    const allEndMarker = '<|wc_all_chunks_end|>';
-    const wrappedChunk = [startMarker, chunk, endMarker].join('\n');
+    const chunkStartMarker = `<wc_chunk seq="${seq}">`;
+    const chunkEndMarker = '</wc_chunk>';
+    const allStartMarker = '<wc_all_chunks>';
+    const allEndMarker = '</wc_all_chunks>';
+    const wrappedChunk = [chunkStartMarker, chunk, chunkEndMarker].join('\n');
 
     if (chunkIndex === 0) {
       return [
         `[Chunked input ${seq}] The remaining content is long and will be sent in chunks.`,
-        `When you see ${startMarker} to ${endMarker}, that indicates one content chunk.`,
-        `Before you see ${allEndMarker}, reply only with "Received" and do not provide the final answer.`,
+        `Treat everything between ${allStartMarker} and ${allEndMarker} as one complete chunked payload.`,
+        `Each content block is wrapped by ${chunkStartMarker} and ${chunkEndMarker}.`,
+        `Before you receive the final closing marker ${allEndMarker}, reply only with "Received" and do not provide the final answer.`,
         '---',
+        allStartMarker,
         wrappedChunk,
         'Reply only with: Received',
       ].join('\n');

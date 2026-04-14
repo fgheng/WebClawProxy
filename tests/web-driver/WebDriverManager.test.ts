@@ -531,7 +531,11 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
     expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining('<|wc_chunk_start:1/2|>')
+      expect.stringContaining('<wc_all_chunks>')
+    );
+    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('<wc_chunk seq="1/2">')
     );
     expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
       1,
@@ -539,7 +543,7 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     );
     expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining('<|wc_all_chunks_end|>')
+      expect.stringContaining('</wc_all_chunks>')
     );
     expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
       2,

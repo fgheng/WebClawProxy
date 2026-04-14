@@ -115,7 +115,7 @@ new DataManager(internalReq, customConfig?)
 格式：
 
 ```text
-<|system|>
+<system>
 {system}
 ```
 
@@ -125,7 +125,7 @@ new DataManager(internalReq, customConfig?)
 ```text
 <|role:{role}|>
 {content}
-<|tool_calls|>
+<tool_calls>
 [{...tool_call objects...}]   # 仅当该消息包含 tool_calls 时出现
 ```
 
@@ -139,7 +139,7 @@ new DataManager(internalReq, customConfig?)
 - 若 current 包含 `tool_calls`，会额外追加：
 
 ```text
-<|tool_calls|>
+<tool_calls>
 [{...tool_call objects...}]
 ```
 

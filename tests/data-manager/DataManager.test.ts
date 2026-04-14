@@ -213,7 +213,7 @@ describe('Prompt 构造工具', () => {
   describe('buildSystemPrompt', () => {
     it('应该包含 system 标记和内容', () => {
       const result = buildSystemPrompt('You are a helpful assistant.');
-      expect(result).toBe('<|system|>\nYou are a helpful assistant.\n</|system|>');
+      expect(result).toBe('<system>\nYou are a helpful assistant.\n</system>');
     });
 
     it('空 system 应该返回空字符串', () => {
@@ -228,10 +228,10 @@ describe('Prompt 构造工具', () => {
         { role: 'assistant', content: '你好，有什么可以帮你？' },
       ];
       const result = buildHistoryPrompt(history);
-      expect(result).toContain('<|history|>');
-      expect(result).toContain('</|history|>');
-      expect(result).toContain('<|user|>');
-      expect(result).toContain('<|assistant|>');
+      expect(result).toContain('<history>');
+      expect(result).toContain('</history>');
+      expect(result).toContain('<user>');
+      expect(result).toContain('<assistant>');
       expect(result).toContain('你好');
       expect(result).toContain('你好，有什么可以帮你？');
     });
@@ -266,7 +266,7 @@ describe('Prompt 构造工具', () => {
         },
       ];
       const result = buildHistoryPrompt(history as any);
-      expect(result).toContain('<|tool| id="call_1">');
+      expect(result).toContain('<tool id="call_1">');
       expect(result).toContain('{"temperature":30,"condition":"sunny"}');
     });
 
@@ -291,13 +291,13 @@ describe('Prompt 构造工具', () => {
       ];
 
       const result = buildHistoryPrompt(history as any);
-      expect(result).not.toContain('<|system|>');
+      expect(result).not.toContain('<system>');
 
-      const idxUser1 = result.indexOf('<|user|>\nu1');
-      const idxAssistant1 = result.indexOf('<|assistant|>\na1');
-      const idxTool = result.indexOf('<|tool| id="call_1">\n北京天气晴');
-      const idxAssistant2 = result.indexOf('<|assistant|>\na2');
-      const idxUser2 = result.lastIndexOf('<|user|>\nu2');
+      const idxUser1 = result.indexOf('<user>\nu1');
+      const idxAssistant1 = result.indexOf('<assistant>\na1');
+      const idxTool = result.indexOf('<tool id="call_1">\n北京天气晴');
+      const idxAssistant2 = result.indexOf('<assistant>\na2');
+      const idxUser2 = result.lastIndexOf('<user>\nu2');
 
       expect(idxUser1).toBeGreaterThanOrEqual(0);
       expect(idxAssistant1).toBeGreaterThan(idxUser1);
@@ -348,11 +348,11 @@ describe('Prompt 构造工具', () => {
         { role: 'user', content: '请继续' },
       ] as any;
       const result = buildCurrentPrompt(current);
-      expect(result).toContain('<|tool| id="call_a">');
+      expect(result).toContain('<tool id="call_a">');
       expect(result).toContain('执行结果A');
-      expect(result).toContain('<|tool| id="call_b">');
+      expect(result).toContain('<tool id="call_b">');
       expect(result).toContain('执行结果B');
-      expect(result).toContain('<|user|>');
+      expect(result).toContain('<user>');
       expect(result).toContain('请继续');
     });
   });
@@ -403,10 +403,10 @@ describe('Prompt 构造工具', () => {
         },
       ];
       const result = buildToolsPrompt(tools);
-      expect(result).toContain('<|tools|>');
-      expect(result).toContain('<|tool|>');
-      expect(result).toContain('</|tool|>');
-      expect(result).toContain('</|tools|>');
+      expect(result).toContain('<tools>');
+      expect(result).toContain('<tool>');
+      expect(result).toContain('</tool>');
+      expect(result).toContain('</tools>');
       expect(result).toContain('name: read_file');
       expect(result).toContain('description: Read a file');
       expect(result).toContain('path(string, required)');
@@ -616,18 +616,18 @@ describe('DataManager', () => {
     it('get_system_prompt 应该包含 system 标记', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_system_prompt();
-      expect(prompt).toContain('<|system|>');
-      expect(prompt).toContain('</|system|>');
+      expect(prompt).toContain('<system>');
+      expect(prompt).toContain('</system>');
       expect(prompt).toContain('You are a helpful assistant.');
     });
 
     it('get_history_prompt 应该包含新 role wrapper', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_history_prompt();
-      expect(prompt).toContain('<|history|>');
-      expect(prompt).toContain('</|history|>');
-      expect(prompt).toContain('<|user|>');
-      expect(prompt).toContain('<|assistant|>');
+      expect(prompt).toContain('<history>');
+      expect(prompt).toContain('</history>');
+      expect(prompt).toContain('<user>');
+      expect(prompt).toContain('<assistant>');
     });
 
     it('get_current_prompt 应该返回当前消息内容', () => {
@@ -639,8 +639,8 @@ describe('DataManager', () => {
     it('get_tools_prompt 应该包含工具信息', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_tools_prompt();
-      expect(prompt).toContain('<|tools|>');
-      expect(prompt).toContain('<|tool|>');
+      expect(prompt).toContain('<tools>');
+      expect(prompt).toContain('<tool>');
       expect(prompt).toContain('read_file');
     });
 
@@ -648,9 +648,9 @@ describe('DataManager', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_init_prompt();
       expect(prompt).toContain('{"test": "template"}');
-      expect(prompt).toContain('<|system|>');
-      expect(prompt).toContain('<|tools|>');
-      expect(prompt).toContain('<|history|>');
+      expect(prompt).toContain('<system>');
+      expect(prompt).toContain('<tools>');
+      expect(prompt).toContain('<history>');
       expect(prompt).toContain('Reply only with: Received');
       expect(prompt).toBeTruthy();
     });
@@ -663,9 +663,9 @@ describe('DataManager', () => {
         tools: [],
       });
       const prompt = dm.get_init_prompt();
-      expect(prompt).not.toContain('<|system|>');
-      expect(prompt).not.toContain('<|tools|>');
-      expect(prompt).not.toContain('<|history|>');
+      expect(prompt).not.toContain('<system>');
+      expect(prompt).not.toContain('<tools>');
+      expect(prompt).not.toContain('<history>');
       expect(prompt).not.toContain('无可用工具');
       expect(prompt).not.toContain('无历史记录');
       expect(prompt).toContain('{"test": "template"}');
@@ -674,7 +674,8 @@ describe('DataManager', () => {
     it('get_format_only_retry_prompt 应该包含响应模板', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_format_only_retry_prompt();
-      expect(prompt).toContain('{"test": "template"}');
+      expect(prompt).toContain('"role": "assistant"');
+      expect(prompt).toContain('"tool_calls"');
       expect(prompt).toContain('not valid JSON');
     });
 

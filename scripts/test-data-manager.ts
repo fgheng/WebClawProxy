@@ -222,7 +222,7 @@ async function runTests() {
   const dm2 = createDm();
 
   const systemPrompt = dm2.get_system_prompt();
-  if (systemPrompt.includes('<|system|>') && systemPrompt.includes('helpful assistant')) {
+  if (systemPrompt.includes('<system>') && systemPrompt.includes('helpful assistant')) {
     console.log(`${GREEN}✓${RESET} get_system_prompt() 格式正确`);
     console.log(`  内容:\n  ${systemPrompt.replace(/\n/g, '\n  ')}`);
     passed++;
@@ -232,7 +232,7 @@ async function runTests() {
   }
 
   const historyPrompt = dm2.get_history_prompt();
-  if (historyPrompt.includes('<|role:user|>') && historyPrompt.includes('<|role:assistant|>')) {
+  if (historyPrompt.includes('<user>') && historyPrompt.includes('<assistant>')) {
     console.log(`${GREEN}✓${RESET} get_history_prompt() 格式正确`);
     passed++;
   } else {
@@ -260,7 +260,7 @@ async function runTests() {
   }
 
   const initPrompt = dm2.get_init_prompt();
-  if (initPrompt.includes('{"result": "ok"}') && initPrompt.includes('<|system|>')) {
+  if (initPrompt.includes('{"result": "ok"}') && initPrompt.includes('<system>')) {
     console.log(`${GREEN}✓${RESET} get_init_prompt() 包含所有部分`);
     console.log(`  初始化 prompt 长度: ${initPrompt.length} 字符`);
     passed++;

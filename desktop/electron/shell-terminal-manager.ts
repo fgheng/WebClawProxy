@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { IPty, spawn } from 'node-pty';
+import * as fs from 'fs';
 
 type TerminalStatus = 'stopped' | 'running';
 
@@ -7,12 +8,13 @@ export class ShellTerminalManager {
   private proc: IPty | null = null;
   private status: TerminalStatus = 'stopped';
   private readonly shellPath: string;
+  private lastStartFailureAt = 0;
 
   constructor(
     private readonly cwd: string,
     private readonly window: BrowserWindow
   ) {
-    this.shellPath = process.env.SHELL || '/bin/zsh';
+    this.shellPath = this.resolveShellPath();
   }
 
   async ensureStarted(): Promise<{
@@ -21,8 +23,18 @@ export class ShellTerminalManager {
     cwd: string;
     pid: number | null;
   }> {
-    if (!this.proc) {
-      this.startProcess();
+    if (!this.proc && Date.now() - this.lastStartFailureAt > 1500) {
+      try {
+        this.startProcess();
+      } catch (error) {
+        this.lastStartFailureAt = Date.now();
+        this.proc = null;
+        this.setStatus('stopped');
+        this.emitOutput(
+          `\r\n[SYS ] Failed to start shell ${this.shellPath}: ${error instanceof Error ? error.message : String(error)}\r\n`,
+          'system'
+        );
+      }
     }
 
     return {
@@ -36,7 +48,7 @@ export class ShellTerminalManager {
   async write(command: string): Promise<void> {
     await this.ensureStarted();
     if (!this.proc) {
-      throw new Error('终端进程未启动');
+      return;
     }
     this.proc.write(command);
   }
@@ -73,6 +85,28 @@ export class ShellTerminalManager {
       this.proc = null;
       this.setStatus('stopped');
     });
+  }
+
+  private resolveShellPath(): string {
+    const candidates = [
+      process.env.SHELL,
+      '/bin/zsh',
+      '/bin/bash',
+      '/bin/sh',
+    ]
+      .map((item) => (item ?? '').trim())
+      .filter((item, index, array) => item.length > 0 && array.indexOf(item) === index);
+
+    for (const candidate of candidates) {
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {
+        // try next candidate
+      }
+    }
+
+    return '/bin/sh';
   }
 
   private emitOutput(message: string, stream: 'stdout' | 'system'): void {

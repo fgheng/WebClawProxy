@@ -210,7 +210,7 @@ async function runMockTests() {
 
   await runTest('get_system_prompt() 格式正确', () => {
     const p = dm!.get_system_prompt();
-    if (!p.includes('<|system|>')) throw new Error('缺少 <|system|> 标记');
+    if (!p.includes('<system>')) throw new Error('缺少 <system> 标记');
   });
 
   await runTest('get_tools_prompt() 包含工具信息', () => {
@@ -222,7 +222,7 @@ async function runMockTests() {
   await runTest('get_init_prompt() 包含所有部分', () => {
     const p = dm!.get_init_prompt();
     if (!p.includes('{"answer": "test"}')) throw new Error('缺少 response_schema_template');
-    if (!p.includes('<|system|>')) throw new Error('缺少 system_prompt');
+    if (!p.includes('<system>')) throw new Error('缺少 system_prompt');
     console.log(`    ${DIM}init prompt 长度: ${p.length} 字符${RESET}`);
   });
 

@@ -30,28 +30,28 @@ function formatToolCallBlocks(toolCalls: Message['tool_calls']): string {
 function wrapBlock(tag: string, content: string): string {
   const normalized = content.trim();
   if (!normalized) return '';
-  return [`<|${tag}|>`, normalized, `</|${tag}|>`].join('\n');
+  return [`<${tag}>`, normalized, `</${tag}>`].join('\n');
 }
 
 function formatCurrentMessage(msg: Message): string {
   const contentStr = contentToString(msg.content);
 
   if (msg.role === 'tool') {
-    const toolHeader = msg.tool_call_id ? `<|tool| id="${msg.tool_call_id}">` : '<|tool|>';
+    const toolHeader = msg.tool_call_id ? `<tool id="${msg.tool_call_id}">` : '<tool>';
     return [toolHeader, contentStr].filter(Boolean).join('\n');
   }
 
   if (msg.role === 'user') {
-    return [`<|user|>`, contentStr].filter(Boolean).join('\n');
+    return ['<user>', contentStr].filter(Boolean).join('\n');
   }
 
   if (msg.role === 'assistant') {
     const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
-    return [`<|assistant|>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
+    return ['<assistant>', contentStr, toolCallBlocks].filter(Boolean).join('\n');
   }
 
   const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
-  return [`<|${msg.role}|>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
+  return [`<${msg.role}>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
 }
 
 /**
@@ -85,9 +85,9 @@ export function contentToString(content: string | ContentItem[]): string {
 /**
  * 构造 system prompt
  * 格式：
- * <|system|>
+ * <system>
  * [system内容]
- * </|system|>
+ * </system>
  */
 export function buildSystemPrompt(system: string): string {
   if (!system.trim()) return '';
@@ -97,10 +97,10 @@ export function buildSystemPrompt(system: string): string {
 /**
  * 构造 history prompt
  * 格式：
- * <|role:user|>
+ * <user>
  * 用户内容
  *
- * <|role:assistant|>
+ * <assistant>
  * 助手内容
  */
 export function buildHistoryPrompt(history: Message[]): string {
@@ -116,21 +116,21 @@ export function buildHistoryPrompt(history: Message[]): string {
       const contentStr = contentToString(msg.content);
 
       if (role === 'user') {
-        return [`<|user|>`, contentStr].filter(Boolean).join('\n');
+        return ['<user>', contentStr].filter(Boolean).join('\n');
       }
 
       if (role === 'assistant') {
         const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
-        return [`<|assistant|>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
+        return ['<assistant>', contentStr, toolCallBlocks].filter(Boolean).join('\n');
       }
 
       if (role === 'tool') {
         const toolCallId = (msg as Message & { tool_call_id?: string }).tool_call_id;
-        const toolHeader = toolCallId ? `<|tool| id="${toolCallId}">` : '<|tool|>';
+        const toolHeader = toolCallId ? `<tool id="${toolCallId}">` : '<tool>';
         return [toolHeader, contentStr].filter(Boolean).join('\n');
       }
 
-      return [`<|${role}|>`, contentStr].filter(Boolean).join('\n');
+      return [`<${role}>`, contentStr].filter(Boolean).join('\n');
     })
     .filter(Boolean)
     .join('\n\n');
@@ -164,14 +164,14 @@ export function buildCurrentPrompt(current: Message[]): string {
 /**
  * 构造 tools prompt
  * 格式：
- * <|tools|>
- * <|tool|>
+ * <tools>
+ * <tool>
  * name: xxx
  * description: xxx
  * parameters:
  * - param(type, required): description
- * </|tool|>
- * </|tools|>
+ * </tool>
+ * </tools>
  */
 export function buildToolsPrompt(tools: Tool[]): string {
   if (!tools || tools.length === 0) return '';
