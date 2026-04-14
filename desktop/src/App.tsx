@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type WorkspaceTabKey = 'logs' | 'terminal' | 'trace' | 'sessions' | 'errors';
 
@@ -8,14 +8,6 @@ const tabs: { key: WorkspaceTabKey; label: string }[] = [
   { key: 'trace', label: '请求追踪' },
   { key: 'sessions', label: '会话状态' },
   { key: 'errors', label: '错误' },
-];
-
-const logLines = [
-  '12:01:11 [INFO ] [gpt ] 服务启动完成',
-  '12:01:14 [INFO ] [gpt ] 跳转到对话: https://chatgpt.com/c/abc',
-  '12:01:16 [DEBUG] [gpt ] send:after_fill { inputMatches: true }',
-  '12:01:20 [WARN ] [qwen] dispatch confirmation not observed immediately',
-  '12:01:24 [ERROR] [glm ] SEND_MESSAGE_FAILED',
 ];
 
 const terminalLines = [
@@ -50,11 +42,66 @@ const errors = [
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTabKey>('logs');
   const [currentProvider, setCurrentProvider] = useState('gpt');
+  const [providerSites, setProviderSites] = useState<Record<string, string>>({});
+  const [serviceStatus, setServiceStatus] = useState('stopped');
+  const [serviceLogs, setServiceLogs] = useState<string[]>([
+    '等待服务日志...',
+  ]);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.webclawDesktop?.getDesktopState?.().then((state) => {
+      if (!mounted || !state) return;
+      setCurrentProvider((state.currentProvider as string | null) ?? 'gpt');
+      setProviderSites(state.providerSites);
+      setServiceStatus(state.serviceStatus);
+    });
+
+    const disposeLog = window.webclawDesktop?.onServiceLog?.((event) => {
+      setServiceLogs((prev) => {
+        const prefix = event.stream === 'stderr' ? '[ERR ]' : '[LOG ]';
+        const lines = event.message
+          .split(/\r?\n/)
+          .filter((line) => line.trim().length > 0)
+          .map((line) => `${new Date(event.timestamp).toLocaleTimeString()} ${prefix} ${line}`);
+        return [...prev, ...lines].slice(-300);
+      });
+    });
+    const disposeStatus = window.webclawDesktop?.onServiceStatus?.((event) => {
+      setServiceStatus(event.status);
+    });
+
+    return () => {
+      mounted = false;
+      disposeLog?.();
+      disposeStatus?.();
+    };
+  }, []);
+
+  async function handleProviderChange(provider: string) {
+    setCurrentProvider(provider);
+    await window.webclawDesktop?.selectProvider?.(provider);
+  }
+
+  async function handleStartService() {
+    const result = await window.webclawDesktop?.startService?.();
+    if (result?.status) setServiceStatus(result.status);
+  }
+
+  async function handleStopService() {
+    const result = await window.webclawDesktop?.stopService?.();
+    if (result?.status) setServiceStatus(result.status);
+  }
+
+  async function handleRestartService() {
+    const result = await window.webclawDesktop?.restartService?.();
+    if (result?.status) setServiceStatus(result.status);
+  }
 
   const panel = useMemo(() => {
     switch (activeTab) {
       case 'logs':
-        return <ServiceLogsPanel />;
+        return <ServiceLogsPanel logLines={serviceLogs} />;
       case 'terminal':
         return <TerminalPanel />;
       case 'trace':
@@ -66,104 +113,74 @@ export default function App() {
       default:
         return null;
     }
-  }, [activeTab]);
+  }, [activeTab, serviceLogs]);
 
   return (
     <div className="console-shell">
-      <header className="top-status-bar">
-        <div className="title-group">
-          <div className="product-title">WebClaw Console</div>
-          <div className="product-subtitle">Electron + React 调试控制台骨架</div>
-        </div>
-
-        <div className="status-grid">
-          <label className="status-field provider-field">
-            <span>Provider</span>
-            <select value={currentProvider} onChange={(e) => setCurrentProvider(e.target.value)}>
-              {['gpt', 'qwen', 'deepseek', 'kimi', 'glm'].map((provider) => (
-                <option key={provider} value={provider}>
-                  {provider}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="status-field wide">
-            <span>Session</span>
-            <div className="status-value mono">auto-bind / pending</div>
-          </div>
-
-          <div className="status-field wide">
-            <span>URL</span>
-            <div className="status-value mono">https://{currentProvider}.example/session/current</div>
-          </div>
-
-          <div className="status-field compact">
-            <span>Service</span>
-            <div className="badge success">RUNNING</div>
-          </div>
-
-          <div className="status-field compact">
-            <span>Queue</span>
-            <div className="status-value mono">gpt(1) qwen(0) kimi(0) glm(0)</div>
-          </div>
-
-          <div className="status-field compact">
-            <span>Request</span>
-            <div className="status-value mono">req-1776-demo</div>
-          </div>
-        </div>
-      </header>
-
       <div className="main-split-pane">
         <section className="browser-workspace">
           <div className="browser-toolbar">
             <div className="toolbar-left">
+              <select value={currentProvider} onChange={(e) => void handleProviderChange(e.target.value)}>
+                {Object.keys(providerSites).map((provider) => (
+                  <option key={provider} value={provider}>
+                    {provider}
+                  </option>
+                ))}
+              </select>
               <button>返回</button>
               <button>前进</button>
               <button>刷新</button>
               <button>主页</button>
             </div>
 
-            <div className="toolbar-center mono">https://{currentProvider}.example/session/current</div>
-
             <div className="toolbar-right">
-              <button>DevTools</button>
+              <button onClick={() => void window.webclawDesktop?.openBrowserDevTools?.()}>DevTools</button>
               <button
-                onClick={() => window.webclawDesktop?.openExternal?.(`https://${currentProvider}.example`)}
+                onClick={() => void window.webclawDesktop?.openExternal?.(providerSites[currentProvider] ?? '')}
               >
                 外部打开
               </button>
             </div>
           </div>
 
-          <div className="browser-pane">
-            <div className="browser-pane-header">
-              <span className="badge">{currentProvider.toUpperCase()}</span>
-              <span className="badge success">已登录</span>
-              <span className="badge warn">BrowserView 待接入</span>
-            </div>
-
-            <div className="browser-placeholder">
-              <div className="browser-placeholder-title">Embedded Browser / WebContentsView</div>
-              <div className="browser-placeholder-copy">
-                这里会挂载真实 provider 页面，用于直接观察输入框、发送按钮、登录态和报错弹层。
-              </div>
-            </div>
-          </div>
+          <div className="browser-pane" />
         </section>
 
         <section className="bottom-workspace">
           <div className="workspace-tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.key}
-                className={tab.key === activeTab ? 'tab active' : 'tab'}
-                onClick={() => setActiveTab(tab.key)}
-              >
-                {tab.label}
-              </button>
-            ))}
+            <div className="tabs-left">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  className={tab.key === activeTab ? 'tab active' : 'tab'}
+                  onClick={() => setActiveTab(tab.key)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="tabs-actions">
+              {serviceStatus === 'running' ? (
+                <>
+                  <button className="icon-button" title="停止服务" onClick={() => void handleStopService()}>
+                    ■
+                  </button>
+                  <button className="icon-button" title="重启服务" onClick={() => void handleRestartService()}>
+                    ↻
+                  </button>
+                </>
+              ) : serviceStatus === 'starting' || serviceStatus === 'stopping' ? (
+                <button className="icon-button" title="服务处理中" disabled>
+                  ...
+                </button>
+              ) : (
+                <button className="icon-button" title="启动服务" onClick={() => void handleStartService()}>
+                  ▶
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="workspace-panel">{panel}</div>
@@ -171,26 +188,15 @@ export default function App() {
       </div>
 
       <footer className="bottom-action-bar">
-        <div className="action-group">
-          <button className="primary">启动服务</button>
-          <button>重启服务</button>
-          <button>停止服务</button>
+        <div className="footer-status mono">
+          Service: {serviceStatus} | API: 3000 | CDP: 9222 | Provider: {currentProvider} | Queue: --
         </div>
-
-        <div className="action-group">
-          <button>打开站点</button>
-          <button>重载当前页</button>
-          <button>清日志</button>
-          <button>清错误</button>
-        </div>
-
-        <div className="footer-status mono">Port: 3000 | Busy: 2 | Queue: 3 | Memory: 214 MB</div>
       </footer>
     </div>
   );
 }
 
-function ServiceLogsPanel() {
+function ServiceLogsPanel({ logLines }: { logLines: string[] }) {
   return (
     <div className="panel-shell">
       <div className="panel-toolbar">
@@ -214,8 +220,8 @@ function ServiceLogsPanel() {
       </div>
 
       <div className="log-list">
-        {logLines.map((line) => (
-          <div key={line} className="log-line mono">{line}</div>
+        {logLines.map((line, index) => (
+          <div key={`${index}-${line}`} className="log-line mono">{line}</div>
         ))}
       </div>
     </div>

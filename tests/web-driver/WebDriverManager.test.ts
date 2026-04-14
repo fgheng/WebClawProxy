@@ -351,20 +351,16 @@ describe('WebDriverManager 站点页面复用', () => {
       $: jest.fn(),
     } as any;
 
-    const context = {
-      pages: jest.fn().mockReturnValue([reusedPage]),
+    const backend = {
+      isReady: jest.fn().mockReturnValue(true),
+      ensureReady: jest.fn().mockResolvedValue(undefined),
+      getPages: jest.fn().mockResolvedValue([reusedPage]),
+      getOrCreatePageForSite: jest.fn().mockResolvedValue(reusedPage),
+      getOrCreatePageForUrl: jest.fn(),
       close: jest.fn().mockResolvedValue(undefined),
-      newPage: jest.fn().mockResolvedValue({
-        url: jest.fn().mockReturnValue('about:blank'),
-        goto: jest.fn().mockResolvedValue(undefined),
-      }),
     } as any;
 
-    (manager as any).context = context;
-    (manager as any).browser = {
-      isConnected: jest.fn().mockReturnValue(true),
-      close: jest.fn().mockResolvedValue(undefined),
-    } as any;
+    (manager as any).backend = backend;
 
     await (manager as any).openSitePage('gpt');
     const mappedPage = (manager as any).pageMap.get('gpt');
@@ -372,8 +368,7 @@ describe('WebDriverManager 站点页面复用', () => {
 
     await (manager as any).getOrCreateDriver('gpt');
 
-    // 复用 host 匹配页面，不应为 gpt 再创建新页
-    expect(context.newPage).not.toHaveBeenCalled();
+    expect(backend.getOrCreatePageForSite).toHaveBeenCalledWith('gpt', 'https://chatgpt.com/');
   });
 });
 

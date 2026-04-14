@@ -42,6 +42,8 @@ export interface PromptDispatchOptions {
 export interface WebDriverManagerOptions {
   /** 是否无头模式，默认 false */
   headless?: boolean;
+  /** 浏览器后端模式，默认 playwright-launch */
+  browserBackend?: 'playwright-launch' | 'electron-cdp';
   /** 等待模型响应的超时时间（ms），默认 120000 */
   responseTimeoutMs?: number;
   /** 内容稳定检测间隔（ms），默认 500 */

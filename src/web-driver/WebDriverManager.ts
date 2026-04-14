@@ -2,7 +2,7 @@
 // 这会消除所有已知的自动化检测标志（navigator.webdriver、Chrome DevTools等）
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser, BrowserContext, Page } from 'playwright';
+import { Page } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -23,6 +23,9 @@ import { DeepSeekDriver } from './drivers/DeepSeekDriver';
 import { KimiDriver } from './drivers/KimiDriver';
 import { GLMDriver } from './drivers/GLMDriver';
 import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-config';
+import { BrowserBackend, BrowserBackendName } from './backends/types';
+import { PlaywrightLaunchBackend } from './backends/PlaywrightLaunchBackend';
+import { ElectronCdpBackend } from './backends/ElectronCdpBackend';
 
 // 注册 Stealth 插件（全局只需一次）
 // Stealth 插件消除以下自动化特征：
@@ -154,8 +157,7 @@ function buildUserAgent(): string {
  */
 export class WebDriverManager {
   private options: Required<WebDriverManagerOptions>;
-  private browser: Browser | null = null;
-  private context: BrowserContext | null = null;
+  private backend: BrowserBackend | null = null;
   /** 每个 SiteKey 对应一个 Page 和 Driver */
   private pageMap: Map<SiteKey, Page> = new Map();
   private driverMap: Map<SiteKey, BaseDriver> = new Map();
@@ -165,6 +167,7 @@ export class WebDriverManager {
   constructor(options: WebDriverManagerOptions = {}) {
     this.options = {
       headless: options.headless ?? (config.webdriver?.headless ?? false),
+      browserBackend: options.browserBackend ?? (process.env.WEBCLAW_BROWSER_BACKEND as BrowserBackendName) ?? 'playwright-launch',
       responseTimeoutMs: options.responseTimeoutMs ?? (config.webdriver?.response_timeout_ms ?? 120000),
       stabilityCheckIntervalMs: options.stabilityCheckIntervalMs ?? (config.webdriver?.stability_check_interval_ms ?? 500),
       stabilityCheckCount: options.stabilityCheckCount ?? (config.webdriver?.stability_check_count ?? 3),
@@ -273,19 +276,8 @@ export class WebDriverManager {
   async openBrowser(url: string, hint?: string): Promise<void> {
     await this.ensureBrowser();
 
-    const targetHost = new URL(url).host;
-    const reusablePage = [
-      ...Array.from(this.pageMap.values()),
-      ...((this.context as BrowserContext).pages?.() ?? []),
-    ].find((p) => {
-      try {
-        return new URL(p.url()).host === targetHost;
-      } catch {
-        return false;
-      }
-    });
-
-    const page = reusablePage ?? await this.context!.newPage();
+    const backend = this.getBackend();
+    const page = await backend.getOrCreatePageForUrl(url);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     if (hint) {
@@ -520,31 +512,13 @@ export class WebDriverManager {
   }
 
   private async openSitePage(site: SiteKey): Promise<Page> {
-    if (!this.context) {
-      throw new WebDriverError(WebDriverErrorCode.BROWSER_NOT_INITIALIZED, '浏览器未初始化');
-    }
-
     const siteUrl = SITE_URLS[site];
     if (!siteUrl) {
       throw new WebDriverError(WebDriverErrorCode.UNKNOWN_SITE, `未知的 site key: ${site}`);
     }
 
-    const existingSitePage = this.pageMap.get(site);
-    if (existingSitePage) {
-      await existingSitePage.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      return existingSitePage;
-    }
-
-    const targetHost = new URL(siteUrl).host;
-    const reusableByHost = ((this.context as BrowserContext).pages?.() ?? []).find((p) => {
-      try {
-        return new URL(p.url()).host === targetHost;
-      } catch {
-        return false;
-      }
-    });
-
-    const page = reusableByHost ?? await (this.context as BrowserContext).newPage();
+    const backend = this.getBackend();
+    const page = await backend.getOrCreatePageForSite(site, siteUrl);
     await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     this.pageMap.set(site, page);
 
@@ -558,13 +532,9 @@ export class WebDriverManager {
    * 关闭浏览器，释放资源
    */
   async close(): Promise<void> {
-    if (this.context) {
-      await this.context.close();
-      this.context = null;
-    }
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
+    if (this.backend) {
+      await this.backend.close();
+      this.backend = null;
     }
     this.pageMap.clear();
     this.driverMap.clear();
@@ -588,7 +558,7 @@ export class WebDriverManager {
    * 4. 设置真实的 User-Agent、语言、viewport
    */
   private async ensureBrowser(): Promise<void> {
-    if (this.context && this.browser && (this.browser as Browser).isConnected()) {
+    if (this.backend?.isReady()) {
       return;
     }
 
@@ -597,160 +567,32 @@ export class WebDriverManager {
     this.driverMap.clear();
     this.siteTaskTails.clear();
 
+    this.backend = this.createBackend();
+    await this.backend.ensureReady();
+    console.log(`[WebDriver] 浏览器后端已就绪: ${this.options.browserBackend}`);
+  }
+
+  private createBackend(): BrowserBackend {
+    if (this.options.browserBackend === 'electron-cdp') {
+      const cdpUrl = process.env.WEBCLAW_CDP_URL ?? 'http://127.0.0.1:9222';
+      return new ElectronCdpBackend({ cdpUrl });
+    }
+
     const userDataDir = getUserDataDir();
     const userAgent = buildUserAgent();
-
     console.log(`[WebDriver] 使用持久化用户目录: ${userDataDir}`);
-
-    // 使用 launchPersistentContext 启动浏览器并保留用户数据
-    // 这是模拟真实用户的关键手段之一
-    this.context = await (chromium as any).launchPersistentContext(userDataDir, {
+    return new PlaywrightLaunchBackend({
       headless: this.options.headless,
-
-      // ============================
-      // 真实浏览器启动参数
-      // ============================
-      args: [
-        // 移除自动化相关标志
-        '--disable-blink-features=AutomationControlled',
-        // 不显示自动化信息栏（"Chrome is being controlled by automated software"）
-        '--disable-infobars',
-        // 其他稳定性/兼容性参数
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        // 禁用扩展程序（减少指纹差异）
-        '--disable-extensions',
-        // 禁用自动填写表单提示
-        '--disable-save-password-bubble',
-        // 正常窗口大小（非默认的 800x600，看起来更像真实用户）
-        '--window-size=1280,800',
-        // 语言设置
-        '--lang=zh-CN',
-        // 不使用首次运行的欢迎页
-        '--no-first-run',
-        '--no-default-browser-check',
-      ],
-
-      // ============================
-      // 真实用户配置
-      // ============================
+      userDataDir,
       userAgent,
-
-      // 真实的视口大小（非极端值）
-      viewport: { width: 1280, height: 800 },
-
-      // 语言设置
-      locale: 'zh-CN',
-      timezoneId: 'Asia/Shanghai',
-
-      // 地理位置（可选，不设置则不发送）
-      // geolocation: { latitude: 31.2304, longitude: 121.4737 },
-
-      // 权限
-      permissions: ['geolocation', 'notifications'],
-
-      // 颜色方案（大多数正常用户使用 light 或 dark）
-      colorScheme: 'light',
-
-      // 忽略 HTTPS 错误（某些情况下需要）
-      ignoreHTTPSErrors: false,
-
-      // 接受下载（正常浏览器行为）
-      acceptDownloads: true,
-
-      // 设置额外 HTTP 头（模拟真实浏览器）
-      extraHTTPHeaders: {
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      },
     });
+  }
 
-    // context 已经是 BrowserContext 了
-    // launchPersistentContext 返回的是 BrowserContext，通过 browser() 获取 Browser
-    this.browser = (this.context as BrowserContext).browser() as Browser;
-
-    // ============================
-    // 全局注入反检测脚本
-    // ============================
-    // 即使有 stealth 插件，某些更细粒度的检测仍可能绕过
-    // 这里手动覆盖最关键的几个属性
-    await (this.context as BrowserContext).addInitScript(`
-      // 1. 删除/覆盖 navigator.webdriver 属性
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-        configurable: true,
-      });
-
-      // 2. 修复 navigator.plugins（无头 Chrome 通常为空）
-      if (navigator.plugins.length === 0) {
-        Object.defineProperty(navigator, 'plugins', {
-          get: () => {
-            const plugins = [
-              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
-            ];
-            return Object.assign(plugins, {
-              item: (i) => plugins[i],
-              namedItem: (n) => plugins.find(p => p.name === n),
-              refresh: () => {},
-              length: plugins.length,
-            });
-          },
-          configurable: true,
-        });
-      }
-
-      // 3. 修复 window.chrome 对象（真实 Chrome 有这个）
-      if (!window.chrome) {
-        window.chrome = {
-          runtime: {
-            connect: () => {},
-            sendMessage: () => {},
-          },
-          loadTimes: () => ({}),
-          csi: () => ({}),
-          app: {},
-        };
-      }
-
-      // 4. 修复语言列表（确保 navigator.languages 不为空）
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['zh-CN', 'zh', 'en'],
-        configurable: true,
-      });
-
-      // 5. 让 Permissions API 返回真实浏览器的行为
-      const originalQuery = window.navigator.permissions?.query;
-      if (originalQuery) {
-        window.navigator.permissions.query = (parameters) => {
-          return parameters.name === 'notifications'
-            ? Promise.resolve({ state: Notification.permission })
-            : originalQuery.call(window.navigator.permissions, parameters);
-        };
-      }
-
-      // 6. 修复 WebGL vendor/renderer（无头 Chrome 可能暴露 SwiftShader）
-      const getParameter = WebGLRenderingContext.prototype.getParameter;
-      WebGLRenderingContext.prototype.getParameter = function(parameter) {
-        if (parameter === 37445) return 'Intel Inc.';
-        if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-        return getParameter.call(this, parameter);
-      };
-
-      // 7. 覆盖 navigator.hardwareConcurrency（使其更真实）
-      Object.defineProperty(navigator, 'hardwareConcurrency', {
-        get: () => 8,
-        configurable: true,
-      });
-
-      // 8. 修复 screen 属性（无头模式可能返回异常值）
-      Object.defineProperty(screen, 'availWidth', { get: () => 1280, configurable: true });
-      Object.defineProperty(screen, 'availHeight', { get: () => 800, configurable: true });
-    `);
-
-    console.log('[WebDriver] 浏览器已启动（Stealth 模式已激活）');
+  private getBackend(): BrowserBackend {
+    if (!this.backend) {
+      throw new WebDriverError(WebDriverErrorCode.BROWSER_NOT_INITIALIZED, '浏览器未初始化');
+    }
+    return this.backend;
   }
 
   private async runWithSiteLock<T>(site: SiteKey, task: () => Promise<T>): Promise<T> {
@@ -910,7 +752,7 @@ export class WebDriverManager {
 
   private async getOrCreateDriver(site: SiteKey): Promise<BaseDriver> {
     if (!this.driverMap.has(site)) {
-      if (!this.context) {
+      if (!this.backend) {
         throw new WebDriverError(
           WebDriverErrorCode.BROWSER_NOT_INITIALIZED,
           '浏览器未初始化'
@@ -920,16 +762,7 @@ export class WebDriverManager {
       let page = this.pageMap.get(site);
       if (!page) {
         const siteUrl = SITE_URLS[site];
-        const targetHost = siteUrl ? new URL(siteUrl).host : '';
-        const reusableByHost = ((this.context as BrowserContext).pages?.() ?? []).find((p) => {
-          try {
-            return targetHost ? new URL(p.url()).host === targetHost : false;
-          } catch {
-            return false;
-          }
-        });
-
-        page = reusableByHost ?? await (this.context as BrowserContext).newPage();
+        page = await this.backend.getOrCreatePageForSite(site, siteUrl);
         this.pageMap.set(site, page);
       }
 
