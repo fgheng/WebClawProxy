@@ -78,10 +78,10 @@ describe('WebDriverManager', () => {
   });
 
   describe('SiteKey 验证', () => {
-    const validSites: SiteKey[] = ['gpt', 'qwen', 'deepseek', 'kimi'];
+    const validSites: SiteKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm'];
 
     it.each(validSites)('应该支持 %s 站点', (site) => {
-      expect(['gpt', 'qwen', 'deepseek', 'kimi']).toContain(site);
+      expect(['gpt', 'qwen', 'deepseek', 'kimi', 'glm']).toContain(site);
     });
   });
 });
@@ -750,6 +750,15 @@ describe('Driver URL 验证', () => {
     expect(driver.isValidConversationUrl('https://www.kimi.com/')).toBe(false);
   });
 
+  it('GLM URL 验证', async () => {
+    const { GLMDriver } = await import('../../src/web-driver/drivers/GLMDriver');
+    const mockPage = {} as any;
+    const driver = new GLMDriver(mockPage);
+
+    expect(driver.isValidConversationUrl('https://chatglm.cn/main/detail/abc')).toBe(true);
+    expect(driver.isValidConversationUrl('https://chatglm.cn/')).toBe(false);
+  });
+
   it('Qwen 跳转会话应使用轻量导航并等待输入框', async () => {
     const { QwenDriver } = await import('../../src/web-driver/drivers/QwenDriver');
     const mockPage = {
@@ -870,6 +879,29 @@ describe('Driver 新建对话策略', () => {
 
     await expect(driver.createNewConversation()).resolves.toBeUndefined();
     expect(mockPage.goto).toHaveBeenCalledWith('https://www.kimi.com/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+  });
+
+  it('GLM 应直接 goto baseUrl 创建新会话', async () => {
+    const { GLMDriver } = await import('../../src/web-driver/drivers/GLMDriver');
+    const mockPage = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue({}),
+      click: jest.fn(),
+      fill: jest.fn(),
+      keyboard: { press: jest.fn(), selectAll: jest.fn() },
+      evaluate: jest.fn(),
+      $$: jest.fn(),
+      $: jest.fn(),
+      url: jest.fn().mockReturnValue('https://chatglm.cn/'),
+    } as any;
+
+    const driver = new GLMDriver(mockPage);
+
+    await expect(driver.createNewConversation()).resolves.toBeUndefined();
+    expect(mockPage.goto).toHaveBeenCalledWith('https://chatglm.cn/', {
       waitUntil: 'domcontentloaded',
       timeout: 30000,
     });

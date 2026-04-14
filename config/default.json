@@ -22,6 +22,11 @@
       "site": "https://www.kimi.com/",
       "input_max_chars": 120000,
       "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi"]
+    },
+    "glm": {
+      "site": "https://chatglm.cn/",
+      "input_max_chars": 15000,
+      "models": ["glm", "glm-4", "glm-4-air", "glm-4-plus", "glm-4-flash", "glm-4.5", "glm-5", "glm-5.1"]
     }
   },
   "defaults": {

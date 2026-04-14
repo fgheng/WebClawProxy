@@ -3,7 +3,7 @@ import { Page, Browser, BrowserContext } from 'playwright';
 /**
  * 支持的网站 key
  */
-export type SiteKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi';
+export type SiteKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi' | 'glm';
 
 /**
  * 对话初始化结果

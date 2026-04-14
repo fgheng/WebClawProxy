@@ -21,6 +21,7 @@ import { ChatGPTDriver } from './drivers/ChatGPTDriver';
 import { QwenDriver } from './drivers/QwenDriver';
 import { DeepSeekDriver } from './drivers/DeepSeekDriver';
 import { KimiDriver } from './drivers/KimiDriver';
+import { GLMDriver } from './drivers/GLMDriver';
 
 // 注册 Stealth 插件（全局只需一次）
 // Stealth 插件消除以下自动化特征：
@@ -48,7 +49,7 @@ function getSiteUrlsFromConfig(): Record<SiteKey, string> {
   const providers = (config.providers ?? {}) as Record<string, ProviderConfig>;
   const fromProviders: Partial<Record<SiteKey, string>> = {};
   for (const [key, provider] of Object.entries(providers)) {
-    if (key === 'gpt' || key === 'qwen' || key === 'deepseek' || key === 'kimi') {
+    if (key === 'gpt' || key === 'qwen' || key === 'deepseek' || key === 'kimi' || key === 'glm') {
       const site = (provider?.site ?? '').trim();
       if (site) {
         fromProviders[key] = site;
@@ -759,6 +760,7 @@ export class WebDriverManager {
       qwen: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
       deepseek: 'textarea, [contenteditable="true"]',
       kimi: 'textarea, [contenteditable="true"][class*="input"]',
+      glm: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
     };
 
     const readinessProfileBySite: Record<
@@ -799,6 +801,13 @@ export class WebDriverManager {
         intervalMs: 120,
         finalBufferMs: 80,
         requireUrlStability: false,
+      },
+      glm: {
+        maxWaitMs: 5000,
+        requiredStableRounds: 2,
+        intervalMs: 250,
+        finalBufferMs: 250,
+        requireUrlStability: true,
       },
     };
 
@@ -916,6 +925,9 @@ export class WebDriverManager {
           break;
         case 'kimi':
           driver = new KimiDriver(page, driverOptions);
+          break;
+        case 'glm':
+          driver = new GLMDriver(page, driverOptions);
           break;
         default:
           throw new WebDriverError(

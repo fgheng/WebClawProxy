@@ -44,3 +44,4 @@ export { ChatGPTDriver } from './drivers/ChatGPTDriver';
 export { QwenDriver } from './drivers/QwenDriver';
 export { DeepSeekDriver } from './drivers/DeepSeekDriver';
 export { KimiDriver } from './drivers/KimiDriver';
+export { GLMDriver } from './drivers/GLMDriver';

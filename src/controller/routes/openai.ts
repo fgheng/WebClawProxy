@@ -66,6 +66,7 @@ function inferSiteFromModel(model: string): SiteKey {
   if (lower.startsWith('deepseek')) return 'deepseek';
   if (lower.startsWith('qwen')) return 'qwen';
   if (lower.startsWith('moonshot') || lower.startsWith('kimi')) return 'kimi';
+  if (lower.startsWith('glm')) return 'glm';
 
   // 默认使用 gpt
   return 'gpt';
