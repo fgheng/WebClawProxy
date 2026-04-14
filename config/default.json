@@ -4,29 +4,54 @@
   },
   "providers": {
     "gpt": {
-      "site": "https://chatgpt.com/",
-      "input_max_chars": 60000,
-      "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "o1", "o1-mini", "o3", "o3-mini"]
+      "default_mode": "web",
+      "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "o1", "o1-mini", "o3", "o3-mini"],
+      "web": {
+        "site": "https://chatgpt.com/",
+        "input_max_chars": 60000
+      }
     },
     "qwen": {
-      "site": "https://chat.qwen.ai/",
-      "input_max_chars": 120000,
-      "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long", "qwen2.5-72b", "qwen2.5-32b"]
+      "default_mode": "web",
+      "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long", "qwen2.5-72b", "qwen2.5-32b"],
+      "web": {
+        "site": "https://chat.qwen.ai/",
+        "input_max_chars": 120000
+      }
     },
     "deepseek": {
-      "site": "https://chat.deepseek.com/",
-      "input_max_chars": 120000,
-      "models": ["deepseek-chat", "deepseek-r1", "deepseek-v3", "deepseek-coder"]
+      "default_mode": "forward",
+      "models": ["deepseek-chat", "deepseek-r1", "deepseek-v3", "deepseek-coder"],
+      "web": {
+        "site": "https://chat.deepseek.com/",
+        "input_max_chars": 120000
+      },
+      "forward": {
+        "base_url": "https://api.deepseek.com",
+        "api_key": "YOUR_DEEPSEEK_API_KEY",
+        "upstream_model_map": {
+          "deepseek-chat": "deepseek-chat",
+          "deepseek-r1": "deepseek-chat",
+          "deepseek-v3": "deepseek-chat",
+          "deepseek-coder": "deepseek-chat"
+        }
+      }
     },
     "kimi": {
-      "site": "https://www.kimi.com/",
-      "input_max_chars": 120000,
-      "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi"]
+      "default_mode": "web",
+      "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi"],
+      "web": {
+        "site": "https://www.kimi.com/",
+        "input_max_chars": 120000
+      }
     },
     "glm": {
-      "site": "https://chatglm.cn/",
-      "input_max_chars": 15000,
-      "models": ["glm", "glm-4", "glm-4-air", "glm-4-plus", "glm-4-flash", "glm-4.5", "glm-5", "glm-5.1"]
+      "default_mode": "web",
+      "models": ["glm", "glm-4", "glm-4-air", "glm-4-plus", "glm-4-flash", "glm-4.5", "glm-5", "glm-5.1"],
+      "web": {
+        "site": "https://chatglm.cn/",
+        "input_max_chars": 15000
+      }
     }
   },
   "defaults": {

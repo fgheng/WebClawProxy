@@ -8,26 +8,25 @@ import { ProtocolParseError } from '../../protocol/types';
 import { logDebug, stringifyLogPayload, formatRequestBodyPreview } from '../logger';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  type ForwardModeConfig,
+  getNormalizedProviderConfig,
+  getNormalizedProviderConfigMap,
+  isSiteKey,
+  normalizeProviderConfig,
+  type NormalizedProviderConfig,
+} from '../../config/provider-config';
 
-// 加载配置
 const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
 const protocol = new OpenAIProtocol();
 const webDriver = new WebDriverManager();
 
-type ProviderConfig = {
-  site?: string;
-  models?: string[];
-  input_max_chars?: number;
-};
-
-function getProviderConfigMap(): Record<string, ProviderConfig> {
-  return (config.providers ?? {}) as Record<string, ProviderConfig>;
-}
-
 function getConfiguredSiteKeys(): SiteKey[] {
-  return Object.keys(getProviderConfigMap()) as SiteKey[];
+  return Object.entries(getNormalizedProviderConfigMap())
+    .filter(([providerKey, provider]) => isSiteKey(providerKey) && provider.default_mode === 'web')
+    .map(([providerKey]) => providerKey as SiteKey);
 }
 
 export async function preflightWebDriverSites(): Promise<void> {
@@ -50,13 +49,13 @@ export async function closeWebDriver(): Promise<void> {
  * 根据模型名称推断使用哪个网站
  * 优先使用 providers 映射（site + models 同源），并兼容旧配置。
  */
-function inferSiteFromModel(model: string): SiteKey {
-  const providers = getProviderConfigMap();
+function inferProviderFromModel(model: string): string {
+  const providers = getNormalizedProviderConfigMap();
 
-  for (const [siteKey, provider] of Object.entries(providers)) {
+  for (const [providerKey, provider] of Object.entries(providers)) {
     const modelList = provider.models ?? [];
     if (modelList.some((m: string) => m.toLowerCase() === model.toLowerCase())) {
-      return siteKey as SiteKey;
+      return providerKey;
     }
   }
 
@@ -70,6 +69,127 @@ function inferSiteFromModel(model: string): SiteKey {
 
   // 默认使用 gpt
   return 'gpt';
+}
+
+function buildUpstreamChatCompletionsUrl(baseUrl: string): string {
+  const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
+  if (normalizedBaseUrl.endsWith('/chat/completions')) {
+    return normalizedBaseUrl;
+  }
+  return `${normalizedBaseUrl}/chat/completions`;
+}
+
+function sanitizeForwardHeaders(headers: ForwardModeConfig['headers']): Record<string, string> {
+  if (!headers || typeof headers !== 'object') return {};
+  const sanitizedEntries = Object.entries(headers).filter(
+    ([key, value]) => typeof key === 'string' && typeof value === 'string' && key.trim() && value.trim()
+  );
+  return Object.fromEntries(sanitizedEntries);
+}
+
+async function sendForwardRequest(
+  res: Response,
+  options: {
+    traceId: string;
+    providerKey: string;
+    providerConfig: NormalizedProviderConfig;
+    requestBody: Record<string, unknown>;
+  }
+): Promise<void> {
+  const { traceId, providerKey, providerConfig } = options;
+  const forwardConfig = providerConfig.forward;
+
+  if (!forwardConfig.base_url || !forwardConfig.api_key) {
+    res.status(500).json({
+      error: {
+        message: `provider ${providerKey} 缺少 base_url 或 api_key 配置`,
+        type: 'configuration_error',
+        code: 'FORWARD_PROVIDER_MISCONFIGURED',
+      },
+    });
+    return;
+  }
+
+  const upstreamUrl = buildUpstreamChatCompletionsUrl(forwardConfig.base_url);
+  const requestBody = { ...options.requestBody };
+  const originalModel = typeof requestBody.model === 'string' ? requestBody.model : '';
+  const mappedModel = forwardConfig.upstream_model_map?.[originalModel];
+  if (mappedModel) {
+    requestBody.model = mappedModel;
+  }
+
+  const upstreamHeaders: Record<string, string> = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${forwardConfig.api_key}`,
+    ...sanitizeForwardHeaders(forwardConfig.headers),
+  };
+
+  const controller = new AbortController();
+  const timeoutMs = forwardConfig.timeout_ms ?? 120000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  logDebug('forward_request', {
+    traceId,
+    provider: providerKey,
+    upstreamUrl,
+    stream: Boolean(requestBody.stream),
+    model: requestBody.model,
+  });
+
+  try {
+    const upstreamResponse = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers: upstreamHeaders,
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+
+    const contentType = upstreamResponse.headers.get('content-type') || 'application/json; charset=utf-8';
+    res.status(upstreamResponse.status);
+    res.setHeader('content-type', contentType);
+
+    const cacheControl = upstreamResponse.headers.get('cache-control');
+    if (cacheControl) res.setHeader('cache-control', cacheControl);
+
+    const isStream = Boolean(requestBody.stream);
+    if (isStream && upstreamResponse.body) {
+      const reader = upstreamResponse.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            res.write(Buffer.from(value));
+          }
+        }
+        res.end();
+      } finally {
+        reader.releaseLock();
+      }
+      return;
+    }
+
+    const bodyText = await upstreamResponse.text();
+    res.send(bodyText);
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === 'AbortError'
+        ? `转发到上游超时（>${timeoutMs}ms）`
+        : error instanceof Error
+          ? error.message
+          : '转发到上游失败';
+
+    console.error(`[Forward][${traceId}] provider=${providerKey} upstream_error=${message}`);
+    res.status(502).json({
+      error: {
+        message,
+        type: 'upstream_error',
+        code: 'UPSTREAM_REQUEST_FAILED',
+      },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -770,6 +890,45 @@ export async function chatCompletionsHandler(
       body_preview: formatRequestBodyPreview(requestBody ?? {}),
     });
 
+    const requestedModel = typeof requestBody?.model === 'string' ? requestBody.model : '';
+    if (!requestedModel) {
+      res.status(400).json({
+        error: {
+          message: '请求格式错误: OpenAI 请求缺少 model 字段',
+          type: 'invalid_request_error',
+          code: 'invalid_request',
+        },
+      });
+      return;
+    }
+
+    const providerKey = inferProviderFromModel(requestedModel);
+    const providerConfig = getNormalizedProviderConfig(providerKey);
+    const providerMode = providerConfig?.default_mode ?? 'web';
+
+    if (providerMode === 'forward') {
+      await sendForwardRequest(res, {
+        traceId,
+        providerKey,
+        providerConfig: providerConfig ?? normalizeProviderConfig(undefined),
+        requestBody,
+      });
+      return;
+    }
+
+    if (!isSiteKey(providerKey)) {
+      res.status(500).json({
+        error: {
+          message: `provider ${providerKey} 未配置为受支持的 web provider`,
+          type: 'configuration_error',
+          code: 'unsupported_web_provider',
+        },
+      });
+      return;
+    }
+
+    const site = providerKey;
+
     // ===== Step 1: 解析协议 =====
     let internalReq;
     try {
@@ -799,10 +958,7 @@ export async function chatCompletionsHandler(
     await dm.save_data();
     logSessionTrace('after_save_request', dm, traceId);
 
-    // ===== Step 4: 推断目标网站 =====
-    const site = inferSiteFromModel(internalReq.model);
-
-    // ===== Step 5: 判断链接状态，初始化或获取 session URL =====
+    // ===== Step 4: 判断链接状态，初始化或获取 session URL =====
     let sessionUrl: string;
 
     const initializeConversationAndBind = async (): Promise<string> => {
@@ -1102,7 +1258,7 @@ export async function listModelsHandler(
   _req: Request,
   res: Response
 ): Promise<void> {
-  const providers = getProviderConfigMap();
+  const providers = getNormalizedProviderConfigMap();
   const modelList = Object.values(providers)
     .flatMap((provider) => provider.models ?? [])
     .map((id: string) => ({

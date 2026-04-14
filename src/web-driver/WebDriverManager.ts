@@ -22,6 +22,7 @@ import { QwenDriver } from './drivers/QwenDriver';
 import { DeepSeekDriver } from './drivers/DeepSeekDriver';
 import { KimiDriver } from './drivers/KimiDriver';
 import { GLMDriver } from './drivers/GLMDriver';
+import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-config';
 
 // 注册 Stealth 插件（全局只需一次）
 // Stealth 插件消除以下自动化特征：
@@ -39,18 +40,12 @@ chromium.use(StealthPlugin());
 const configPath = path.join(process.cwd(), 'config', 'default.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
-type ProviderConfig = {
-  site?: string;
-  models?: string[];
-  input_max_chars?: number;
-};
-
 function getSiteUrlsFromConfig(): Record<SiteKey, string> {
-  const providers = (config.providers ?? {}) as Record<string, ProviderConfig>;
+  const providers = getNormalizedProviderConfigMap();
   const fromProviders: Partial<Record<SiteKey, string>> = {};
   for (const [key, provider] of Object.entries(providers)) {
-    if (key === 'gpt' || key === 'qwen' || key === 'deepseek' || key === 'kimi' || key === 'glm') {
-      const site = (provider?.site ?? '').trim();
+    if (isSiteKey(key)) {
+      const site = (provider.web.site ?? '').trim();
       if (site) {
         fromProviders[key] = site;
       }
@@ -397,8 +392,8 @@ export class WebDriverManager {
   }
 
   private getInputMaxChars(site: SiteKey): number | undefined {
-    const providers = (config.providers ?? {}) as Record<string, ProviderConfig>;
-    const limit = providers[site]?.input_max_chars;
+    const providers = getNormalizedProviderConfigMap();
+    const limit = providers[site]?.web.input_max_chars;
     return typeof limit === 'number' && limit > 0 ? limit : undefined;
   }
 

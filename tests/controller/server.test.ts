@@ -33,6 +33,71 @@ const mockDm = {
   get_session_debug_info: jest.fn(),
 };
 
+jest.mock('fs', () => {
+  const actualFs = jest.requireActual('fs');
+  const path = jest.requireActual('path');
+  const configPathSuffix = path.join('config', 'default.json');
+  const mockConfig = {
+    providers: {
+      gpt: {
+        default_mode: 'web',
+        models: ['gpt-4o', 'gpt-5.2'],
+        web: {
+          site: 'https://chatgpt.com/',
+          input_max_chars: 60000,
+        },
+      },
+      qwen: {
+        default_mode: 'web',
+        models: ['qwen'],
+        web: {
+          site: 'https://chat.qwen.ai/',
+          input_max_chars: 120000,
+        },
+      },
+      deepseek: {
+        default_mode: 'web',
+        models: ['deepseek-chat', 'deepseek-r1', 'deepseek-v3', 'deepseek-coder'],
+        web: {
+          site: 'https://chat.deepseek.com/',
+          input_max_chars: 120000,
+        },
+      },
+      kimi: {
+        default_mode: 'web',
+        models: ['kimi'],
+        web: {
+          site: 'https://www.kimi.com/',
+          input_max_chars: 120000,
+        },
+      },
+      glm: {
+        default_mode: 'web',
+        models: ['glm-4.5'],
+        web: {
+          site: 'https://chatglm.cn/',
+          input_max_chars: 15000,
+        },
+      },
+    },
+    context_switch: {
+      enabled: true,
+      max_prompt_tokens: 120000,
+      max_total_tokens: 128000,
+    },
+  };
+
+  return {
+    ...actualFs,
+    readFileSync: jest.fn((filePath: string, ...args: unknown[]) => {
+      if (typeof filePath === 'string' && filePath.endsWith(configPathSuffix)) {
+        return JSON.stringify(mockConfig);
+      }
+      return actualFs.readFileSync(filePath, ...(args as [any]));
+    }),
+  };
+});
+
 jest.mock('../../src/web-driver/WebDriverManager', () => {
   return {
     WebDriverManager: jest.fn().mockImplementation(() => ({
