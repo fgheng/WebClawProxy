@@ -1,1 +1,0 @@
-{"version":3,"file":"createNodeClientCore.js","sourceRoot":"","sources":["../../../src/client/core/createNodeClientCore.ts"],"names":[],"mappings":";;AAKA,oDASC;AAdD,oDAAiD;AACjD,6DAAgE;AAChE,2DAAwD;AAGxD,SAAgB,oBAAoB,CAClC,MAAwB,EACxB,WAAmC;IAEnC,OAAO,IAAI,qCAAiB,CAAC;QAC3B,SAAS,EAAE,IAAI,6BAAa,CAAC,MAAM,CAAC;QACpC,OAAO,EAAE,IAAA,6CAAwB,GAAE;QACnC,WAAW;KACZ,CAAC,CAAC;AACL,CAAC"}

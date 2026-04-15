@@ -231,7 +231,9 @@ describe('Prompt 构造工具', () => {
       expect(result).toContain('<history>');
       expect(result).toContain('</history>');
       expect(result).toContain('<user>');
+      expect(result).toContain('</user>');
       expect(result).toContain('<assistant>');
+      expect(result).toContain('</assistant>');
       expect(result).toContain('你好');
       expect(result).toContain('你好，有什么可以帮你？');
     });
@@ -294,11 +296,11 @@ describe('Prompt 构造工具', () => {
       const result = buildHistoryPrompt(history as any);
       expect(result).not.toContain('<system>');
 
-      const idxUser1 = result.indexOf('<user>\nu1');
+      const idxUser1 = result.indexOf('<user>\nu1\n</user>');
       const idxAssistant1 = result.indexOf('<assistant>\na1');
       const idxTool = result.indexOf('<tool id="call_1">\n北京天气晴');
-      const idxAssistant2 = result.indexOf('<assistant>\na2');
-      const idxUser2 = result.lastIndexOf('<user>\nu2');
+      const idxAssistant2 = result.indexOf('<assistant>\na2\n</assistant>');
+      const idxUser2 = result.lastIndexOf('<user>\nu2\n</user>');
 
       expect(idxUser1).toBeGreaterThanOrEqual(0);
       expect(idxAssistant1).toBeGreaterThan(idxUser1);
@@ -336,10 +338,12 @@ describe('Prompt 构造工具', () => {
         },
       ] as any;
       const result = buildCurrentPrompt(current);
+      expect(result).toContain('<assistant>');
       expect(result).toContain('准备调用工具');
       expect(result).toContain('<tool_call id="call_1">');
       expect(result).toContain('name: exec');
       expect(result).toContain('arguments: {"command":"ls"}');
+      expect(result).toContain('</assistant>');
     });
 
     it('current 含 tool+user 批次时应输出 role wrapper（tool 在前）', () => {
@@ -356,6 +360,7 @@ describe('Prompt 构造工具', () => {
       expect(result).toContain('执行结果B');
       expect(result).toContain('<user>');
       expect(result).toContain('请继续');
+      expect(result).toContain('</user>');
     });
   });
 

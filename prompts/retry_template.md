@@ -1,5 +1,4 @@
-Your previous response is not valid JSON.
-Please re-answer the previous question. From now on, output only valid JSON according to the following rules:
+My system requires your responses to be in JSON format, so please output all subsequent messages in the agreed JSON format.
 
 [[output_rules.md]]
 

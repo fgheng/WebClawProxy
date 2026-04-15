@@ -7,11 +7,11 @@
         "tool_calls": [
                 {
                     "index": 0,
-                    "id": "The unique ID of the tool call",
+                    "id": "<id>",
                     "type": "function",
                     "function": {
-                    "name": "function name",
-                    "arguments": "{\"command\":\"ls\"}"
+                    "name": "<tool-name>",
+                    "arguments": "<stringified-json>"
                 }
             }
         ]

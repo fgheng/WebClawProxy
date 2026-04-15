@@ -42,16 +42,16 @@ function formatCurrentMessage(msg: Message): string {
   }
 
   if (msg.role === 'user') {
-    return ['<user>', contentStr].filter(Boolean).join('\n');
+    return wrapBlock('user', contentStr);
   }
 
   if (msg.role === 'assistant') {
     const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
-    return ['<assistant>', contentStr, toolCallBlocks].filter(Boolean).join('\n');
+    return wrapBlock('assistant', [contentStr, toolCallBlocks].filter(Boolean).join('\n'));
   }
 
   const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
-  return [`<${msg.role}>`, contentStr, toolCallBlocks].filter(Boolean).join('\n');
+  return wrapBlock(msg.role, [contentStr, toolCallBlocks].filter(Boolean).join('\n'));
 }
 
 /**
@@ -116,12 +116,12 @@ export function buildHistoryPrompt(history: Message[]): string {
       const contentStr = contentToString(msg.content);
 
       if (role === 'user') {
-        return ['<user>', contentStr].filter(Boolean).join('\n');
+        return wrapBlock('user', contentStr);
       }
 
       if (role === 'assistant') {
         const toolCallBlocks = formatToolCallBlocks(msg.tool_calls);
-        return ['<assistant>', contentStr, toolCallBlocks].filter(Boolean).join('\n');
+        return wrapBlock('assistant', [contentStr, toolCallBlocks].filter(Boolean).join('\n'));
       }
 
       if (role === 'tool') {
@@ -130,7 +130,7 @@ export function buildHistoryPrompt(history: Message[]): string {
         return [toolHeader, contentStr, '</tool>'].filter(Boolean).join('\n');
       }
 
-      return [`<${role}>`, contentStr].filter(Boolean).join('\n');
+      return wrapBlock(role, contentStr);
     })
     .filter(Boolean)
     .join('\n\n');
