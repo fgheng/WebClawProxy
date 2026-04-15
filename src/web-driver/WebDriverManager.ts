@@ -1073,7 +1073,14 @@ export class WebDriverManager {
       }
     }
 
-    // 超时后返回当前 URL
-    return page.url();
+    const currentUrl = page.url();
+    if (currentUrl !== baseUrl && driver.isValidConversationUrl(currentUrl)) {
+      return currentUrl;
+    }
+
+    throw new WebDriverError(
+      WebDriverErrorCode.NEW_CONVERSATION_FAILED,
+      `等待 ${site} 对话 URL 超时，当前 URL: ${currentUrl || baseUrl}`
+    );
   }
 }

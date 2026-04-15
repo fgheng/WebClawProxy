@@ -460,6 +460,29 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 
+  it('waitForConversationUrl: 若一直停留在 Doubao 通用 chat 入口，应在超时后报错', async () => {
+    jest.useFakeTimers();
+    try {
+      const mockPage = {
+        url: jest.fn().mockReturnValue('https://www.doubao.com/chat'),
+      } as any;
+      const mockDriver = {
+        isValidConversationUrl: jest
+          .fn()
+          .mockImplementation((url: string) => url === 'https://www.doubao.com/chat/abc123'),
+      } as any;
+
+      (manager as any).pageMap.set('doubao', mockPage);
+
+      const promise = (manager as any).waitForConversationUrl(mockDriver, 'doubao');
+      const assertion = expect(promise).rejects.toThrow('等待 doubao 对话 URL 超时');
+      await jest.advanceTimersByTimeAsync(30500);
+      await assertion;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('默认 init_prompt 应支持引用 {{response_schema_template}}', () => {
     const rendered = (manager as any).renderInitPromptTemplate(
       'prefix {{response_schema_template}} suffix'
@@ -834,6 +857,8 @@ describe('Driver URL 验证', () => {
 
     expect(driver.isValidConversationUrl('https://www.doubao.com/chat/abc123')).toBe(true);
     expect(driver.isValidConversationUrl('https://www.doubao.com/chat?conversation_id=abc123')).toBe(true);
+    expect(driver.isValidConversationUrl('https://www.doubao.com/chat')).toBe(false);
+    expect(driver.isValidConversationUrl('https://www.doubao.com/chat?conversation_id=')).toBe(false);
     expect(driver.isValidConversationUrl('https://www.doubao.com/')).toBe(false);
   });
 

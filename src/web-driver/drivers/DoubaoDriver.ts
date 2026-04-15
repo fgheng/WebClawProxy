@@ -156,7 +156,7 @@ export class DoubaoDriver extends BaseDriver {
   }
 
   isValidConversationUrl(url: string): boolean {
-    return /^https:\/\/www\.doubao\.com\/(chat\/[\w-]+(?:\?.*)?|chat(?:\?.*)?)$/.test(url);
+    return this.extractConversationToken(url) !== null;
   }
 
   protected getStopButtonSelector(): string | null {
@@ -177,6 +177,36 @@ export class DoubaoDriver extends BaseDriver {
 
     await this.page.goto(url, { waitUntil: 'commit', timeout: 15000 });
     await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
+  }
+
+  private extractConversationToken(url: string): string | null {
+    try {
+      const parsed = new URL(url);
+      if (!/^www\.doubao\.com$/i.test(parsed.hostname)) {
+        return null;
+      }
+
+      const pathname = parsed.pathname.replace(/\/+$/, '');
+      const pathMatch = pathname.match(/^\/chat\/([\w-]+)$/);
+      if (pathMatch?.[1]) {
+        return pathMatch[1];
+      }
+
+      if (pathname === '/chat') {
+        const token =
+          parsed.searchParams.get('conversation_id') ||
+          parsed.searchParams.get('conversationId') ||
+          parsed.searchParams.get('chat_id') ||
+          parsed.searchParams.get('id');
+        if (token && token.trim()) {
+          return token.trim();
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   private async getInputText(): Promise<string> {
