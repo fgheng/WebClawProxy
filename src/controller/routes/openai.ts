@@ -64,6 +64,8 @@ function inferProviderFromModel(model: string): string {
   if (lower.startsWith('qwen')) return 'qwen';
   if (lower.startsWith('moonshot') || lower.startsWith('kimi')) return 'kimi';
   if (lower.startsWith('glm')) return 'glm';
+  if (lower.startsWith('claude')) return 'claude';
+  if (lower.startsWith('doubao')) return 'doubao';
 
   // 默认使用 gpt
   return 'gpt';

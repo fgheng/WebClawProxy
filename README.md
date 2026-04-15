@@ -2,7 +2,7 @@
 
 > 将各大 AI 模型 Web 页面封装成标准 API 接口（OpenAI 兼容）的代理服务
 
-WebClawProxy 通过浏览器自动化技术，将 ChatGPT、DeepSeek、Qwen、Kimi 等 AI 模型的 Web 界面封装成 OpenAI 兼容的 API 接口，让任何支持 OpenAI SDK 的应用都能无缝接入这些模型。
+WebClawProxy 通过浏览器自动化技术，将 ChatGPT、DeepSeek、Qwen、Kimi、GLM、Claude、Doubao 等 AI 模型的 Web 界面封装成 OpenAI 兼容的 API 接口，让任何支持 OpenAI SDK 的应用都能无缝接入这些模型。
 
 ## 架构概览
 
@@ -25,6 +25,7 @@ WebClawProxy 通过浏览器自动化技术，将 ChatGPT、DeepSeek、Qwen、Ki
 │               │ │                  │ │                     │
 │ OpenAI ──────►│ │ 对话数据持久化    │ │ ChatGPT / DeepSeek  │
 │ Anthropic (预)│ │ Hash Key 计算    │ │ Qwen / Kimi / GLM   │
+│              │ │                  │ │ Claude / Doubao     │
 │ Gemini (预)   │ │ Prompt 构造      │ │ (基于 Playwright)   │
 └──────────────┘ └──────────────────┘ └─────────────────────┘
 ```
@@ -38,6 +39,8 @@ WebClawProxy 通过浏览器自动化技术，将 ChatGPT、DeepSeek、Qwen、Ki
 | DeepSeek | `deepseek` | https://chat.deepseek.com/ |
 | Kimi | `kimi` | https://www.kimi.com/ |
 | GLM | `glm` | https://chatglm.cn/ |
+| Claude | `claude` | https://claude.ai/ |
+| Doubao | `doubao` | https://www.doubao.com/ |
 
 ## 快速开始
 
@@ -176,7 +179,9 @@ WebClawProxy/
 │   │       ├── QwenDriver.ts
 │   │       ├── DeepSeekDriver.ts
 │   │       ├── KimiDriver.ts
-│   │       └── GLMDriver.ts
+│   │       ├── GLMDriver.ts
+│   │       ├── ClaudeDriver.ts
+│   │       └── DoubaoDriver.ts
 │   ├── protocol/              # 协议转换模块
 │   │   ├── index.ts
 │   │   ├── types.ts           # 内部统一结构类型

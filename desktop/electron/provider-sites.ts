@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-export type ProviderKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi' | 'glm';
+export type ProviderKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi' | 'glm' | 'claude' | 'doubao';
 
-const PROVIDERS: ProviderKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm'];
+const PROVIDERS: ProviderKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'];
 
 type ProviderConfig = {
   site?: string;

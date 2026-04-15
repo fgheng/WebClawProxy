@@ -78,10 +78,10 @@ describe('WebDriverManager', () => {
   });
 
   describe('SiteKey 验证', () => {
-    const validSites: SiteKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm'];
+    const validSites: SiteKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'];
 
     it.each(validSites)('应该支持 %s 站点', (site) => {
-      expect(['gpt', 'qwen', 'deepseek', 'kimi', 'glm']).toContain(site);
+      expect(['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao']).toContain(site);
     });
   });
 });
@@ -451,12 +451,12 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
     expect(firstChunkPayload).toContain('<message>');
     expect(firstChunkPayload).toContain('<chunk id="1">');
-    expect(firstChunkPayload).toContain('<reply>only reply with <reply>recieved</reply><reply>');
+    expect(firstChunkPayload).toContain('reply recieved in the required JSON format.');
     expect(firstChunkPayload).not.toContain('[STREAM_ID:');
     expect(finalChunkPayload).toContain('<chunk id="2">');
     expect(finalChunkPayload).toContain('</message>');
-    expect(finalChunkPayload).toContain('请将<message></message>所有内容视作一个整体，然后作答');
-    expect(finalChunkPayload).not.toContain('<reply>only reply with <reply>recieved</reply><reply>');
+    expect(finalChunkPayload).toContain('The information has been sent. Please respond in the required JSON format.');
+    expect(finalChunkPayload).not.toContain('reply recieved in the required JSON format.');
     expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 
@@ -527,12 +527,12 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
     expect(firstChunkPayload).toContain('<message>');
     expect(firstChunkPayload).toContain('<chunk id="1">');
-    expect(firstChunkPayload).toContain('<reply>only reply with <reply>recieved</reply><reply>');
+    expect(firstChunkPayload).toContain('reply recieved in the required JSON format.');
     expect(firstChunkPayload).not.toContain('[STREAM_ID:');
     expect(finalChunkPayload).toContain('<chunk id="2">');
     expect(finalChunkPayload).toContain('</message>');
-    expect(finalChunkPayload).toContain('请将<message></message>所有内容视作一个整体，然后作答');
-    expect(finalChunkPayload).not.toContain('<reply>only reply with <reply>recieved</reply><reply>');
+    expect(finalChunkPayload).toContain('The information has been sent. Please respond in the required JSON format.');
+    expect(finalChunkPayload).not.toContain('reply recieved in the required JSON format.');
     expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 
@@ -815,6 +815,26 @@ describe('Driver URL 验证', () => {
 
     expect(driver.isValidConversationUrl('https://chatglm.cn/main/detail/abc')).toBe(true);
     expect(driver.isValidConversationUrl('https://chatglm.cn/')).toBe(false);
+  });
+
+  it('Claude URL 验证', async () => {
+    const { ClaudeDriver } = await import('../../src/web-driver/drivers/ClaudeDriver');
+    const mockPage = {} as any;
+    const driver = new ClaudeDriver(mockPage);
+
+    expect(driver.isValidConversationUrl('https://claude.ai/chat/abc123')).toBe(true);
+    expect(driver.isValidConversationUrl('https://claude.ai/new')).toBe(true);
+    expect(driver.isValidConversationUrl('https://claude.ai/')).toBe(false);
+  });
+
+  it('Doubao URL 验证', async () => {
+    const { DoubaoDriver } = await import('../../src/web-driver/drivers/DoubaoDriver');
+    const mockPage = {} as any;
+    const driver = new DoubaoDriver(mockPage);
+
+    expect(driver.isValidConversationUrl('https://www.doubao.com/chat/abc123')).toBe(true);
+    expect(driver.isValidConversationUrl('https://www.doubao.com/chat?conversation_id=abc123')).toBe(true);
+    expect(driver.isValidConversationUrl('https://www.doubao.com/')).toBe(false);
   });
 
   it('Qwen 跳转会话应使用轻量导航并等待输入框', async () => {

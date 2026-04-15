@@ -45,3 +45,5 @@ export { QwenDriver } from './drivers/QwenDriver';
 export { DeepSeekDriver } from './drivers/DeepSeekDriver';
 export { KimiDriver } from './drivers/KimiDriver';
 export { GLMDriver } from './drivers/GLMDriver';
+export { ClaudeDriver } from './drivers/ClaudeDriver';
+export { DoubaoDriver } from './drivers/DoubaoDriver';

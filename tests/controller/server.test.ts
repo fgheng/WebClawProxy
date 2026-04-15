@@ -79,6 +79,22 @@ jest.mock('fs', () => {
           input_max_chars: 15000,
         },
       },
+      claude: {
+        default_mode: 'web',
+        models: ['claude-sonnet-4', 'claude-3-7-sonnet'],
+        web: {
+          site: 'https://claude.ai/',
+          input_max_chars: 120000,
+        },
+      },
+      doubao: {
+        default_mode: 'web',
+        models: ['doubao', 'doubao-seed-1.6'],
+        web: {
+          site: 'https://www.doubao.com/',
+          input_max_chars: 120000,
+        },
+      },
     },
     context_switch: {
       enabled: true,

@@ -5,7 +5,7 @@ type ProviderConfig = {
   models?: string[];
 };
 
-const PROVIDERS: ProviderKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm'];
+const PROVIDERS: ProviderKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'];
 
 export function loadProviderModelCatalog(): ProviderModelCatalog {
   const modelToProvider = new Map<string, ProviderKey>();

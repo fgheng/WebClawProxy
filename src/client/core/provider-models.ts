@@ -1,4 +1,4 @@
-export type ProviderKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi' | 'glm';
+export type ProviderKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi' | 'glm' | 'claude' | 'doubao';
 
 export type ProviderModelCatalog = {
   modelToProvider: Map<string, ProviderKey>;
@@ -14,6 +14,8 @@ export function createEmptyProviderModelCatalog(): ProviderModelCatalog {
       ['deepseek', []],
       ['kimi', []],
       ['glm', []],
+      ['claude', []],
+      ['doubao', []],
     ]),
   };
 }
@@ -31,6 +33,8 @@ export function inferProviderFromModel(
   if (normalized.startsWith('deepseek')) return 'deepseek';
   if (normalized.startsWith('moonshot') || normalized.startsWith('kimi')) return 'kimi';
   if (normalized.startsWith('glm')) return 'glm';
+  if (normalized.startsWith('claude')) return 'claude';
+  if (normalized.startsWith('doubao')) return 'doubao';
   return 'gpt';
 }
 

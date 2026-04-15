@@ -22,6 +22,8 @@ import { QwenDriver } from './drivers/QwenDriver';
 import { DeepSeekDriver } from './drivers/DeepSeekDriver';
 import { KimiDriver } from './drivers/KimiDriver';
 import { GLMDriver } from './drivers/GLMDriver';
+import { ClaudeDriver } from './drivers/ClaudeDriver';
+import { DoubaoDriver } from './drivers/DoubaoDriver';
 import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-config';
 import { BrowserBackend, BrowserBackendName } from './backends/types';
 import { PlaywrightLaunchBackend } from './backends/PlaywrightLaunchBackend';
@@ -434,7 +436,7 @@ export class WebDriverManager {
     const chunkId = `${chunkIndex + 1}`;
     const chunkStartMarker = `<chunk id="${chunkId}">`;
     const chunkEndMarker = '</chunk>';
-    const replyMarker = '<reply>only reply with <reply>recieved</reply><reply>';
+    const replyMarker = 'reply recieved in the required JSON format.';
     const wrappedChunk = [chunkStartMarker, chunk, chunkEndMarker].join('\n');
 
     if (chunkIndex === 0) {
@@ -455,7 +457,7 @@ export class WebDriverManager {
     return [
       wrappedChunk,
       '</message>',
-      '请将<message></message>所有内容视作一个整体，然后作答',
+      'The information has been sent. Please respond in the required JSON format.',
     ].join('\n');
   }
 
@@ -604,6 +606,8 @@ export class WebDriverManager {
       deepseek: 'textarea, [contenteditable="true"]',
       kimi: 'textarea, [contenteditable="true"][class*="input"]',
       glm: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
+      claude: 'div[contenteditable="true"][role="textbox"], textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
+      doubao: 'div[contenteditable="true"][role="textbox"], textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
     };
 
     const readinessProfileBySite: Record<
@@ -646,6 +650,20 @@ export class WebDriverManager {
         requireUrlStability: false,
       },
       glm: {
+        maxWaitMs: 5000,
+        requiredStableRounds: 2,
+        intervalMs: 250,
+        finalBufferMs: 250,
+        requireUrlStability: true,
+      },
+      claude: {
+        maxWaitMs: 5000,
+        requiredStableRounds: 2,
+        intervalMs: 250,
+        finalBufferMs: 250,
+        requireUrlStability: true,
+      },
+      doubao: {
         maxWaitMs: 5000,
         requiredStableRounds: 2,
         intervalMs: 250,
@@ -762,6 +780,12 @@ export class WebDriverManager {
           break;
         case 'glm':
           driver = new GLMDriver(page, driverOptions);
+          break;
+        case 'claude':
+          driver = new ClaudeDriver(page, driverOptions);
+          break;
+        case 'doubao':
+          driver = new DoubaoDriver(page, driverOptions);
           break;
         default:
           throw new WebDriverError(

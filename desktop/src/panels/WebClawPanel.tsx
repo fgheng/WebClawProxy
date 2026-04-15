@@ -23,7 +23,7 @@ type WebClawPanelProps = {
 function buildCatalog(providerModels: Record<string, string[]>): ProviderModelCatalog {
   const modelToProvider = new Map<string, ProviderKey>();
   const providerToModels = new Map<ProviderKey, string[]>();
-  const providers: ProviderKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm'];
+  const providers: ProviderKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'];
 
   for (const provider of providers) {
     const models = providerModels[provider] ?? [];

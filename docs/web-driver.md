@@ -22,6 +22,8 @@ Web 驱动模块（`src/web-driver/`）是 WebClawProxy 的核心基础模块，
 | `deepseek` | https://chat.deepseek.com/  |
 | `kimi`   | https://www.kimi.com/         |
 | `glm`    | https://chatglm.cn/           |
+| `claude` | https://claude.ai/            |
+| `doubao` | https://www.doubao.com/       |
 
 ## 快速开始
 
@@ -331,7 +333,10 @@ web-driver/
     ├── ChatGPTDriver.ts  # ChatGPT 驱动
     ├── QwenDriver.ts     # Qwen 驱动
     ├── DeepSeekDriver.ts # DeepSeek 驱动
-    └── KimiDriver.ts     # Kimi 驱动
+    ├── KimiDriver.ts     # Kimi 驱动
+    ├── GLMDriver.ts      # GLM 驱动
+    ├── ClaudeDriver.ts   # Claude 驱动
+    └── DoubaoDriver.ts   # Doubao 驱动
 ```
 
 ### 多重回复检测策略

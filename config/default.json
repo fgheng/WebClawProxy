@@ -52,14 +52,44 @@
         "site": "https://chatglm.cn/",
         "input_max_chars": 15000
       }
+    },
+    "claude": {
+      "default_mode": "web",
+      "models": [
+        "claude",
+        "claude-3-opus",
+        "claude-3-sonnet",
+        "claude-3-haiku",
+        "claude-3-5-sonnet",
+        "claude-3-5-haiku",
+        "claude-3-7-sonnet",
+        "claude-sonnet-4",
+        "claude-opus-4"
+      ],
+      "web": {
+        "site": "https://claude.ai/",
+        "input_max_chars": 120000
+      }
+    },
+    "doubao": {
+      "default_mode": "web",
+      "models": [
+        "doubao",
+        "doubao-1.5-pro",
+        "doubao-seed-1.6"
+      ],
+      "web": {
+        "site": "https://www.doubao.com/",
+        "input_max_chars": 120000
+      }
     }
   },
   "defaults": {
-    "init_prompt": "From now on, output only valid JSON according to the following rules:\n\n[[output_rules.md]]\n\n[[output_template.json]]",
-    "init_prompt_template": "{{init_prompt}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\n{{init_prompt}}\n\nOnly reply “Received” in the required format.",
-    "user_message_template": "{{content}}",
+    "init_prompt": "All subsequent replies should strictly follow JSON formatting. The agreed rules are as follows:\n\n[[output_rules.md]]\n\n[[output_template.json]]\n",
+    "init_prompt_template": "{{init_prompt}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nOnly reply “Received” in the required JSON format for this message.",
+    "user_message_template": "{{content}}\n\nPlease respond in the required JSON format.",
     "response_schema_template": "[[output_template.json]]",
-    "format_only_retry_template": "[[retry_template.md]]"
+    "format_only_retry_template": "Not a valid JSON response. Please re-answer the previous question in the required JSON format."
   },
   "server": {
     "port": 3000

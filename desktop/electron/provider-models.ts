@@ -18,5 +18,7 @@ export function readProviderModels(projectRoot: string): Record<ProviderKey, str
     deepseek: config.providers?.deepseek?.models ?? [],
     kimi: config.providers?.kimi?.models ?? [],
     glm: config.providers?.glm?.models ?? [],
+    claude: config.providers?.claude?.models ?? [],
+    doubao: config.providers?.doubao?.models ?? [],
   };
 }

@@ -44,7 +44,7 @@ const appConfig = loadAppConfig() as {
   providers?: Record<string, RawProviderConfig>;
 };
 
-const WEB_SITE_KEYS: SiteKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm'];
+const WEB_SITE_KEYS: SiteKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'];
 
 export function getRawProviderConfigMap(): Record<string, RawProviderConfig> {
   return (appConfig.providers ?? {}) as Record<string, RawProviderConfig>;

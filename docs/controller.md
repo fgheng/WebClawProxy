@@ -122,7 +122,7 @@ flowchart TD
 
 ### Step 4：模型→站点映射
 
-通过 `inferSiteFromModel(model)` 推断 `SiteKey`：`gpt | qwen | deepseek | kimi | glm`
+通过 `inferSiteFromModel(model)` 推断 `SiteKey`：`gpt | qwen | deepseek | kimi | glm | claude | doubao`
 
 ### Step 5：会话链接判定与 session 切换
 
