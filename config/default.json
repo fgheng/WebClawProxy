@@ -20,7 +20,7 @@
       }
     },
     "deepseek": {
-      "default_mode": "forward",
+      "default_mode": "web",
       "models": ["deepseek-chat", "deepseek-r1", "deepseek-v3", "deepseek-coder"],
       "web": {
         "site": "https://chat.deepseek.com/",
@@ -55,11 +55,11 @@
     }
   },
   "defaults": {
-    "init_prompt": "Note: Output JSON only, no extra explanation, do not execute any actions!!\n\nAll subsequent responses in this conversation must strictly follow the JSON template below. The content must be a simulated result in the form of a legal JSON string, containing no actual execution behavior and no additional explanation. The following is only a template; you need to fill in the specific content:\n{{response_schema_template}}",
-    "init_prompt_template": "Note: Output JSON only, no extra explanation, and do not execute any actions.\n\nAll subsequent responses in this conversation must strictly follow the JSON template below:\n{{response_schema_template}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nReply only with: Received",
+    "init_prompt": "From now on, output only valid JSON according to the following rules:\n\n[[output_rules.md]]\n\n[[output_template.json]]",
+    "init_prompt_template": "{{init_prompt}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\n{{init_prompt}}\n\nOnly reply “Received” in the required format.",
     "user_message_template": "{{content}}",
-    "response_schema_template": "{\n      \"index\": 0,\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"The content of the model-generated response\",\n\n        \"tool_calls\": [\n          {\n            \"index\": 0,\n            \"id\": \"The unique ID of the tool call\",\n            \"type\": \"function\",\n            \"function\": {\n              \"name\": \"function name\",\n              \"arguments\": \"{\\\"command\\\":\\\"ls\\\"}\"\n            }\n          }\n        ]\n      },\n      \"logprobs\": null,\n      \"finish_reason\": \"tool_calls\"\n    }",
-    "format_only_retry_template": "Your previous response is not valid JSON. Please re-answer the previous question, and for all subsequent responses, output only according to the following JSON template example. Do not repeat the user's question or provide additional explanations:\n {{response_schema_template}}"
+    "response_schema_template": "[[output_template.json]]",
+    "format_only_retry_template": "[[retry_template.md]]"
   },
   "server": {
     "port": 3000
@@ -87,7 +87,7 @@
     "debug": true,
     "dir": "./data/logs",
     "file_prefix": "webclaw-proxy",
-    "pretty_json": true,
+    "pretty_json": false,
     "pretty_json_indent": 4,
     "request_body_truncate_enabled": false,
     "request_body_max_chars": 5000

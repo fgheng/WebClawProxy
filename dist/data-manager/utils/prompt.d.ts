@@ -10,17 +10,18 @@ export declare function contentToString(content: string | ContentItem[]): string
 /**
  * 构造 system prompt
  * 格式：
- * <|system|>
+ * <system>
  * [system内容]
+ * </system>
  */
 export declare function buildSystemPrompt(system: string): string;
 /**
  * 构造 history prompt
  * 格式：
- * <|role:user|>
+ * <user>
  * 用户内容
  *
- * <|role:assistant|>
+ * <assistant>
  * 助手内容
  */
 export declare function buildHistoryPrompt(history: Message[]): string;
@@ -28,15 +29,18 @@ export declare function buildHistoryPrompt(history: Message[]): string;
  * 构造 current prompt
  * 只提取 content 内容，不带 role 标记
  */
-export declare function buildCurrentPrompt(current: Message): string;
+export declare function buildCurrentPrompt(current: Message[]): string;
 /**
  * 构造 tools prompt
  * 格式：
- * Tool 1
- * Name: xxx
- * Description: xxx
- * Parameters:
+ * <tools>
+ * <tool>
+ * name: xxx
+ * description: xxx
+ * parameters:
  * - param(type, required): description
+ * </tool>
+ * </tools>
  */
 export declare function buildToolsPrompt(tools: Tool[]): string;
 /**
@@ -45,6 +49,7 @@ export declare function buildToolsPrompt(tools: Tool[]): string;
  */
 export declare function buildInitPrompt(options: {
     template: string;
+    initPrompt: string;
     responseSchemaTemplate: string;
     systemPrompt: string;
     toolsPrompt: string;

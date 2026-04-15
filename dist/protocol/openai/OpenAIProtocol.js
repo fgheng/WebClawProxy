@@ -26,9 +26,9 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
      * 提取规则：
      * - MODEL    = input.model
      * - SYSTEM   = 提取 messages 中所有 role=system 的文本内容并按顺序拼接
-     * - HISTORY  = 过滤掉所有 role=system 后，再去掉最后一条
      * - TOOLS    = input.tools || []
-     * - CURRENT  = 过滤后消息列表的最后一条
+     * - CURRENT  = 按 V5 规则从尾段提取 user/tool 消息批次（仅 user/tool）
+     * - HISTORY  = 非 system 消息去除 current 源片段后的前缀
      */
     parse(input, options) {
         const traceId = options?.traceId ?? `proto-${(0, uuid_1.v4)().replace(/-/g, '').slice(0, 8)}`;
@@ -75,20 +75,19 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
         });
         // 3. 提取 TOOLS
         const tools = Array.isArray(req.tools) ? req.tools : [];
-        // 4. 提取 CURRENT（最后一条消息，从 HISTORY 中移除）
+        // 4. 提取 CURRENT 批次（V5 规则）并从 HISTORY 中剔除其来源片段
         if (nonSystemMessages.length === 0) {
             throw new types_1.ProtocolParseError(types_1.ProtocolType.OPENAI, 'OpenAI 请求 messages 中没有可用的非 system 消息');
         }
-        const history = nonSystemMessages.slice(0, -1);
-        const current = nonSystemMessages[nonSystemMessages.length - 1];
+        const { history, current } = this.splitHistoryAndCurrent(nonSystemMessages);
         this.logProtocolTrace(traceId, 'split_history_current', {
             source,
             model,
             history_count: history.length,
             history_roles: history.map((m) => m.role),
-            current_role: current.role,
-            current_content_type: Array.isArray(current.content) ? 'array' : typeof current.content,
-            current_has_tool_calls: Array.isArray(current.tool_calls) && current.tool_calls.length > 0,
+            current_count: current.length,
+            current_roles: current.map((m) => m.role),
+            current_tool_count: current.filter((m) => m.role === 'tool').length,
             tools_count: tools.length,
         });
         return {
@@ -97,6 +96,38 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
             history,
             tools,
             current,
+        };
+    }
+    splitHistoryAndCurrent(nonSystemMessages) {
+        const tailSegmentWithIndex = [];
+        for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
+            const msg = nonSystemMessages[i];
+            if (msg.role === 'assistant') {
+                break;
+            }
+            tailSegmentWithIndex.push({ index: i, msg });
+        }
+        const tailSegment = tailSegmentWithIndex.reverse();
+        const candidate = tailSegment.filter(({ msg }) => msg.role === 'user' || msg.role === 'tool');
+        if (candidate.length === 0) {
+            throw new types_1.ProtocolParseError(types_1.ProtocolType.OPENAI, 'OpenAI 请求 messages 尾段缺少可发送消息（需包含 user 或 tool）');
+        }
+        const hasTool = candidate.some(({ msg }) => msg.role === 'tool');
+        if (hasTool) {
+            const toolMessages = candidate.filter(({ msg }) => msg.role === 'tool').map(({ msg }) => msg);
+            const userMessages = candidate.filter(({ msg }) => msg.role === 'user').map(({ msg }) => msg);
+            const current = [...toolMessages, ...userMessages];
+            const sourceStartIndex = candidate[0].index;
+            const history = nonSystemMessages.slice(0, sourceStartIndex);
+            return { history, current };
+        }
+        const lastUser = [...candidate].reverse().find(({ msg }) => msg.role === 'user');
+        if (!lastUser) {
+            throw new types_1.ProtocolParseError(types_1.ProtocolType.OPENAI, 'OpenAI 请求 messages 尾段缺少 user 消息');
+        }
+        return {
+            history: nonSystemMessages.slice(0, lastUser.index),
+            current: [lastUser.msg],
         };
     }
     /**
@@ -174,6 +205,8 @@ class OpenAIProtocol extends BaseProtocol_1.BaseProtocol {
                     function: tc.function,
                 }))
                 : undefined,
+            tool_call_id: msg.tool_call_id,
+            name: msg.name,
         };
     }
     extractTextContent(msg) {

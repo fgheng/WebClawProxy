@@ -18,6 +18,8 @@ export interface Message {
     role: string;
     content: string | ContentItem[];
     tool_calls?: ToolCall[];
+    tool_call_id?: string;
+    name?: string;
 }
 /**
  * 工具参数属性
@@ -65,8 +67,8 @@ export interface InternalRequest {
     history: Message[];
     /** 可用工具列表 */
     tools: Tool[];
-    /** 当前（最新）用户消息 */
-    current: Message;
+    /** 当前待发送消息批次（仅 user/tool） */
+    current: Message[];
 }
 /**
  * 内部返回结构（暂时保留接口）

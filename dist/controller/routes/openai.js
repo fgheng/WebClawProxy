@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.preflightWebDriverSites = preflightWebDriverSites;
 exports.openConfiguredWebDriverSites = openConfiguredWebDriverSites;
@@ -44,18 +11,15 @@ const WebDriverManager_1 = require("../../web-driver/WebDriverManager");
 const types_1 = require("../../web-driver/types");
 const types_2 = require("../../protocol/types");
 const logger_1 = require("../logger");
-const fs = __importStar(require("fs"));
-const path = __importStar(require("path"));
-// 加载配置
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+const provider_config_1 = require("../../config/provider-config");
+const app_config_1 = require("../../config/app-config");
+const config = (0, app_config_1.loadAppConfig)();
 const protocol = new protocol_1.OpenAIProtocol();
 const webDriver = new WebDriverManager_1.WebDriverManager();
-function getProviderConfigMap() {
-    return (config.providers ?? {});
-}
 function getConfiguredSiteKeys() {
-    return Object.keys(getProviderConfigMap());
+    return Object.entries((0, provider_config_1.getNormalizedProviderConfigMap)())
+        .filter(([providerKey, provider]) => (0, provider_config_1.isSiteKey)(providerKey) && provider.default_mode === 'web')
+        .map(([providerKey]) => providerKey);
 }
 async function preflightWebDriverSites() {
     const siteKeys = getConfiguredSiteKeys();
@@ -76,12 +40,12 @@ async function closeWebDriver() {
  * 根据模型名称推断使用哪个网站
  * 优先使用 providers 映射（site + models 同源），并兼容旧配置。
  */
-function inferSiteFromModel(model) {
-    const providers = getProviderConfigMap();
-    for (const [siteKey, provider] of Object.entries(providers)) {
+function inferProviderFromModel(model) {
+    const providers = (0, provider_config_1.getNormalizedProviderConfigMap)();
+    for (const [providerKey, provider] of Object.entries(providers)) {
         const modelList = provider.models ?? [];
         if (modelList.some((m) => m.toLowerCase() === model.toLowerCase())) {
-            return siteKey;
+            return providerKey;
         }
     }
     // 模糊匹配
@@ -94,8 +58,112 @@ function inferSiteFromModel(model) {
         return 'qwen';
     if (lower.startsWith('moonshot') || lower.startsWith('kimi'))
         return 'kimi';
+    if (lower.startsWith('glm'))
+        return 'glm';
     // 默认使用 gpt
     return 'gpt';
+}
+function buildUpstreamChatCompletionsUrl(baseUrl) {
+    const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
+    if (normalizedBaseUrl.endsWith('/chat/completions')) {
+        return normalizedBaseUrl;
+    }
+    return `${normalizedBaseUrl}/chat/completions`;
+}
+function sanitizeForwardHeaders(headers) {
+    if (!headers || typeof headers !== 'object')
+        return {};
+    const sanitizedEntries = Object.entries(headers).filter(([key, value]) => typeof key === 'string' && typeof value === 'string' && key.trim() && value.trim());
+    return Object.fromEntries(sanitizedEntries);
+}
+async function sendForwardRequest(res, options) {
+    const { traceId, providerKey, providerConfig } = options;
+    const forwardConfig = providerConfig.forward;
+    if (!forwardConfig.base_url || !forwardConfig.api_key) {
+        res.status(500).json({
+            error: {
+                message: `provider ${providerKey} 缺少 base_url 或 api_key 配置`,
+                type: 'configuration_error',
+                code: 'FORWARD_PROVIDER_MISCONFIGURED',
+            },
+        });
+        return;
+    }
+    const upstreamUrl = buildUpstreamChatCompletionsUrl(forwardConfig.base_url);
+    const requestBody = { ...options.requestBody };
+    const originalModel = typeof requestBody.model === 'string' ? requestBody.model : '';
+    const mappedModel = forwardConfig.upstream_model_map?.[originalModel];
+    if (mappedModel) {
+        requestBody.model = mappedModel;
+    }
+    const upstreamHeaders = {
+        'content-type': 'application/json',
+        authorization: `Bearer ${forwardConfig.api_key}`,
+        ...sanitizeForwardHeaders(forwardConfig.headers),
+    };
+    const controller = new AbortController();
+    const timeoutMs = forwardConfig.timeout_ms ?? 120000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    (0, logger_1.logDebug)('forward_request', {
+        traceId,
+        provider: providerKey,
+        upstreamUrl,
+        stream: Boolean(requestBody.stream),
+        model: requestBody.model,
+    });
+    try {
+        const upstreamResponse = await fetch(upstreamUrl, {
+            method: 'POST',
+            headers: upstreamHeaders,
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+        });
+        const contentType = upstreamResponse.headers.get('content-type') || 'application/json; charset=utf-8';
+        res.status(upstreamResponse.status);
+        res.setHeader('content-type', contentType);
+        const cacheControl = upstreamResponse.headers.get('cache-control');
+        if (cacheControl)
+            res.setHeader('cache-control', cacheControl);
+        const isStream = Boolean(requestBody.stream);
+        if (isStream && upstreamResponse.body) {
+            const reader = upstreamResponse.body.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    if (value) {
+                        res.write(Buffer.from(value));
+                    }
+                }
+                res.end();
+            }
+            finally {
+                reader.releaseLock();
+            }
+            return;
+        }
+        const bodyText = await upstreamResponse.text();
+        res.send(bodyText);
+    }
+    catch (error) {
+        const message = error instanceof Error && error.name === 'AbortError'
+            ? `转发到上游超时（>${timeoutMs}ms）`
+            : error instanceof Error
+                ? error.message
+                : '转发到上游失败';
+        console.error(`[Forward][${traceId}] provider=${providerKey} upstream_error=${message}`);
+        res.status(502).json({
+            error: {
+                message,
+                type: 'upstream_error',
+                code: 'UPSTREAM_REQUEST_FAILED',
+            },
+        });
+    }
+    finally {
+        clearTimeout(timeout);
+    }
 }
 /**
  * 尝试将“看起来像 JSON”的文本规范化为严格 JSON 字符串
@@ -516,91 +584,6 @@ function buildContentPreview(content, maxLength = 200) {
         .replace(/\s+/g, ' ')
         .slice(0, maxLength);
 }
-function getWebInputConfig() {
-    return (config.web_input ?? {});
-}
-function getProviderInputCharLimitByModel(model) {
-    const providers = getProviderConfigMap();
-    for (const provider of Object.values(providers)) {
-        const modelList = provider.models ?? [];
-        if (modelList.some((m) => m.toLowerCase() === model.toLowerCase())) {
-            const limit = provider.input_max_chars;
-            return typeof limit === 'number' && limit > 0 ? limit : undefined;
-        }
-    }
-    const fallbackSite = inferSiteFromModel(model);
-    const fallbackProvider = providers[fallbackSite];
-    const fallbackLimit = fallbackProvider?.input_max_chars;
-    return typeof fallbackLimit === 'number' && fallbackLimit > 0 ? fallbackLimit : undefined;
-}
-function splitPromptByLimit(prompt, maxChars) {
-    if (!maxChars || maxChars <= 0 || prompt.length <= maxChars) {
-        return [prompt];
-    }
-    const chunks = [];
-    let cursor = 0;
-    while (cursor < prompt.length) {
-        const end = Math.min(cursor + maxChars, prompt.length);
-        let cut = end;
-        if (end < prompt.length) {
-            const window = prompt.slice(cursor, end);
-            const paragraphCut = window.lastIndexOf('\n\n');
-            const lineCut = window.lastIndexOf('\n');
-            const softCut = Math.max(paragraphCut, lineCut);
-            if (softCut > Math.floor(maxChars * 0.4)) {
-                cut = cursor + softCut;
-            }
-        }
-        if (cut <= cursor) {
-            cut = end;
-        }
-        chunks.push(prompt.slice(cursor, cut));
-        cursor = cut;
-    }
-    return chunks.filter((c) => c.length > 0);
-}
-function buildChunkPrompt(chunk, chunkIndex, chunkTotal, responseSchemaTemplate) {
-    if (chunkTotal <= 1)
-        return chunk;
-    const seq = `${chunkIndex + 1}/${chunkTotal}`;
-    const startMarker = `<|wc_chunk_start:${seq}|>`;
-    const endMarker = `<|wc_chunk_end:${seq}|>`;
-    const allEndMarker = '<|wc_all_chunks_end|>';
-    const wrappedChunk = [startMarker, chunk, endMarker].join('\n');
-    if (chunkIndex === 0) {
-        return [
-            `【分段输入 ${seq}】后续内容较长，将分段发送。`,
-            `当你看到 ${startMarker} 到 ${endMarker} 时，表示一个分段内容。`,
-            `在看到 ${allEndMarker} 之前，你只能回复“收到”，不要正式回答。`,
-            '---',
-            wrappedChunk,
-            '请仅回复：收到',
-        ].join('\n');
-    }
-    if (chunkIndex < chunkTotal - 1) {
-        return [
-            `【分段输入 ${seq}】中间分段。`,
-            wrappedChunk,
-            '请仅回复：收到',
-        ].join('\n');
-    }
-    return [
-        `【分段输入 ${seq}】最后一段。`,
-        wrappedChunk,
-        allEndMarker,
-        '以上分段输入全部结束。请基于全部分段内容进行正式回答。',
-        '严格按照以下格式输出，不能有额外的解释',
-        responseSchemaTemplate,
-    ].join('\n');
-}
-function shouldUseFormatOnlyRetry(options) {
-    if (options.chunked)
-        return true;
-    const threshold = getWebInputConfig().retry_format_only_threshold_chars;
-    if (typeof threshold !== 'number' || threshold <= 0)
-        return false;
-    return options.originalPromptLength > threshold;
-}
 function initSseHeaders(res) {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -746,8 +729,42 @@ async function chatCompletionsHandler(req, res, next) {
         });
         (0, logger_1.logDebug)('chat_completions_request_body', {
             trace_id: traceId,
-            body_preview: (0, logger_1.stringifyLogPayload)(requestBody ?? {}).slice(0, 5000),
+            body_preview: (0, logger_1.formatRequestBodyPreview)(requestBody ?? {}),
         });
+        const requestedModel = typeof requestBody?.model === 'string' ? requestBody.model : '';
+        if (!requestedModel) {
+            res.status(400).json({
+                error: {
+                    message: '请求格式错误: OpenAI 请求缺少 model 字段',
+                    type: 'invalid_request_error',
+                    code: 'invalid_request',
+                },
+            });
+            return;
+        }
+        const providerKey = inferProviderFromModel(requestedModel);
+        const providerConfig = (0, provider_config_1.getNormalizedProviderConfig)(providerKey);
+        const providerMode = providerConfig?.default_mode ?? 'web';
+        if (providerMode === 'forward') {
+            await sendForwardRequest(res, {
+                traceId,
+                providerKey,
+                providerConfig: providerConfig ?? (0, provider_config_1.normalizeProviderConfig)(undefined),
+                requestBody,
+            });
+            return;
+        }
+        if (!(0, provider_config_1.isSiteKey)(providerKey)) {
+            res.status(500).json({
+                error: {
+                    message: `provider ${providerKey} 未配置为受支持的 web provider`,
+                    type: 'configuration_error',
+                    code: 'unsupported_web_provider',
+                },
+            });
+            return;
+        }
+        const site = providerKey;
         // ===== Step 1: 解析协议 =====
         let internalReq;
         try {
@@ -770,19 +787,17 @@ async function chatCompletionsHandler(req, res, next) {
         const dm = new DataManager_1.DataManager(internalReq);
         dm.set_trace_id(traceId);
         logSessionTrace('init_dm', dm, traceId);
-        const initPrompt = dm.get_init_prompt_for_new_session();
+        const initPromptForNewSession = dm.get_init_prompt_for_new_session();
         // ===== Step 3: 保存数据 =====
         await dm.save_data();
         logSessionTrace('after_save_request', dm, traceId);
-        // ===== Step 4: 推断目标网站 =====
-        const site = inferSiteFromModel(internalReq.model);
-        // ===== Step 5: 判断链接状态，初始化或获取 session URL =====
+        // ===== Step 4: 判断链接状态，初始化或获取 session URL =====
         let sessionUrl;
         const initializeConversationAndBind = async () => {
             logSessionTrace('before_init_conversation', dm, traceId);
             let initResult;
             try {
-                initResult = await webDriver.initConversation(site, initPrompt);
+                initResult = await webDriver.initConversation(site, initPromptForNewSession);
             }
             catch (err) {
                 if (err instanceof types_1.WebDriverError) {
@@ -810,6 +825,7 @@ async function chatCompletionsHandler(req, res, next) {
                 throw err;
             }
             const newSessionUrl = initResult.url;
+            logSessionTrace('after_init_conversation_url_ready', dm, traceId);
             dm.update_web_url(newSessionUrl);
             logSessionTrace('after_bind_new_session_url', dm, traceId);
             return newSessionUrl;
@@ -857,15 +873,10 @@ async function chatCompletionsHandler(req, res, next) {
         // ===== Step 6: 发送当前消息 =====
         const responseSchemaTemplate = dm.get_response_schema_template();
         const currentPrompt = dm.get_current_prompt_for_web_send();
-        const providerInputCharLimit = getProviderInputCharLimitByModel(internalReq.model);
-        const promptChunks = splitPromptByLimit(currentPrompt, providerInputCharLimit);
-        const isChunkedInput = promptChunks.length > 1;
         logRequestTrace(traceId, 'chat_dispatch', {
             site,
             session_url: sessionUrl,
             current_prompt_length: currentPrompt.length,
-            provider_input_char_limit: providerInputCharLimit ?? null,
-            chunk_count: promptChunks.length,
         });
         const handleDispatchError = (err) => {
             if (err instanceof types_1.WebDriverError) {
@@ -896,15 +907,10 @@ async function chatCompletionsHandler(req, res, next) {
         };
         let chatResult;
         try {
-            if (isChunkedInput) {
-                for (let i = 0; i < promptChunks.length - 1; i++) {
-                    const chunkPrompt = buildChunkPrompt(promptChunks[i], i, promptChunks.length, responseSchemaTemplate);
-                    await webDriver.sendOnly(site, sessionUrl, chunkPrompt);
-                }
-            }
-            const finalChunkIndex = promptChunks.length - 1;
-            const finalPrompt = buildChunkPrompt(promptChunks[finalChunkIndex], finalChunkIndex, promptChunks.length, responseSchemaTemplate);
-            chatResult = await webDriver.chat(site, sessionUrl, finalPrompt);
+            chatResult = await webDriver.chat(site, sessionUrl, currentPrompt, {
+                mode: 'chat',
+                responseSchemaTemplate
+            });
         }
         catch (err) {
             if (handleDispatchError(err)) {
@@ -927,14 +933,12 @@ async function chatCompletionsHandler(req, res, next) {
         while (!parsedJson && !upstreamError && retryCount < maxRetries) {
             console.log(`[Controller] 模型未返回 JSON 格式，重新发送（第 ${retryCount + 1} 次）... ` +
                 `preview=${responseContent.slice(0, 160).replace(/\s+/g, ' ')}`);
-            const formatOnlyRetry = shouldUseFormatOnlyRetry({
-                chunked: isChunkedInput,
-                originalPromptLength: currentPrompt.length,
-            });
             const retryBasePrompt = dm.get_format_only_retry_prompt();
             const templatePrompt = retryBasePrompt;
             try {
-                const retryResult = await webDriver.chat(site, sessionUrl, templatePrompt);
+                const retryResult = await webDriver.chat(site, sessionUrl, templatePrompt, {
+                    mode: 'retry',
+                });
                 responseContent = retryResult.content;
                 parsedJson = extractJson(responseContent);
                 upstreamError = detectUpstreamServiceError(responseContent);
@@ -972,12 +976,20 @@ async function chatCompletionsHandler(req, res, next) {
         let messagePayload = {
             content: responseContent,
         };
+        const persistAssistantCurrent = (assistantMessage) => {
+            dm.clear_current();
+            dm.replace_current_with_assistant({
+                role: 'assistant',
+                content: assistantMessage.content ?? responseContent,
+                tool_calls: assistantMessage.tool_calls,
+            });
+        };
         if (parsedJson) {
             try {
                 const jsonResponse = JSON.parse(parsedJson);
                 parsedChoiceObj = jsonResponse?.choices?.[0] ?? jsonResponse;
                 if (parsedChoiceObj?.message && typeof parsedChoiceObj.message === 'object') {
-                    dm.update_current(parsedChoiceObj.message);
+                    persistAssistantCurrent(parsedChoiceObj.message);
                     messagePayload = {
                         content: parsedChoiceObj.message.content ?? responseContent,
                         tool_calls: parsedChoiceObj.message.tool_calls,
@@ -985,7 +997,7 @@ async function chatCompletionsHandler(req, res, next) {
                     };
                 }
                 else {
-                    dm.update_current({
+                    persistAssistantCurrent({
                         role: 'assistant',
                         content: responseContent,
                     });
@@ -993,14 +1005,14 @@ async function chatCompletionsHandler(req, res, next) {
             }
             catch {
                 // JSON 解析失败，回退到纯文本包装
-                dm.update_current({
+                persistAssistantCurrent({
                     role: 'assistant',
                     content: responseContent,
                 });
             }
         }
         else {
-            dm.update_current({
+            persistAssistantCurrent({
                 role: 'assistant',
                 content: responseContent,
             });
@@ -1044,8 +1056,8 @@ async function chatCompletionsHandler(req, res, next) {
 /**
  * GET /v1/models — 返回支持的模型列表
  */
-async function listModelsHandler(req, res) {
-    const providers = getProviderConfigMap();
+async function listModelsHandler(_req, res) {
+    const providers = (0, provider_config_1.getNormalizedProviderConfigMap)();
     const modelList = Object.values(providers)
         .flatMap((provider) => provider.models ?? [])
         .map((id) => ({

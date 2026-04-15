@@ -35,19 +35,21 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.stringifyLogPayload = stringifyLogPayload;
 exports.initServiceLogger = initServiceLogger;
-exports.isDebugLoggingEnabled = isDebugLoggingEnabled;
+exports.formatRequestBodyPreview = formatRequestBodyPreview;
 exports.logDebug = logDebug;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const app_config_1 = require("../config/app-config");
 let loggerInitialized = false;
 let debugEnabled = false;
 let prettyJsonEnabled = false;
 let prettyJsonIndent = 2;
+let requestBodyTruncateEnabled = true;
+let requestBodyMaxChars = 5000;
 let stream = null;
 function loadLoggingConfig() {
     try {
-        const configPath = path.join(process.cwd(), 'config', 'default.json');
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const raw = (0, app_config_1.loadAppConfig)();
         const logging = (raw.logging ?? {});
         return {
             enabled: logging.enabled !== false,
@@ -60,6 +62,10 @@ function loadLoggingConfig() {
             pretty_json_indent: typeof logging.pretty_json_indent === 'number' && logging.pretty_json_indent > 0
                 ? Math.floor(logging.pretty_json_indent)
                 : 2,
+            request_body_truncate_enabled: logging.request_body_truncate_enabled !== false,
+            request_body_max_chars: typeof logging.request_body_max_chars === 'number' && logging.request_body_max_chars > 0
+                ? Math.floor(logging.request_body_max_chars)
+                : 5000,
         };
     }
     catch {
@@ -70,6 +76,8 @@ function loadLoggingConfig() {
             file_prefix: 'webclaw-proxy',
             pretty_json: false,
             pretty_json_indent: 2,
+            request_body_truncate_enabled: true,
+            request_body_max_chars: 5000,
         };
     }
 }
@@ -101,6 +109,8 @@ function initServiceLogger() {
     debugEnabled = cfg.debug;
     prettyJsonEnabled = cfg.pretty_json;
     prettyJsonIndent = cfg.pretty_json_indent;
+    requestBodyTruncateEnabled = cfg.request_body_truncate_enabled;
+    requestBodyMaxChars = cfg.request_body_max_chars;
     if (!cfg.enabled)
         return;
     const dir = path.isAbsolute(cfg.dir) ? cfg.dir : path.join(process.cwd(), cfg.dir);
@@ -136,9 +146,14 @@ function initServiceLogger() {
     console.log(`[Logger] 文件日志已启用: ${filePath}`);
     console.log(`[Logger] Debug 模式: ${debugEnabled ? 'ON' : 'OFF'}`);
     console.log(`[Logger] JSON 格式化: ${prettyJsonEnabled ? `ON (indent=${prettyJsonIndent})` : 'OFF'}`);
+    console.log(`[Logger] 请求体截断: ${requestBodyTruncateEnabled ? `ON (max=${requestBodyMaxChars})` : 'OFF'}`);
 }
-function isDebugLoggingEnabled() {
-    return debugEnabled;
+function formatRequestBodyPreview(payload) {
+    const raw = stringifyLogPayload(payload);
+    if (!requestBodyTruncateEnabled) {
+        return raw;
+    }
+    return raw.slice(0, requestBodyMaxChars);
 }
 function logDebug(stage, payload) {
     if (!debugEnabled)

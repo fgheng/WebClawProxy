@@ -48,6 +48,11 @@ const ChatGPTDriver_1 = require("./drivers/ChatGPTDriver");
 const QwenDriver_1 = require("./drivers/QwenDriver");
 const DeepSeekDriver_1 = require("./drivers/DeepSeekDriver");
 const KimiDriver_1 = require("./drivers/KimiDriver");
+const GLMDriver_1 = require("./drivers/GLMDriver");
+const provider_config_1 = require("../config/provider-config");
+const PlaywrightLaunchBackend_1 = require("./backends/PlaywrightLaunchBackend");
+const ElectronCdpBackend_1 = require("./backends/ElectronCdpBackend");
+const app_config_1 = require("../config/app-config");
 // 注册 Stealth 插件（全局只需一次）
 // Stealth 插件消除以下自动化特征：
 //   - navigator.webdriver = true
@@ -60,14 +65,13 @@ const KimiDriver_1 = require("./drivers/KimiDriver");
 //   - 等等（共 11 个 evasion 模块）
 playwright_extra_1.chromium.use((0, puppeteer_extra_plugin_stealth_1.default)());
 // 加载配置
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+const config = (0, app_config_1.loadAppConfig)();
 function getSiteUrlsFromConfig() {
-    const providers = (config.providers ?? {});
+    const providers = (0, provider_config_1.getNormalizedProviderConfigMap)();
     const fromProviders = {};
     for (const [key, provider] of Object.entries(providers)) {
-        if (key === 'gpt' || key === 'qwen' || key === 'deepseek' || key === 'kimi') {
-            const site = (provider?.site ?? '').trim();
+        if ((0, provider_config_1.isSiteKey)(key)) {
+            const site = (provider.web.site ?? '').trim();
             if (site) {
                 fromProviders[key] = site;
             }
@@ -122,13 +126,16 @@ function buildUserAgent() {
  */
 class WebDriverManager {
     constructor(options = {}) {
-        this.browser = null;
-        this.context = null;
+        this.backend = null;
         /** 每个 SiteKey 对应一个 Page 和 Driver */
         this.pageMap = new Map();
         this.driverMap = new Map();
+        /** 每个 provider 一条串行链，避免同一站点并发抢占同一个 page/driver */
+        this.siteTaskTails = new Map();
+        this.chunkStreamCounter = 0;
         this.options = {
             headless: options.headless ?? (config.webdriver?.headless ?? false),
+            browserBackend: options.browserBackend ?? process.env.WEBCLAW_BROWSER_BACKEND ?? 'playwright-launch',
             responseTimeoutMs: options.responseTimeoutMs ?? (config.webdriver?.response_timeout_ms ?? 120000),
             stabilityCheckIntervalMs: options.stabilityCheckIntervalMs ?? (config.webdriver?.stability_check_interval_ms ?? 500),
             stabilityCheckCount: options.stabilityCheckCount ?? (config.webdriver?.stability_check_count ?? 3),
@@ -145,31 +152,36 @@ class WebDriverManager {
      * @returns 新建对话的 URL
      */
     async initConversation(site, initPrompt) {
-        const prompt = initPrompt ?? (config.defaults?.init_prompt ?? '对话初始化，这是一个全新的对话，请忘掉所有提示词，重新开始');
-        await this.ensureBrowser();
-        const driver = await this.getOrCreateDriver(site);
-        // 登录态检查已由服务启动预检承担；初始化流程不再重复判断
-        // 2. 新建对话
-        await driver.createNewConversation();
-        // 发送初始化提示词前，等待页面稳定，避免刚新建对话时输入被吞
-        await this.waitForPageReadyBeforeSend(site);
-        // 3. 发送初始化提示词
-        await driver.sendMessage(prompt);
-        // 4. 等待 URL 从主页变为对话链接（URL 变化说明对话已建立）
-        const url = await this.waitForConversationUrl(driver, site);
-        // 5. 等待模型完成对初始化提示词的回复
-        //    这一步非常重要：确保初始化提示词被模型完整接收并回复后
-        //    才返回 sessionUrl，避免 chat() 过早跳入页面导致上下文丢失
-        console.log(`[WebDriver] 等待 ${site} 初始化回复完成...`);
-        try {
-            await driver.waitForResponse();
-            console.log(`[WebDriver] ${site} 初始化回复已完成`);
-        }
-        catch {
-            // 即使等待超时也继续（已获取 URL 就足够了）
-            console.warn(`[WebDriver] ${site} 初始化回复等待超时，继续执行`);
-        }
-        return { url };
+        return this.runWithSiteLock(site, async () => {
+            const prompt = initPrompt ?? this.resolveDefaultInitPrompt();
+            await this.ensureBrowser();
+            const driver = await this.getOrCreateDriver(site);
+            // 登录态检查已由服务启动预检承担；初始化流程不再重复判断
+            // 2. 新建对话
+            await driver.createNewConversation();
+            // 发送初始化提示词前，等待页面稳定，避免刚新建对话时输入被吞
+            await this.waitForPageReadyBeforeSend(site);
+            // 3. 发送初始化提示词（含超长分段保护）
+            await this.dispatchPrompt(site, driver, {
+                prompt,
+                mode: 'init',
+            });
+            // 4. 等待 URL 从主页变为对话链接（URL 变化说明对话已建立）
+            const url = await this.waitForConversationUrl(driver, site);
+            // 5. 等待模型完成对初始化提示词的回复
+            //    这一步非常重要：确保初始化提示词被模型完整接收并回复后
+            //    才返回 sessionUrl，避免 chat() 过早跳入页面导致上下文丢失
+            console.log(`[WebDriver] 等待 ${site} 初始化回复完成...`);
+            try {
+                await driver.waitForResponse();
+                console.log(`[WebDriver] ${site} 初始化回复已完成`);
+            }
+            catch {
+                // 即使等待超时也继续（已获取 URL 就足够了）
+                console.warn(`[WebDriver] ${site} 初始化回复等待超时，继续执行`);
+            }
+            return { url };
+        });
     }
     /**
      * 对话服务
@@ -179,18 +191,22 @@ class WebDriverManager {
      * @param message 要发送的消息
      * @returns 模型的响应内容
      */
-    async chat(site, sessionUrl, message) {
-        const driver = await this.executeSendFlow(site, sessionUrl, message);
-        // 6. 提取响应
-        const content = await driver.extractResponse();
-        return { content };
+    async chat(site, sessionUrl, message, options = {}) {
+        return this.runWithSiteLock(site, async () => {
+            const driver = await this.executeSendFlow(site, sessionUrl, message, options);
+            // 6. 提取响应
+            const content = await driver.extractResponse();
+            return { content };
+        });
     }
     /**
      * 仅发送并等待完成，不提取回复内容。
      * 用于长文本分段发送时的前置分段。
      */
-    async sendOnly(site, sessionUrl, message) {
-        await this.executeSendFlow(site, sessionUrl, message);
+    async sendOnly(site, sessionUrl, message, options = {}) {
+        await this.runWithSiteLock(site, async () => {
+            await this.executeSendFlow(site, sessionUrl, message, options);
+        });
     }
     /**
      * 浏览器弹出服务
@@ -200,19 +216,8 @@ class WebDriverManager {
      */
     async openBrowser(url, hint) {
         await this.ensureBrowser();
-        const targetHost = new URL(url).host;
-        const reusablePage = [
-            ...Array.from(this.pageMap.values()),
-            ...(this.context.pages?.() ?? []),
-        ].find((p) => {
-            try {
-                return new URL(p.url()).host === targetHost;
-            }
-            catch {
-                return false;
-            }
-        });
-        const page = reusablePage ?? await this.context.newPage();
+        const backend = this.getBackend();
+        const page = await backend.getOrCreatePageForUrl(url);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         if (hint) {
             await page.evaluate((message) => {
@@ -255,7 +260,7 @@ class WebDriverManager {
             await this.openSitePage(site);
         }
     }
-    async executeSendFlow(site, sessionUrl, message) {
+    async executeSendFlow(site, sessionUrl, message, options = {}) {
         await this.ensureBrowser();
         const driver = await this.getOrCreateDriver(site);
         // 登录态检查在服务启动预检阶段完成，chat 路径不再重复检查
@@ -276,35 +281,127 @@ class WebDriverManager {
             // 即使未跳转，也做一次轻量稳定等待，避免页面刚切换完成时输入丢失
             await this.waitForPageReadyBeforeSend(site);
         }
-        // 4. 发送消息
-        await driver.sendMessage(message);
+        // 4. 发送消息（含超长分段保护）
+        await this.dispatchPrompt(site, driver, {
+            prompt: message,
+            mode: options.mode ?? 'chat',
+            responseSchemaTemplate: options.responseSchemaTemplate,
+        });
         // 5. 等待响应完成
         await driver.waitForResponse();
         return driver;
     }
-    async openSitePage(site) {
-        if (!this.context) {
-            throw new types_1.WebDriverError(types_1.WebDriverErrorCode.BROWSER_NOT_INITIALIZED, '浏览器未初始化');
+    resolveDefaultInitPrompt() {
+        const configured = config.defaults?.init_prompt;
+        if (typeof configured === 'string' && configured.trim() !== '') {
+            return this.renderInitPromptTemplate(configured);
         }
+        return '对话初始化，这是一个全新的对话，请忘掉所有提示词，重新开始';
+    }
+    renderInitPromptTemplate(template) {
+        const responseSchemaTemplate = config.defaults?.response_schema_template ?? '';
+        return template.split('{{response_schema_template}}').join(responseSchemaTemplate);
+    }
+    getInputMaxChars(site) {
+        const providers = (0, provider_config_1.getNormalizedProviderConfigMap)();
+        const limit = providers[site]?.web.input_max_chars;
+        return typeof limit === 'number' && limit > 0 ? limit : undefined;
+    }
+    splitPromptByLimit(prompt, maxChars) {
+        if (!maxChars || maxChars <= 0 || prompt.length <= maxChars) {
+            return [prompt];
+        }
+        const chunks = [];
+        let cursor = 0;
+        while (cursor < prompt.length) {
+            const end = Math.min(cursor + maxChars, prompt.length);
+            let cut = end;
+            if (end < prompt.length) {
+                const window = prompt.slice(cursor, end);
+                const paragraphCut = window.lastIndexOf('\n\n');
+                const lineCut = window.lastIndexOf('\n');
+                const softCut = Math.max(paragraphCut, lineCut);
+                if (softCut > Math.floor(maxChars * 0.4)) {
+                    cut = cursor + softCut;
+                }
+            }
+            if (cut <= cursor) {
+                cut = end;
+            }
+            chunks.push(prompt.slice(cursor, cut));
+            cursor = cut;
+        }
+        return chunks.filter((chunk) => chunk.length > 0);
+    }
+    buildChunkPrompt(options) {
+        const { chunk, chunkIndex, chunkTotal, streamId } = options;
+        if (chunkTotal <= 1)
+            return chunk;
+        const seq = `${chunkIndex + 1}/${chunkTotal}`;
+        const chunkId = `${chunkIndex + 1}`;
+        const chunkStartMarker = `<chunk id="${chunkId}">`;
+        const chunkEndMarker = '</chunk>';
+        const headers = [
+            `[STREAM_ID: ${streamId}]`,
+            `[PART: ${seq}]`,
+            '[ROLE: CONTEXT]',
+            '[TYPE: message]',
+        ];
+        const wrappedChunk = [chunkStartMarker, chunk, chunkEndMarker].join('\n');
+        if (chunkIndex === 0) {
+            return [
+                ...headers,
+                '',
+                '<message>',
+                wrappedChunk,
+            ].join('\n');
+        }
+        if (chunkIndex < chunkTotal - 1) {
+            return [
+                ...headers,
+                '',
+                wrappedChunk,
+            ].join('\n');
+        }
+        return [
+            ...headers,
+            '[END: TRUE]',
+            '',
+            wrappedChunk,
+            '</message>',
+        ].join('\n');
+    }
+    createChunkStreamId() {
+        this.chunkStreamCounter += 1;
+        return `MSG-${this.chunkStreamCounter.toString(36).toUpperCase()}`;
+    }
+    async dispatchPrompt(site, driver, options) {
+        const maxChars = this.getInputMaxChars(site);
+        const chunks = this.splitPromptByLimit(options.prompt, maxChars);
+        const streamId = chunks.length > 1 ? this.createChunkStreamId() : '';
+        for (let i = 0; i < chunks.length; i++) {
+            const prompt = this.buildChunkPrompt({
+                chunk: chunks[i],
+                chunkIndex: i,
+                chunkTotal: chunks.length,
+                streamId,
+                mode: options.mode,
+                responseSchemaTemplate: options.responseSchemaTemplate,
+            });
+            await driver.sendMessage(prompt);
+            if (i < chunks.length - 1) {
+                await driver.waitForResponse();
+                await this.waitForPageReadyBeforeSend(site);
+            }
+        }
+    }
+    async openSitePage(site) {
         const siteUrl = SITE_URLS[site];
         if (!siteUrl) {
             throw new types_1.WebDriverError(types_1.WebDriverErrorCode.UNKNOWN_SITE, `未知的 site key: ${site}`);
         }
-        const existingSitePage = this.pageMap.get(site);
-        if (existingSitePage) {
-            await existingSitePage.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            return existingSitePage;
-        }
-        const targetHost = new URL(siteUrl).host;
-        const reusableByHost = (this.context.pages?.() ?? []).find((p) => {
-            try {
-                return new URL(p.url()).host === targetHost;
-            }
-            catch {
-                return false;
-            }
-        });
-        const page = reusableByHost ?? await this.context.newPage();
+        const backend = this.getBackend();
+        const page = await backend.getOrCreatePageForSite(site, siteUrl);
         await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         this.pageMap.set(site, page);
         // 页面绑定变化后，确保后续 driver 与 page 一致
@@ -315,16 +412,13 @@ class WebDriverManager {
      * 关闭浏览器，释放资源
      */
     async close() {
-        if (this.context) {
-            await this.context.close();
-            this.context = null;
-        }
-        if (this.browser) {
-            await this.browser.close();
-            this.browser = null;
+        if (this.backend) {
+            await this.backend.close();
+            this.backend = null;
         }
         this.pageMap.clear();
         this.driverMap.clear();
+        this.siteTaskTails.clear();
     }
     // ==============================
     // 内部方法
@@ -342,151 +436,54 @@ class WebDriverManager {
      * 4. 设置真实的 User-Agent、语言、viewport
      */
     async ensureBrowser() {
-        if (this.context && this.browser && this.browser.isConnected()) {
+        if (this.backend?.isReady()) {
             return;
         }
         // 清理旧状态
         this.pageMap.clear();
         this.driverMap.clear();
+        this.siteTaskTails.clear();
+        this.backend = this.createBackend();
+        await this.backend.ensureReady();
+        console.log(`[WebDriver] 浏览器后端已就绪: ${this.options.browserBackend}`);
+    }
+    createBackend() {
+        if (this.options.browserBackend === 'electron-cdp') {
+            const cdpUrl = process.env.WEBCLAW_CDP_URL ?? 'http://127.0.0.1:9222';
+            return new ElectronCdpBackend_1.ElectronCdpBackend({ cdpUrl });
+        }
         const userDataDir = getUserDataDir();
         const userAgent = buildUserAgent();
         console.log(`[WebDriver] 使用持久化用户目录: ${userDataDir}`);
-        // 使用 launchPersistentContext 启动浏览器并保留用户数据
-        // 这是模拟真实用户的关键手段之一
-        this.context = await playwright_extra_1.chromium.launchPersistentContext(userDataDir, {
+        return new PlaywrightLaunchBackend_1.PlaywrightLaunchBackend({
             headless: this.options.headless,
-            // ============================
-            // 真实浏览器启动参数
-            // ============================
-            args: [
-                // 移除自动化相关标志
-                '--disable-blink-features=AutomationControlled',
-                // 不显示自动化信息栏（"Chrome is being controlled by automated software"）
-                '--disable-infobars',
-                // 其他稳定性/兼容性参数
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                // 禁用扩展程序（减少指纹差异）
-                '--disable-extensions',
-                // 禁用自动填写表单提示
-                '--disable-save-password-bubble',
-                // 正常窗口大小（非默认的 800x600，看起来更像真实用户）
-                '--window-size=1280,800',
-                // 语言设置
-                '--lang=zh-CN',
-                // 不使用首次运行的欢迎页
-                '--no-first-run',
-                '--no-default-browser-check',
-            ],
-            // ============================
-            // 真实用户配置
-            // ============================
+            userDataDir,
             userAgent,
-            // 真实的视口大小（非极端值）
-            viewport: { width: 1280, height: 800 },
-            // 语言设置
-            locale: 'zh-CN',
-            timezoneId: 'Asia/Shanghai',
-            // 地理位置（可选，不设置则不发送）
-            // geolocation: { latitude: 31.2304, longitude: 121.4737 },
-            // 权限
-            permissions: ['geolocation', 'notifications'],
-            // 颜色方案（大多数正常用户使用 light 或 dark）
-            colorScheme: 'light',
-            // 忽略 HTTPS 错误（某些情况下需要）
-            ignoreHTTPSErrors: false,
-            // 接受下载（正常浏览器行为）
-            acceptDownloads: true,
-            // 设置额外 HTTP 头（模拟真实浏览器）
-            extraHTTPHeaders: {
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            },
         });
-        // context 已经是 BrowserContext 了
-        // launchPersistentContext 返回的是 BrowserContext，通过 browser() 获取 Browser
-        this.browser = this.context.browser();
-        // ============================
-        // 全局注入反检测脚本
-        // ============================
-        // 即使有 stealth 插件，某些更细粒度的检测仍可能绕过
-        // 这里手动覆盖最关键的几个属性
-        await this.context.addInitScript(`
-      // 1. 删除/覆盖 navigator.webdriver 属性
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-        configurable: true,
-      });
-
-      // 2. 修复 navigator.plugins（无头 Chrome 通常为空）
-      if (navigator.plugins.length === 0) {
-        Object.defineProperty(navigator, 'plugins', {
-          get: () => {
-            const plugins = [
-              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
-            ];
-            return Object.assign(plugins, {
-              item: (i) => plugins[i],
-              namedItem: (n) => plugins.find(p => p.name === n),
-              refresh: () => {},
-              length: plugins.length,
-            });
-          },
-          configurable: true,
+    }
+    getBackend() {
+        if (!this.backend) {
+            throw new types_1.WebDriverError(types_1.WebDriverErrorCode.BROWSER_NOT_INITIALIZED, '浏览器未初始化');
+        }
+        return this.backend;
+    }
+    async runWithSiteLock(site, task) {
+        const previous = this.siteTaskTails.get(site) ?? Promise.resolve();
+        let release;
+        const current = new Promise((resolve) => {
+            release = resolve;
         });
-      }
-
-      // 3. 修复 window.chrome 对象（真实 Chrome 有这个）
-      if (!window.chrome) {
-        window.chrome = {
-          runtime: {
-            connect: () => {},
-            sendMessage: () => {},
-          },
-          loadTimes: () => ({}),
-          csi: () => ({}),
-          app: {},
-        };
-      }
-
-      // 4. 修复语言列表（确保 navigator.languages 不为空）
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['zh-CN', 'zh', 'en'],
-        configurable: true,
-      });
-
-      // 5. 让 Permissions API 返回真实浏览器的行为
-      const originalQuery = window.navigator.permissions?.query;
-      if (originalQuery) {
-        window.navigator.permissions.query = (parameters) => {
-          return parameters.name === 'notifications'
-            ? Promise.resolve({ state: Notification.permission })
-            : originalQuery.call(window.navigator.permissions, parameters);
-        };
-      }
-
-      // 6. 修复 WebGL vendor/renderer（无头 Chrome 可能暴露 SwiftShader）
-      const getParameter = WebGLRenderingContext.prototype.getParameter;
-      WebGLRenderingContext.prototype.getParameter = function(parameter) {
-        if (parameter === 37445) return 'Intel Inc.';
-        if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-        return getParameter.call(this, parameter);
-      };
-
-      // 7. 覆盖 navigator.hardwareConcurrency（使其更真实）
-      Object.defineProperty(navigator, 'hardwareConcurrency', {
-        get: () => 8,
-        configurable: true,
-      });
-
-      // 8. 修复 screen 属性（无头模式可能返回异常值）
-      Object.defineProperty(screen, 'availWidth', { get: () => 1280, configurable: true });
-      Object.defineProperty(screen, 'availHeight', { get: () => 800, configurable: true });
-    `);
-        console.log('[WebDriver] 浏览器已启动（Stealth 模式已激活）');
+        this.siteTaskTails.set(site, previous.catch(() => undefined).then(() => current));
+        await previous.catch(() => undefined);
+        try {
+            return await task();
+        }
+        finally {
+            release();
+            if (this.siteTaskTails.get(site) === current) {
+                this.siteTaskTails.delete(site);
+            }
+        }
     }
     /**
      * 获取或创建指定 site 的 Driver
@@ -497,9 +494,10 @@ class WebDriverManager {
             return;
         const inputSelectorBySite = {
             gpt: '#prompt-textarea',
-            qwen: 'textarea, [contenteditable="true"]',
+            qwen: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
             deepseek: 'textarea, [contenteditable="true"]',
             kimi: 'textarea, [contenteditable="true"][class*="input"]',
+            glm: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
         };
         const readinessProfileBySite = {
             gpt: {
@@ -531,6 +529,13 @@ class WebDriverManager {
                 finalBufferMs: 80,
                 requireUrlStability: false,
             },
+            glm: {
+                maxWaitMs: 5000,
+                requiredStableRounds: 2,
+                intervalMs: 250,
+                finalBufferMs: 250,
+                requireUrlStability: true,
+            },
         };
         const profile = readinessProfileBySite[site];
         // 1) 等待文档事件（若 API 可用）
@@ -547,23 +552,39 @@ class WebDriverManager {
         const inputSelector = inputSelectorBySite[site];
         while (Date.now() - start < profile.maxWaitMs && stableRounds < profile.requiredStableRounds) {
             const currentUrl = page.url?.() ?? '';
-            const inputReady = await page
-                .evaluate(([selector]) => {
-                const el = globalThis.document.querySelector(selector);
+            const pageReady = await page
+                .evaluate(([selector, siteKey]) => {
+                const doc = globalThis.document;
+                const el = doc.querySelector(selector);
                 if (!el)
                     return false;
-                const style = globalThis.getComputedStyle?.(el);
-                const rect = el.getBoundingClientRect?.();
-                const visible = !style || (style.display !== 'none' &&
-                    style.visibility !== 'hidden' &&
-                    (rect ? rect.width > 0 && rect.height > 0 : true));
-                const notDisabled = !el.disabled && el.getAttribute?.('aria-disabled') !== 'true';
-                return Boolean(visible && notDisabled);
-            }, [inputSelector])
+                const getStyle = globalThis.getComputedStyle;
+                const isVisible = (node) => {
+                    if (!node)
+                        return false;
+                    const style = getStyle?.(node);
+                    const rect = node.getBoundingClientRect?.();
+                    return !style || (style.display !== 'none' &&
+                        style.visibility !== 'hidden' &&
+                        (rect ? rect.width > 0 && rect.height > 0 : true));
+                };
+                const inputVisible = isVisible(el);
+                const inputEnabled = !el.disabled && el.getAttribute?.('aria-disabled') !== 'true';
+                if (!inputVisible || !inputEnabled)
+                    return false;
+                if (siteKey !== 'gpt') {
+                    return true;
+                }
+                const stopButton = doc.querySelector('[data-testid="stop-button"]');
+                const blockingOverlayVisible = Array.from(doc.querySelectorAll('[role="dialog"]')).some((node) => isVisible(node));
+                // ChatGPT 的发送按钮可能要在输入文本后才激活/挂载。
+                // 发送前稳定性判定只要求输入框本身可交互，且当前不在生成态、没有弹窗遮挡。
+                return Boolean(!stopButton && !blockingOverlayVisible);
+            }, [inputSelector, site])
                 .catch(() => false);
             const ready = profile.requireUrlStability
-                ? Boolean(currentUrl && currentUrl === lastUrl && inputReady)
-                : Boolean(inputReady);
+                ? Boolean(currentUrl && currentUrl === lastUrl && pageReady)
+                : Boolean(pageReady);
             if (ready) {
                 stableRounds++;
             }
@@ -578,22 +599,13 @@ class WebDriverManager {
     }
     async getOrCreateDriver(site) {
         if (!this.driverMap.has(site)) {
-            if (!this.context) {
+            if (!this.backend) {
                 throw new types_1.WebDriverError(types_1.WebDriverErrorCode.BROWSER_NOT_INITIALIZED, '浏览器未初始化');
             }
             let page = this.pageMap.get(site);
             if (!page) {
                 const siteUrl = SITE_URLS[site];
-                const targetHost = siteUrl ? new URL(siteUrl).host : '';
-                const reusableByHost = (this.context.pages?.() ?? []).find((p) => {
-                    try {
-                        return targetHost ? new URL(p.url()).host === targetHost : false;
-                    }
-                    catch {
-                        return false;
-                    }
-                });
-                page = reusableByHost ?? await this.context.newPage();
+                page = await this.backend.getOrCreatePageForSite(site, siteUrl);
                 this.pageMap.set(site, page);
             }
             const driverOptions = {
@@ -614,6 +626,9 @@ class WebDriverManager {
                     break;
                 case 'kimi':
                     driver = new KimiDriver_1.KimiDriver(page, driverOptions);
+                    break;
+                case 'glm':
+                    driver = new GLMDriver_1.GLMDriver(page, driverOptions);
                     break;
                 default:
                     throw new types_1.WebDriverError(types_1.WebDriverErrorCode.UNKNOWN_SITE, `未知的 site key: ${site}`);

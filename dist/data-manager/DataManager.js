@@ -40,9 +40,9 @@ const types_1 = require("./types");
 const hash_1 = require("./utils/hash");
 const prompt_1 = require("./utils/prompt");
 const logger_1 = require("../controller/logger");
+const app_config_1 = require("../config/app-config");
 // 加载配置
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+const config = (0, app_config_1.loadAppConfig)();
 /**
  * 模型分类查找
  * 给定模型名称（如 "gpt-4o"），返回所属大类（小写，如 "gpt"）
@@ -76,16 +76,19 @@ class DataManager {
         this.system = request.system ?? '';
         this.history = [...(request.history ?? [])];
         this.tools = [...(request.tools ?? [])];
-        this.current = request.current;
+        this.current = this.normalizeCurrentList(request.current);
         this.config = {
             rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
             models: customConfig?.models ?? getModelMapFromConfig(),
+            initPrompt: customConfig?.initPrompt ??
+                config.defaults?.init_prompt ??
+                '',
             responseSchemaTemplate: customConfig?.responseSchemaTemplate ??
                 config.defaults?.response_schema_template ??
                 '',
             initPromptTemplate: customConfig?.initPromptTemplate ??
                 config.defaults?.init_prompt_template ??
-                '此次对话的所有回答都必须严格按照下面的json模板进行回复，不能有任何例外:\n{{response_schema_template}}\n\n下面是此次对话的系统提示词，你只需要按约定的回复格式回复"收到"即可.\n{{system_prompt}}\n\n下面是你可以访问的工具：\n{{tools_prompt}}\n\n下面是之前的一些历史对话，仅供参考:\n{{history_prompt}}',
+                'Note: Output JSON only, no extra explanation, and do not execute any actions.\n\nAll subsequent responses in this conversation must strictly follow the JSON template below:\n{{response_schema_template}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nReply only with: Received',
             userMessageTemplate: customConfig?.userMessageTemplate ??
                 config.defaults?.user_message_template ??
                 '',
@@ -160,12 +163,14 @@ class DataManager {
         this.logDataTrace('save_data_start', {
             old_hash: oldHash || '-',
             history_count_before: this.history.length,
-            current_role: this.current?.role,
-            current_content_type: this.current ? (Array.isArray(this.current.content) ? 'array' : typeof this.current.content) : 'none',
+            current_count: this.current.length,
+            current_roles: this.current.map((msg) => msg.role),
         });
-        // 先将 current 合并进 history（避免首轮写盘后内存 history 未更新造成 hash 链断裂）
-        if (this.current && !this.isSameAsHistoryTail(this.current)) {
-            this.history = [...this.history, this.current];
+        // 先将 current 批次合并进 history（避免首轮写盘后内存 history 未更新造成 hash 链断裂）
+        for (const msg of this.current) {
+            if (!this.isSameAsHistoryTail(msg)) {
+                this.history = [...this.history, msg];
+            }
         }
         // history 变化后推进到新 hash。
         // 仅在“原始 history 已包含 user”场景继承 oldHash；
@@ -246,7 +251,19 @@ class DataManager {
         }));
     }
     update_current(current) {
-        this.current = current;
+        this.current = this.normalizeCurrentList(current);
+    }
+    clear_current() {
+        this.current = [];
+    }
+    replace_current_with_assistant(message) {
+        this.current = [
+            {
+                ...message,
+                role: 'assistant',
+                content: message.content ?? '',
+            },
+        ];
     }
     /**
      * 会话链路可观测信息（用于 controller 调试日志）
@@ -282,6 +299,7 @@ class DataManager {
     get_init_prompt() {
         return (0, prompt_1.buildInitPrompt)({
             template: this.config.initPromptTemplate,
+            initPrompt: this.config.initPrompt,
             responseSchemaTemplate: this.config.responseSchemaTemplate,
             systemPrompt: this.get_system_prompt(),
             toolsPrompt: this.get_tools_prompt(),
@@ -294,11 +312,12 @@ class DataManager {
      * 则剔除该尾部，避免“当前轮消息”污染 init_prompt 的历史区块。
      */
     get_init_prompt_for_new_session() {
-        const historyForInit = this.isSameAsHistoryTail(this.current)
-            ? this.history.slice(0, -1)
+        const historyForInit = this.isSameAsHistoryTailBatch(this.current)
+            ? this.history.slice(0, this.history.length - this.current.length)
             : this.history;
         return (0, prompt_1.buildInitPrompt)({
             template: this.config.initPromptTemplate,
+            initPrompt: this.config.initPrompt,
             responseSchemaTemplate: this.config.responseSchemaTemplate,
             systemPrompt: this.get_system_prompt(),
             toolsPrompt: this.get_tools_prompt(),
@@ -368,11 +387,23 @@ class DataManager {
         const sortedTools = [...this.tools].sort((a, b) => (a.function?.name ?? '').localeCompare(b.function?.name ?? ''));
         fs.writeFileSync(toolsFile, JSON.stringify(sortedTools, null, 2), 'utf-8');
     }
+    normalizeCurrentList(current) {
+        if (!current)
+            return [];
+        return current.filter(Boolean).map((msg) => ({ ...msg, content: msg.content ?? '' }));
+    }
     isSameAsHistoryTail(message) {
         if (!this.history.length)
             return false;
         const tail = this.history[this.history.length - 1];
         return JSON.stringify(tail) === JSON.stringify(message);
+    }
+    isSameAsHistoryTailBatch(messages) {
+        if (!messages.length || this.history.length < messages.length) {
+            return false;
+        }
+        const tail = this.history.slice(this.history.length - messages.length);
+        return JSON.stringify(tail) === JSON.stringify(messages);
     }
     getSessionIndexPath() {
         return path.join(this.ROOT_DIR, 'session-index', this.modelCategory, `${this.model}.json`);

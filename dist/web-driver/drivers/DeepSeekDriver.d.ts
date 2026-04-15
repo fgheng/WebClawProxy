@@ -17,5 +17,13 @@ export declare class DeepSeekDriver extends BaseDriver {
     protected getStopButtonSelector(): string | null;
     protected getResponseAreaSelector(): string | null;
     private dismissDialogs;
+    private getInputText;
+    private canonicalizeForDispatch;
+    private clearInputArea;
+    private fillInputRobustly;
+    private waitForSendButtonStateAfterFill;
+    private tryPrimarySend;
+    private tryFallbackSend;
+    private waitForDispatch;
 }
 //# sourceMappingURL=DeepSeekDriver.d.ts.map

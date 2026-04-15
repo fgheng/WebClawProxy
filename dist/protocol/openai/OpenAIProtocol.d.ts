@@ -15,14 +15,15 @@ export declare class OpenAIProtocol extends BaseProtocol {
      * 提取规则：
      * - MODEL    = input.model
      * - SYSTEM   = 提取 messages 中所有 role=system 的文本内容并按顺序拼接
-     * - HISTORY  = 过滤掉所有 role=system 后，再去掉最后一条
      * - TOOLS    = input.tools || []
-     * - CURRENT  = 过滤后消息列表的最后一条
+     * - CURRENT  = 按 V5 规则从尾段提取 user/tool 消息批次（仅 user/tool）
+     * - HISTORY  = 非 system 消息去除 current 源片段后的前缀
      */
     parse(input: unknown, options?: {
         traceId?: string;
         source?: string;
     }): InternalRequest;
+    private splitHistoryAndCurrent;
     /**
      * 将内部响应字段转换为 OpenAI API 格式
      */

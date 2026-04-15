@@ -98,6 +98,10 @@ export class DataManager {
     this.config = {
       rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
       models: customConfig?.models ?? getModelMapFromConfig(),
+      initPrompt:
+        customConfig?.initPrompt ??
+        config.defaults?.init_prompt ??
+        '',
       responseSchemaTemplate:
         customConfig?.responseSchemaTemplate ??
         config.defaults?.response_schema_template ??
@@ -360,6 +364,7 @@ export class DataManager {
   get_init_prompt(): string {
     return buildInitPrompt({
       template: this.config.initPromptTemplate!,
+      initPrompt: this.config.initPrompt!,
       responseSchemaTemplate: this.config.responseSchemaTemplate!,
       systemPrompt: this.get_system_prompt(),
       toolsPrompt: this.get_tools_prompt(),
@@ -379,6 +384,7 @@ export class DataManager {
 
     return buildInitPrompt({
       template: this.config.initPromptTemplate!,
+      initPrompt: this.config.initPrompt!,
       responseSchemaTemplate: this.config.responseSchemaTemplate!,
       systemPrompt: this.get_system_prompt(),
       toolsPrompt: this.get_tools_prompt(),

@@ -25,10 +25,11 @@
  * ```
  */
 export { WebDriverManager } from './WebDriverManager';
-export { SiteKey, InitConversationResult, ChatResult, WebDriverManagerOptions, IWebDriver, WebDriverError, WebDriverErrorCode, } from './types';
+export { SiteKey, InitConversationResult, ChatResult, PromptDispatchMode, PromptDispatchOptions, WebDriverManagerOptions, IWebDriver, WebDriverError, WebDriverErrorCode, } from './types';
 export { BaseDriver } from './drivers/BaseDriver';
 export { ChatGPTDriver } from './drivers/ChatGPTDriver';
 export { QwenDriver } from './drivers/QwenDriver';
 export { DeepSeekDriver } from './drivers/DeepSeekDriver';
 export { KimiDriver } from './drivers/KimiDriver';
+export { GLMDriver } from './drivers/GLMDriver';
 //# sourceMappingURL=index.d.ts.map

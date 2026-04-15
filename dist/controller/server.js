@@ -27,15 +27,18 @@ function createApp() {
                 'x-session-id': req.headers['x-session-id'] ?? '',
                 authorization_present: Boolean(req.headers.authorization),
             },
-            body_preview: (0, logger_1.stringifyLogPayload)(req.body ?? {}).slice(0, 2000),
+            body_preview: (0, logger_1.formatRequestBodyPreview)(req.body ?? {}),
         });
         next();
     });
     // CORS（支持各种 AI 客户端）
-    app.use((_req, res, next) => {
+    app.use((req, res, next) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        const requestedHeaders = req.headers['access-control-request-headers'];
+        res.setHeader('Access-Control-Allow-Headers', typeof requestedHeaders === 'string' && requestedHeaders.trim().length > 0
+            ? requestedHeaders
+            : 'Content-Type, Authorization, x-trace-id, x-session-id');
         next();
     });
     // OPTIONS 预检请求处理

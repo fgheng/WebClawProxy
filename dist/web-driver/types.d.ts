@@ -1,7 +1,7 @@
 /**
  * 支持的网站 key
  */
-export type SiteKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi';
+export type SiteKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi' | 'glm';
 /**
  * 对话初始化结果
  */
@@ -17,11 +17,26 @@ export interface ChatResult {
     content: string;
 }
 /**
+ * 发送到网页输入框时的统一分发模式
+ */
+export type PromptDispatchMode = 'chat' | 'init' | 'retry';
+/**
+ * 网页输入分发选项
+ */
+export interface PromptDispatchOptions {
+    /** 分发模式，决定超长分段时的尾段提示词 */
+    mode?: PromptDispatchMode;
+    /** chat 模式超长分段时，最后一段附带的结构化输出模板 */
+    responseSchemaTemplate?: string;
+}
+/**
  * WebDriverManager 初始化选项
  */
 export interface WebDriverManagerOptions {
     /** 是否无头模式，默认 false */
     headless?: boolean;
+    /** 浏览器后端模式，默认 playwright-launch */
+    browserBackend?: 'playwright-launch' | 'electron-cdp';
     /** 等待模型响应的超时时间（ms），默认 120000 */
     responseTimeoutMs?: number;
     /** 内容稳定检测间隔（ms），默认 500 */

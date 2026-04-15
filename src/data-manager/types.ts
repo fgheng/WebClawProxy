@@ -1,5 +1,3 @@
-import { Message, Tool, InternalRequest } from '../protocol/types';
-
 /**
  * 数据管理模块重导出内部统一结构类型，方便外部直接引用
  */
@@ -11,6 +9,7 @@ export { Message, Tool, ContentItem, InternalRequest } from '../protocol/types';
 export interface DataManagerConfig {
   rootDir: string;
   models: Record<string, string[]>; // 如 { GPT: ["gpt-4", "gpt-4o", ...] }
+  initPrompt?: string;
   responseSchemaTemplate?: string;
   initPromptTemplate?: string;
   /** 用户消息发送到网页前的包装模板，支持 {{content}} 占位符 */

@@ -1,4 +1,4 @@
-import { SiteKey, InitConversationResult, ChatResult, WebDriverManagerOptions } from './types';
+import { SiteKey, InitConversationResult, ChatResult, PromptDispatchOptions, WebDriverManagerOptions } from './types';
 /**
  * WebDriverManager — Web 驱动核心管理类（已集成 Stealth 反检测）
  *
@@ -16,11 +16,13 @@ import { SiteKey, InitConversationResult, ChatResult, WebDriverManagerOptions } 
  */
 export declare class WebDriverManager {
     private options;
-    private browser;
-    private context;
+    private backend;
     /** 每个 SiteKey 对应一个 Page 和 Driver */
     private pageMap;
     private driverMap;
+    /** 每个 provider 一条串行链，避免同一站点并发抢占同一个 page/driver */
+    private siteTaskTails;
+    private chunkStreamCounter;
     constructor(options?: WebDriverManagerOptions);
     /**
      * 对话初始化服务
@@ -38,12 +40,12 @@ export declare class WebDriverManager {
      * @param message 要发送的消息
      * @returns 模型的响应内容
      */
-    chat(site: SiteKey, sessionUrl: string, message: string): Promise<ChatResult>;
+    chat(site: SiteKey, sessionUrl: string, message: string, options?: PromptDispatchOptions): Promise<ChatResult>;
     /**
      * 仅发送并等待完成，不提取回复内容。
      * 用于长文本分段发送时的前置分段。
      */
-    sendOnly(site: SiteKey, sessionUrl: string, message: string): Promise<void>;
+    sendOnly(site: SiteKey, sessionUrl: string, message: string, options?: PromptDispatchOptions): Promise<void>;
     /**
      * 浏览器弹出服务
      *
@@ -54,6 +56,13 @@ export declare class WebDriverManager {
     preflightConfiguredSites(sites?: SiteKey[]): Promise<void>;
     openConfiguredSites(sites?: SiteKey[]): Promise<void>;
     private executeSendFlow;
+    private resolveDefaultInitPrompt;
+    private renderInitPromptTemplate;
+    private getInputMaxChars;
+    private splitPromptByLimit;
+    private buildChunkPrompt;
+    private createChunkStreamId;
+    private dispatchPrompt;
     private openSitePage;
     /**
      * 关闭浏览器，释放资源
@@ -72,6 +81,9 @@ export declare class WebDriverManager {
      * 4. 设置真实的 User-Agent、语言、viewport
      */
     private ensureBrowser;
+    private createBackend;
+    private getBackend;
+    private runWithSiteLock;
     /**
      * 获取或创建指定 site 的 Driver
      */

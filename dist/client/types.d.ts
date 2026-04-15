@@ -82,5 +82,5 @@ export interface OpenAIResponseBody {
 /**
  * 客户端指令枚举
  */
-export type ClientCommand = '/help' | '/quit' | '/exit' | '/clear' | '/model' | '/system' | '/history' | '/config' | '/trace' | '/stream' | '/reset';
+export type ClientCommand = '/help' | '/quit' | '/exit' | '/new' | '/clear' | '/provider' | '/model' | '/system' | '/history' | '/config' | '/trace' | '/stream' | '/reset';
 //# sourceMappingURL=types.d.ts.map

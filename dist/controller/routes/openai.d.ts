@@ -9,5 +9,5 @@ export declare function chatCompletionsHandler(req: Request, res: Response, next
 /**
  * GET /v1/models — 返回支持的模型列表
  */
-export declare function listModelsHandler(req: Request, res: Response): Promise<void>;
+export declare function listModelsHandler(_req: Request, res: Response): Promise<void>;
 //# sourceMappingURL=openai.d.ts.map

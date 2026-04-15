@@ -8,7 +8,7 @@ export declare class DataManager {
     system: string;
     history: Message[];
     tools: Tool[];
-    current: Message;
+    current: Message[];
     HASH_KEY: string;
     DATA_PATH: string;
     ROOT_DIR: string;
@@ -46,7 +46,9 @@ export declare class DataManager {
      * 取消当前 hash 对应 session 的链接状态（保留历史 web_urls）
      */
     cancel_linked(): void;
-    update_current(current: Message): void;
+    update_current(current: Message[]): void;
+    clear_current(): void;
+    replace_current_with_assistant(message: Message): void;
     /**
      * 会话链路可观测信息（用于 controller 调试日志）
      */
@@ -87,7 +89,9 @@ export declare class DataManager {
     private ensureDataPath;
     private writeHistoryJsonl;
     private writeToolsJson;
+    private normalizeCurrentList;
     private isSameAsHistoryTail;
+    private isSameAsHistoryTailBatch;
     private getSessionIndexPath;
     private resolveDataPath;
     private generateSessionDirName;

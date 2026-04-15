@@ -11,5 +11,13 @@ export declare class KimiDriver extends BaseDriver {
     protected getResponseAreaSelector(): string | null;
     protected getLatestResponseText(responseSelector: string): Promise<string>;
     private dismissDialogs;
+    private getInputText;
+    private canonicalizeForDispatch;
+    private clearInputArea;
+    private fillInputRobustly;
+    private waitForSendButtonStateAfterFill;
+    private tryPrimarySend;
+    private tryFallbackSend;
+    private waitForDispatch;
 }
 //# sourceMappingURL=KimiDriver.d.ts.map

@@ -8,6 +8,7 @@ export { Message, Tool, ContentItem, InternalRequest } from '../protocol/types';
 export interface DataManagerConfig {
     rootDir: string;
     models: Record<string, string[]>;
+    initPrompt?: string;
     responseSchemaTemplate?: string;
     initPromptTemplate?: string;
     /** 用户消息发送到网页前的包装模板，支持 {{content}} 占位符 */

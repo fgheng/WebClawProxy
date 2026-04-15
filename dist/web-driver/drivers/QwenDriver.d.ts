@@ -10,6 +10,7 @@ export declare class QwenDriver extends BaseDriver {
      */
     isLoggedIn(): Promise<boolean>;
     createNewConversation(): Promise<void>;
+    navigateToConversation(url: string): Promise<void>;
     sendMessage(text: string): Promise<void>;
     extractResponse(): Promise<string>;
     isValidConversationUrl(url: string): boolean;
@@ -18,7 +19,10 @@ export declare class QwenDriver extends BaseDriver {
     private dismissDialogs;
     private getAssistantMessageCount;
     private getInputText;
+    private canonicalizeForDispatch;
+    private clearInputArea;
     private waitForDispatch;
+    private waitForSendButtonStateAfterFill;
     private tryPrimarySend;
     private tryFallbackSend;
     private fillInputRobustly;

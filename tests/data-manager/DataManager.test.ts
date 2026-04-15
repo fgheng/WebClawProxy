@@ -655,6 +655,26 @@ describe('DataManager', () => {
       expect(prompt).toBeTruthy();
     });
 
+    it('get_init_prompt 应该解析模板中的 {{init_prompt}} 占位符', () => {
+      const dm = new DataManager(mockRequest, {
+        rootDir: tmpDir,
+        models: {
+          GPT: ['gpt-4', 'gpt-4o', 'gpt-4-turbo', 'gpt-5', 'gpt-5.1', 'gpt-5.2'],
+          DEEPSEEK: ['deepseek-chat', 'deepseek-r1'],
+        },
+        initPrompt: 'INIT BLOCK',
+        responseSchemaTemplate: '{"test": "template"}',
+        initPromptTemplate: '{{init_prompt}}\n\n{{system_prompt}}\n\n{{init_prompt}}',
+        userMessageTemplate: '',
+      });
+
+      const prompt = dm.get_init_prompt();
+      expect(prompt).toContain('INIT BLOCK');
+      expect(prompt.match(/INIT BLOCK/g)?.length).toBe(2);
+      expect(prompt).toContain('<system>');
+      expect(prompt).not.toContain('{{init_prompt}}');
+    });
+
     it('get_init_prompt 在 system/history/tools 为空时不应输出对应 wrapper', () => {
       const dm = createTestDataManager({
         ...mockRequest,

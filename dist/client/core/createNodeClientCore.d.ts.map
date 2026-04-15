@@ -1,0 +1,1 @@
+{"version":3,"file":"createNodeClientCore.d.ts","sourceRoot":"","sources":["../../../src/client/core/createNodeClientCore.ts"],"names":[],"mappings":"AAEA,OAAO,EAAE,iBAAiB,EAAE,MAAM,qBAAqB,CAAC;AACxD,OAAO,EAAE,gBAAgB,EAAE,qBAAqB,EAAE,MAAM,SAAS,CAAC;AAElE,wBAAgB,oBAAoB,CAClC,MAAM,EAAE,gBAAgB,EACxB,WAAW,CAAC,EAAE,qBAAqB,GAClC,iBAAiB,CAMnB"}

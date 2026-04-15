@@ -219,14 +219,16 @@ function normalizePromptLayout(text: string): string {
  */
 export function buildInitPrompt(options: {
   template: string;
+  initPrompt: string;
   responseSchemaTemplate: string;
   systemPrompt: string;
   toolsPrompt: string;
   historyPrompt: string;
 }): string {
-  const { template, responseSchemaTemplate, systemPrompt, toolsPrompt, historyPrompt } = options;
+  const { template, initPrompt, responseSchemaTemplate, systemPrompt, toolsPrompt, historyPrompt } = options;
 
   const rendered = template
+    .split('{{init_prompt}}').join(initPrompt)
     .split('{{response_schema_template}}').join(responseSchemaTemplate)
     .split('{{system_prompt}}').join(systemPrompt)
     .split('{{tools_prompt}}').join(toolsPrompt)

@@ -1,0 +1,21 @@
+{
+    "index": 0,
+    "message": {
+        "role": "assistant",
+        "content": "The content of the model-generated response",
+
+        "tool_calls": [
+                {
+                    "index": 0,
+                    "id": "The unique ID of the tool call",
+                    "type": "function",
+                    "function": {
+                    "name": "function name",
+                    "arguments": "{\"command\":\"ls\"}"
+                }
+            }
+        ]
+    },
+    "logprobs": null,
+    "finish_reason": "tool_calls"
+}
