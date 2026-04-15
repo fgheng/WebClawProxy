@@ -268,6 +268,7 @@ describe('Prompt 构造工具', () => {
       const result = buildHistoryPrompt(history as any);
       expect(result).toContain('<tool id="call_1">');
       expect(result).toContain('{"temperature":30,"condition":"sunny"}');
+      expect(result).toContain('</tool>');
     });
 
     it('应严格保持 history 原顺序并跳过 system', () => {
@@ -350,6 +351,7 @@ describe('Prompt 构造工具', () => {
       const result = buildCurrentPrompt(current);
       expect(result).toContain('<tool id="call_a">');
       expect(result).toContain('执行结果A');
+      expect(result).toContain('</tool>');
       expect(result).toContain('<tool id="call_b">');
       expect(result).toContain('执行结果B');
       expect(result).toContain('<user>');
@@ -691,12 +693,11 @@ describe('DataManager', () => {
       expect(prompt).toContain('{"test": "template"}');
     });
 
-    it('get_format_only_retry_prompt 应该包含响应模板', () => {
+    it('get_format_only_retry_prompt 应返回当前配置的格式重试文案', () => {
       const dm = createTestDataManager();
       const prompt = dm.get_format_only_retry_prompt();
-      expect(prompt).toContain('"role": "assistant"');
-      expect(prompt).toContain('"tool_calls"');
-      expect(prompt).toContain('not valid JSON');
+      expect(prompt).toContain('Not a valid JSON response.');
+      expect(prompt).toContain('required JSON format');
     });
 
     it('get_current_prompt_for_web_send 在模板非空时应进行包装替换', () => {

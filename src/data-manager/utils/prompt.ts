@@ -38,7 +38,7 @@ function formatCurrentMessage(msg: Message): string {
 
   if (msg.role === 'tool') {
     const toolHeader = msg.tool_call_id ? `<tool id="${msg.tool_call_id}">` : '<tool>';
-    return [toolHeader, contentStr].filter(Boolean).join('\n');
+    return [toolHeader, contentStr, '</tool>'].filter(Boolean).join('\n');
   }
 
   if (msg.role === 'user') {
@@ -127,7 +127,7 @@ export function buildHistoryPrompt(history: Message[]): string {
       if (role === 'tool') {
         const toolCallId = (msg as Message & { tool_call_id?: string }).tool_call_id;
         const toolHeader = toolCallId ? `<tool id="${toolCallId}">` : '<tool>';
-        return [toolHeader, contentStr].filter(Boolean).join('\n');
+        return [toolHeader, contentStr, '</tool>'].filter(Boolean).join('\n');
       }
 
       return [`<${role}>`, contentStr].filter(Boolean).join('\n');

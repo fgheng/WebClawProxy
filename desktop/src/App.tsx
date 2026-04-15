@@ -24,6 +24,7 @@ export default function App() {
   const [providerSites, setProviderSites] = useState<Record<string, string>>({});
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
   const [serviceStatus, setServiceStatus] = useState('stopped');
+  const [serviceControlReady, setServiceControlReady] = useState(false);
   const [apiBaseUrl, setApiBaseUrl] = useState('http://127.0.0.1:3000');
   const [serviceLogs, setServiceLogs] = useState<string[]>([
     '等待服务日志...',
@@ -60,6 +61,7 @@ export default function App() {
       setProviderModels(state.providerModels);
       setServiceStatus(state.serviceStatus);
       setApiBaseUrl(state.apiBaseUrl);
+      setServiceControlReady(true);
     });
 
     const disposeLog = window.webclawDesktop?.onServiceLog?.((event) => {
@@ -178,6 +180,7 @@ export default function App() {
   }, []);
 
   const handleToggleService = useCallback(async () => {
+    if (!serviceControlReady) return;
     if (serviceStatus === 'running') {
       const confirmed = window.confirm('确认停止 WebClaw 服务吗？');
       if (!confirmed) return;
@@ -189,7 +192,7 @@ export default function App() {
     const confirmed = window.confirm('确认启动 WebClaw 服务吗？');
     if (!confirmed) return;
     await handleStartService();
-  }, [handleStartService, handleStopService, serviceStatus]);
+  }, [handleStartService, handleStopService, serviceControlReady, serviceStatus]);
 
   function handleSplitDragStart(event: React.PointerEvent<HTMLDivElement>) {
     const container = splitPaneRef.current;
@@ -304,12 +307,22 @@ export default function App() {
               <button
                 className="service-toggle"
                 onClick={() => void handleToggleService()}
-                title={serviceStatus === 'running' ? '停止服务' : serviceStatus === 'starting' ? '正在启动' : '启动服务'}
-                disabled={serviceStatus === 'starting' || serviceStatus === 'stopping'}
+                title={
+                  !serviceControlReady
+                    ? '桌面初始化中'
+                    : serviceStatus === 'running'
+                      ? '停止服务'
+                      : serviceStatus === 'starting'
+                        ? '正在启动'
+                        : '启动服务'
+                }
+                disabled={!serviceControlReady || serviceStatus === 'starting' || serviceStatus === 'stopping'}
               >
                 <span
                   className={`service-toggle-ring ${
-                    serviceStatus === 'running'
+                    !serviceControlReady
+                      ? 'disabled'
+                      : serviceStatus === 'running'
                       ? 'running'
                       : serviceStatus === 'starting'
                         ? 'starting'
@@ -320,7 +333,9 @@ export default function App() {
                 >
                   <span
                     className={`service-toggle-icon ${
-                      serviceStatus === 'running'
+                      !serviceControlReady
+                        ? 'disabled'
+                        : serviceStatus === 'running'
                         ? 'stop'
                         : serviceStatus === 'starting' || serviceStatus === 'stopping'
                           ? 'spinner'

@@ -8,6 +8,7 @@ export class ServiceManager {
   private status: ServiceStatus = 'stopped';
   private stopTimer: NodeJS.Timeout | null = null;
   private startTimer: NodeJS.Timeout | null = null;
+  private stopPromise: Promise<ServiceStatus> | null = null;
 
   constructor(
     private readonly projectRoot: string,
@@ -76,13 +77,32 @@ export class ServiceManager {
     if (!this.proc || this.status === 'stopped') {
       return this.status;
     }
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
+
+    const proc = this.proc;
     this.setStatus('stopping');
-    const pid = this.proc.pid;
+    const exitPromise = new Promise<ServiceStatus>((resolve) => {
+      const finalize = () => {
+        if (this.stopTimer) {
+          clearTimeout(this.stopTimer);
+          this.stopTimer = null;
+        }
+        this.stopPromise = null;
+        resolve(this.status);
+      };
+
+      proc.once('exit', finalize);
+      proc.once('error', finalize);
+    });
+
+    const pid = proc.pid;
     if (pid) {
       try {
         process.kill(-pid, 'SIGTERM');
       } catch {
-        this.proc.kill('SIGTERM');
+        proc.kill('SIGTERM');
       }
       this.stopTimer = setTimeout(() => {
         if (!this.proc) return;
@@ -94,9 +114,11 @@ export class ServiceManager {
         }
       }, 5000);
     } else {
-      this.proc.kill('SIGTERM');
+      proc.kill('SIGTERM');
     }
-    return this.status;
+
+    this.stopPromise = exitPromise;
+    return exitPromise;
   }
 
   async restart(): Promise<ServiceStatus> {
@@ -105,6 +127,7 @@ export class ServiceManager {
   }
 
   private emitLog(message: string, stream: 'stdout' | 'stderr' = 'stdout'): void {
+    if (this.window.isDestroyed()) return;
     this.window.webContents.send('service:log', {
       stream,
       message,
@@ -113,6 +136,7 @@ export class ServiceManager {
   }
 
   private emitError(message: string): void {
+    if (this.window.isDestroyed()) return;
     this.window.webContents.send('service:error', {
       message,
       timestamp: Date.now(),
@@ -121,6 +145,7 @@ export class ServiceManager {
 
   private setStatus(status: ServiceStatus): void {
     this.status = status;
+    if (this.window.isDestroyed()) return;
     this.window.webContents.send('service:status', {
       status,
       timestamp: Date.now(),

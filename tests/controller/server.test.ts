@@ -149,7 +149,17 @@ function parseSseDataLines(raw: string): string[] {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  mockInitConversation.mockReset();
+  mockChat.mockReset();
+  mockSendOnly.mockReset();
+  mockOpenBrowser.mockReset();
+  mockClose.mockReset();
+
+  for (const value of Object.values(mockDm)) {
+    if (typeof value === 'function' && 'mockReset' in value) {
+      (value as jest.Mock).mockReset();
+    }
+  }
 
   mockInitConversation.mockResolvedValue({
     url: 'https://chat.deepseek.com/a/chat/s/mock_session_123',
@@ -494,6 +504,30 @@ describe('控制模块 API 测试', () => {
       expect(mockChat).toHaveBeenCalledTimes(1);
     });
 
+    it('缺少 index/logprobs/finish_reason 的普通回复应自动补齐且不触发重试', async () => {
+      mockChat.mockResolvedValueOnce({
+        content: `{
+  "message": {
+    "role": "assistant",
+    "content": "字段缺失也应解析成功"
+  }
+}`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(openAIRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.choices?.[0]?.index).toBe(0);
+      expect(res.body.choices?.[0]?.logprobs).toBeNull();
+      expect(res.body.choices?.[0]?.finish_reason).toBe('stop');
+      expect(res.body.choices?.[0]?.message?.content).toBe('字段缺失也应解析成功');
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_format_only_retry_prompt).not.toHaveBeenCalled();
+    });
+
     it('非 json 语言标记 code fence（如 ```javascript）包裹 JSON 也应识别', async () => {
       mockDm.model = 'gpt-4o';
       const gptRequest = {
@@ -522,6 +556,46 @@ describe('控制模块 API 测试', () => {
       expect(res.status).toBe(200);
       expect(res.body.choices?.[0]?.message?.content).toBe('JS Fence JSON');
       expect(mockChat).toHaveBeenCalledTimes(1);
+    });
+
+    it('缺少 index/logprobs/finish_reason 但存在非空 tool_calls 时应自动补齐为 tool_calls 且不重试', async () => {
+      mockDm.model = 'qwen';
+      const qwenRequest = {
+        ...openAIRequest,
+        model: 'qwen',
+      };
+
+      mockChat.mockResolvedValueOnce({
+        content: `{
+  "message": {
+    "role": "assistant",
+    "content": "我来调用工具",
+    "tool_calls": [
+      {
+        "id": "call_exec_001",
+        "type": "function",
+        "function": {
+          "name": "exec",
+          "arguments": "{\\"command\\":\\"pwd\\"}"
+        }
+      }
+    ]
+  }
+}`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(qwenRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.choices?.[0]?.index).toBe(0);
+      expect(res.body.choices?.[0]?.logprobs).toBeNull();
+      expect(res.body.choices?.[0]?.finish_reason).toBe('tool_calls');
+      expect(res.body.choices?.[0]?.message?.tool_calls).toHaveLength(1);
+      expect(mockChat).toHaveBeenCalledTimes(1);
+      expect(mockDm.get_format_only_retry_prompt).not.toHaveBeenCalled();
     });
 
     it('Qwen tool_calls 场景：arguments 内嵌 JSON 字符串未转义时也应被修复并解析成功', async () => {
@@ -634,6 +708,48 @@ describe('控制模块 API 测试', () => {
         })
       );
       expect(mockChat).toHaveBeenCalledTimes(1);
+    });
+
+    it('tool_calls.arguments 中 command 含正则反斜杠时应被修复为可二次 JSON.parse 的字符串', async () => {
+      mockDm.model = 'qwen';
+      const qwenRequest = {
+        ...openAIRequest,
+        model: 'qwen',
+      };
+
+      mockChat.mockResolvedValueOnce({
+        content: `{
+  "message": {
+    "role": "assistant",
+    "content": "我来先列一下下载目录里的音频文件。",
+    "tool_calls": [
+      {
+        "id": "call_simple_ls_001",
+        "type": "function",
+        "function": {
+          "name": "exec",
+          "arguments": "{\\"command\\": \\"ls ~/Downloads/ | grep -iE '\\.(aiff|aif|amr|ape|au|caf|dsf|dff|m4b|m4p|mp2|mpc|oga|opus|ra|rm|tta|voc|vox|wma|wv)$'\\"}"
+        }
+      }
+    ]
+  }
+}`,
+      });
+
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .send(qwenRequest)
+        .set('Content-Type', 'application/json');
+
+      expect(res.status).toBe(200);
+      expect(res.body.choices?.[0]?.finish_reason).toBe('tool_calls');
+      expect(res.body.choices?.[0]?.message?.tool_calls).toHaveLength(1);
+      const rawArgs = res.body.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+      expect(typeof rawArgs).toBe('string');
+      const parsedArgs = JSON.parse(rawArgs);
+      expect(parsedArgs.command).toContain("grep -iE");
+      expect(parsedArgs.command).toContain("\\.");
+      expect(mockDm.get_format_only_retry_prompt).not.toHaveBeenCalled();
     });
 
     it('Qwen 内容字段包含未转义双引号时也应修复并解析成功', async () => {

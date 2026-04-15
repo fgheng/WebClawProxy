@@ -17,6 +17,7 @@ let serviceManager: ServiceManager | null = null;
 let shellTerminalManager: ShellTerminalManager | null = null;
 let providerSites: Record<ProviderKey, string> = {} as Record<ProviderKey, string>;
 let providerModels: Record<ProviderKey, string[]> = {} as Record<ProviderKey, string[]>;
+let isAppShuttingDown = false;
 
 app.setPath('userData', path.join(APP_DATA_ROOT, 'user-data'));
 app.setPath('sessionData', path.join(APP_DATA_ROOT, 'session-data'));
@@ -57,6 +58,10 @@ async function createMainWindow(): Promise<BrowserWindow> {
   shellTerminalManager = new ShellTerminalManager(PROJECT_ROOT, window);
 
   return window;
+}
+
+async function shutdownAppResources(): Promise<void> {
+  await serviceManager?.stop();
 }
 
 app.whenReady().then(() => {
@@ -126,4 +131,17 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', (event) => {
+  if (isAppShuttingDown) {
+    return;
+  }
+
+  isAppShuttingDown = true;
+  event.preventDefault();
+
+  void shutdownAppResources().finally(() => {
+    app.quit();
+  });
 });

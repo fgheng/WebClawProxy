@@ -205,8 +205,8 @@ function normalizeJsonLike(input: string): string | null {
 
   // 先尝试严格 JSON
   try {
-    const obj = JSON.parse(normalizedInput);
-    return JSON.stringify(obj);
+    const obj = parseJsonLikeObject(normalizedInput);
+    return JSON.stringify(normalizeCompletionJsonShape(obj));
   } catch {
     // ignore
   }
@@ -215,8 +215,8 @@ function normalizeJsonLike(input: string): string | null {
   const noComments = stripJsonComments(normalizedInput);
   const noTrailingComma = stripTrailingCommas(noComments);
   try {
-    const obj = JSON.parse(noTrailingComma);
-    return JSON.stringify(obj);
+    const obj = parseJsonLikeObject(noTrailingComma);
+    return JSON.stringify(normalizeCompletionJsonShape(obj));
   } catch {
     // ignore
   }
@@ -224,8 +224,112 @@ function normalizeJsonLike(input: string): string | null {
   // 针对 message.content / tool_calls.function.arguments 等字段中“未转义双引号”做定向修复
   const repairedQuoteFields = repairUnescapedQuotesInFields(noTrailingComma, ['content', 'arguments']);
   try {
-    const obj = JSON.parse(repairedQuoteFields);
-    return JSON.stringify(obj);
+    const obj = parseJsonLikeObject(repairedQuoteFields);
+    return JSON.stringify(normalizeCompletionJsonShape(obj));
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonLikeObject(input: string): any {
+  return JSON.parse(repairInvalidJsonStringEscapes(input));
+}
+
+function normalizeCompletionJsonShape(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+
+  if (Array.isArray(obj.choices)) {
+    obj.choices = obj.choices.map((choice: any) => normalizeChoiceLikeObject(choice));
+    return obj;
+  }
+
+  return normalizeChoiceLikeObject(obj);
+}
+
+function normalizeChoiceLikeObject(choice: any): any {
+  if (!choice || typeof choice !== 'object') return choice;
+
+  if (typeof choice.index !== 'number') {
+    choice.index = 0;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(choice, 'logprobs')) {
+    choice.logprobs = null;
+  }
+
+  // 兼容部分模型输出 finishreason/toolcalls 这类非标准字段名
+  if (choice.finish_reason == null && typeof choice.finishreason === 'string') {
+    const raw = String(choice.finishreason).trim().toLowerCase();
+    choice.finish_reason = raw === 'toolcalls' ? 'tool_calls' : raw;
+  }
+
+  const message = choice.message;
+  if (message && typeof message === 'object' && !Array.isArray(message)) {
+    if (!Array.isArray(message.tool_calls) && Array.isArray(message.toolcalls)) {
+      message.tool_calls = message.toolcalls;
+    }
+    if (Array.isArray(message.tool_calls)) {
+      message.tool_calls = normalizeToolCalls(message.tool_calls);
+    }
+  }
+
+  if (choice.finish_reason == null) {
+    const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    choice.finish_reason = toolCalls.length > 0 ? 'tool_calls' : 'stop';
+  }
+
+  return choice;
+}
+
+function normalizeToolCalls(toolCalls: any[]): any[] {
+  return toolCalls.map((toolCall, index) => {
+    if (!toolCall || typeof toolCall !== 'object') return toolCall;
+
+    const next = { ...toolCall };
+    if (typeof next.index !== 'number') {
+      next.index = index;
+    }
+
+    if (next.function && typeof next.function === 'object') {
+      next.function = { ...next.function };
+      const args = next.function.arguments;
+      if (typeof args === 'string') {
+        next.function.arguments = normalizeToolCallArgumentsString(args);
+      } else if (args && typeof args === 'object') {
+        next.function.arguments = JSON.stringify(args);
+      }
+    }
+
+    return next;
+  });
+}
+
+function normalizeToolCallArgumentsString(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return input;
+
+  const normalized = tryNormalizeEmbeddedJson(trimmed);
+  return normalized ?? input;
+}
+
+function tryNormalizeEmbeddedJson(input: string): string | null {
+  try {
+    return JSON.stringify(parseJsonLikeObject(input));
+  } catch {
+    // ignore
+  }
+
+  const noComments = stripJsonComments(input);
+  const noTrailingComma = stripTrailingCommas(noComments);
+  try {
+    return JSON.stringify(parseJsonLikeObject(noTrailingComma));
+  } catch {
+    // ignore
+  }
+
+  const repairedQuotes = repairUnescapedQuotesInFields(noTrailingComma, ['command', 'arguments', 'path', 'content']);
+  try {
+    return JSON.stringify(parseJsonLikeObject(repairedQuotes));
   } catch {
     return null;
   }
@@ -248,6 +352,52 @@ function repairMalformedToolCallArguments(text: string): string {
       return `${prefix}"${escaped}"`;
     }
   );
+}
+
+function repairInvalidJsonStringEscapes(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (!inString) {
+      out += ch;
+      if (ch === '"') {
+        inString = true;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      if (ch === 'u') {
+        out += `\\${ch}`;
+      } else if (/["\\/bfnrt]/.test(ch)) {
+        out += `\\${ch}`;
+      } else {
+        out += `\\\\${ch}`;
+      }
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    out += ch;
+    if (ch === '"') {
+      inString = false;
+    }
+  }
+
+  if (escaped) {
+    out += '\\\\';
+  }
+
+  return out;
 }
 
 function repairUnescapedQuotesInFields(text: string, fields: string[]): string {

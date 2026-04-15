@@ -188,6 +188,11 @@ select {
   background: rgba(15, 23, 42, 0.92);
 }
 
+.service-toggle-ring.disabled {
+  border-color: rgba(148, 163, 184, 0.38);
+  background: rgba(30, 41, 59, 0.9);
+}
+
 .service-toggle-ring.stopped {
   border-color: rgba(74, 222, 128, 0.5);
 }
@@ -210,6 +215,13 @@ select {
   border-left: 7px solid #4ade80;
 }
 
+.service-toggle-icon.disabled {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+
 .service-toggle-icon.stop {
   width: 8px;
   height: 8px;
@@ -228,7 +240,7 @@ select {
 
 .service-toggle:disabled {
   cursor: default;
-  opacity: 0.95;
+  opacity: 1;
 }
 
 @keyframes service-spin {
