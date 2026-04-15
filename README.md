@@ -24,7 +24,7 @@ WebClawProxy 通过浏览器自动化技术，将 ChatGPT、DeepSeek、Qwen、Ki
 │ src/protocol/ │ │src/data-manager/ │ │  src/web-driver/    │
 │               │ │                  │ │                     │
 │ OpenAI ──────►│ │ 对话数据持久化    │ │ ChatGPT / DeepSeek  │
-│ Anthropic (预)│ │ Hash Key 计算    │ │ Qwen / Kimi         │
+│ Anthropic (预)│ │ Hash Key 计算    │ │ Qwen / Kimi / GLM   │
 │ Gemini (预)   │ │ Prompt 构造      │ │ (基于 Playwright)   │
 └──────────────┘ └──────────────────┘ └─────────────────────┘
 ```
@@ -37,6 +37,7 @@ WebClawProxy 通过浏览器自动化技术，将 ChatGPT、DeepSeek、Qwen、Ki
 | Qwen | `qwen` | https://chat.qwen.ai/ |
 | DeepSeek | `deepseek` | https://chat.deepseek.com/ |
 | Kimi | `kimi` | https://www.kimi.com/ |
+| GLM | `glm` | https://chatglm.cn/ |
 
 ## 快速开始
 
@@ -75,6 +76,23 @@ curl http://localhost:3000/v1/chat/completions \
 ```
 
 服务启动后会自动打开浏览器，如未登录会提示用户完成登录。
+
+### 5. 启动桌面 GUI
+
+项目同时提供 Electron GUI，用于管理浏览器页面、服务状态与调试面板：
+
+```bash
+cd desktop
+npm install
+npm run dev
+```
+
+GUI 当前支持：
+
+- 浏览器内嵌视图
+- 服务启动/停止
+- provider 切换
+- 会话/日志/终端调试面板
 
 ## 集成使用
 
@@ -144,6 +162,9 @@ WebClawProxy/
 ├── README.md
 ├── config/
 │   └── default.json           # 配置文件（网站映射、模型映射、默认 prompt 等）
+├── desktop/                    # Electron GUI
+│   ├── electron/               # 主进程、服务管理、BrowserView
+│   └── src/                    # Renderer 界面
 ├── src/
 │   ├── web-driver/            # Web 驱动模块
 │   │   ├── index.ts           # 模块入口
@@ -154,7 +175,8 @@ WebClawProxy/
 │   │       ├── ChatGPTDriver.ts
 │   │       ├── QwenDriver.ts
 │   │       ├── DeepSeekDriver.ts
-│   │       └── KimiDriver.ts
+│   │       ├── KimiDriver.ts
+│   │       └── GLMDriver.ts
 │   ├── protocol/              # 协议转换模块
 │   │   ├── index.ts
 │   │   ├── types.ts           # 内部统一结构类型
@@ -204,6 +226,10 @@ WebClawProxy/
 | `sites.*` | 网站 key → URL 映射 | - |
 | `models.*` | 模型大类 → 模型列表映射 | - |
 | `defaults.init_prompt` | 默认初始化提示词 | - |
+| `defaults.init_prompt_template` | 初始化会话模板 | - |
+| `defaults.user_message_template` | 发送到网页前的用户消息模板 | - |
+| `defaults.format_only_retry_template` | JSON 格式重试模板 | - |
+| `context_switch.*` | usage 超阈值时是否切新 session | - |
 
 ## 模块文档
 
@@ -227,12 +253,24 @@ WebClawProxy/
 2. 在 `src/protocol/index.ts` 中导出
 3. 在控制模块路由中添加对应的请求处理
 
+## 当前行为说明
+
+- 首次请求若无已链接 session，会直接发送 `init_prompt_template` 初始化网页会话并获取新的 `session url`
+- 正常多轮对话里，hash 变化不一定切 session；只有首次无链接、usage 超阈值或旧 session 失效时才会切新网页会话
+- 控制层会对网页模型返回的 JSON 做容错归一化：
+  - 自动补 `finish_reason`
+  - 自动补 `index`
+  - 自动补 `logprobs`
+  - 修复 `tool_calls.function.arguments` 的常见转义问题
+- DataManager 生成的 history/current prompt 目前使用 `<system> / <history> / <user> / <assistant> / <tool>` 结构，并输出成对闭合标签
+- 长 prompt 在网页端会自动分块发送，最后一块才要求正式按 JSON 模板输出
+
 ## 注意事项
 
-- 首次使用某个网站时，需要在弹出的浏览器中完成登录
+- 首次使用某个网站时，需要在浏览器中完成登录
 - Web 界面选择器可能随网站更新而失效，需要及时更新对应驱动的 `SELECTORS` 配置
-- 模型对话数据存储在 `data/` 目录下，按模型类别/模型名/hash 组织
-- DeepSeek 等支持"思维链"的模型，`extractResponse()` 会自动过滤推理过程，只返回最终答案
+- 对话数据按 `session-index + sessionDir` 结构存储，不再单纯按 hash 目录直接映射网页 session
+- GUI 退出时会主动停止桌面内启动的 `webclaw` 服务，避免端口残留
 
 ## 技术栈
 
@@ -244,11 +282,8 @@ WebClawProxy/
 
 ## TODO
 - [ ] 会话有效性预检方案（请求前判断 web session 是否存在）暂缓：当前已回滚，后续找到更优实现再恢复
-- [ ] 文档更新
-- [ ] session 分片还未测试
+- [ ] session 分片还需补更多真实场景测试
 - [ ] 接入 openclaw
-- [ ] 内部再转换成 openai-reponses 协议？主要是该协议有状态，对于映射 webssion 比较合适
-- [ ] 前端支持多种协议 openai-chat responses anthropic gemini
+- [ ] 内部再转换成 openai-responses 协议
+- [ ] 前端支持多种协议：openai-chat / responses / anthropic / gemini
 - [ ] 多媒体支持
-- [ ] 支持 GUI
-- [ ] 实现 webclaw

@@ -16,17 +16,19 @@
 
 默认根目录来自 `config/default.json` 的 `data.root_dir`（默认 `./data`）。
 
+当前真实结构由两部分组成：
+
 ```text
 data/
-└── {category}/                 # 由 model 映射的大类（小写）
-    └── {model}/                # 具体模型名，如 gpt-4o / deepseek-chat
-        └── {HASH_KEY}/         # system + history + tools 计算
+├── session-index/
+│   └── {category}/
+│       └── {model}.json        # hash -> sessionDir -> web_urls/linked 映射
+└── {category}/
+    └── {model}/
+        └── {sessionDir}/       # 稳定会话目录名，不再直接使用 HASH_KEY 命名
             ├── system          # 系统提示词文本
             ├── history.jsonl   # 对话历史，每行一个 JSON Message
-            ├── tools.json      # 工具列表（按 function.name 排序后写入）
-            ├── web_url         # 对应网页会话 URL（可多行，取最后一行）
-            ├── linked          # 链接标记（存在 = 已建立 web 会话映射）
-            └── usage.json      # 预留文件（当前未强依赖）
+            └── tools.json      # 工具列表（按 function.name 排序后写入）
 ```
 
 `category` 的计算逻辑：
@@ -89,21 +91,76 @@ new DataManager(internalReq, customConfig?)
 
 ## 5. 链接状态管理
 
-## 5.1 `is_linked()`
+当前真实实现不再依赖 `DATA_PATH/web_url` 与 `DATA_PATH/linked` 两个单文件，而是统一记录在：
+
+```text
+data/session-index/{category}/{model}.json
+```
+
+索引结构核心字段：
+
+- `sessions[sessionDir].latest_hash`
+- `sessions[sessionDir].web_urls`
+- `sessions[sessionDir].linked`
+- `latest_hash_to_session[hash]`
+
+### 5.1 `is_linked()`
 返回 `true` 条件：
-- `DATA_PATH` 存在
-- `DATA_PATH/linked` 文件存在
+- 当前 `HASH_KEY` 能在 `session-index` 中找到对应 `sessionDir`
+- 该 `sessionDir` 的 `linked === true`
+- `web_urls.length > 0`
 
-## 5.2 `update_web_url(url)`
-- 追加写入 `web_url`
-- 创建 `linked` 文件（若不存在）
+### 5.2 `update_web_url(url)`
+- 将新的网页会话 URL 追加到当前 `HASH_KEY` 对应 session 的 `web_urls`
+- 同时将该 session 标记为 `linked = true`
+- `get_web_url()` 会始终读取 `web_urls` 的最后一项
 
-## 5.3 `get_web_url()`
-- 读取 `web_url` 最后一行
-- 文件不存在返回空字符串
+### 5.3 `get_web_url()`
+- 从当前 `HASH_KEY -> sessionDir -> web_urls` 取最后一个 URL
+- 若不存在映射或 `web_urls` 为空，则返回空字符串
 
-## 5.4 `cancel_linked()`
-- 删除 `linked` 文件
+### 5.4 `cancel_linked()`
+- 不删除历史 `web_urls`
+- 仅把当前 `HASH_KEY` 对应 session 的 `linked` 置为 `false`
+- 作用：当控制层发现当前 `sessionUrl` 失效时，让**下一次请求**重新执行网页初始化
+
+### 5.5 什么时候会切换到新 session？
+
+先区分两个概念：
+
+- **hash 变化**：表示 `system + history + tools` 的上下文发生了变化
+- **session 切换**：表示网页端需要使用新的对话 URL
+
+两者**不完全等价**。
+
+#### 情况 A：首轮保存时强制新建 session
+
+在 `save_data()` 中，如果调用前的原始 `history` 里还没有 `user` 消息：
+
+- 会执行 `update_hash_key({ forceNewSession: true })`
+- 强制绑定新的 `sessionDir`
+- 目的：避免两个“首句相同”的全新请求误命中旧会话
+
+#### 情况 B：正常多轮推进时继承旧 session
+
+在 `save_data()` 中，如果调用前的原始 `history` 已经包含 `user` 消息：
+
+- 会执行 `update_hash_key({ inheritFromHash: oldHash })`
+- 新 hash 会继承旧 hash 的 `sessionDir`
+- 结果：上下文虽然推进了，但仍沿用原 session 映射
+
+#### 情况 C：控制层要求切新网页会话
+
+`DataManager` 本身并不会主动决定“何时切新网页 URL”，真正触发切换的是控制层：
+
+- 当前 `!dm.is_linked()`，需要初始化新网页会话
+- 已链接但 usage 超过 `context_switch` 阈值，控制层主动新建网页会话
+- 已链接但旧 `sessionUrl` 失效，控制层会 `dm.cancel_linked()`，下一次请求再重建
+
+因此可以理解为：
+
+- `DataManager` 负责维护“hash -> sessionDir -> web_urls/linked”的映射
+- `controller` 负责决定“这次请求到底是继续复用，还是新建网页会话”
 
 ---
 
@@ -117,31 +174,53 @@ new DataManager(internalReq, customConfig?)
 ```text
 <system>
 {system}
+</system>
 ```
 
 ## 6.2 `get_history_prompt()`
-每条消息格式：
+
+当前真实实现会输出：
 
 ```text
-<|role:{role}|>
-{content}
-<tool_calls>
-[{...tool_call objects...}]   # 仅当该消息包含 tool_calls 时出现
+<history>
+<user>
+...
+</user>
+<assistant>
+...
+<tool_call id="call_xxx">
+name: exec
+arguments: {"command":"ls"}
+</tool_call>
+</assistant>
+<tool id="call_xxx">
+...
+</tool>
+</history>
 ```
 
+规则：
+
+- `history` 外层会包一层 `<history> ... </history>`
+- `user` / `assistant` / `tool` 都会输出成对闭合标签
+- assistant 如果带 `tool_calls`，会在内容后追加一个或多个 `<tool_call ...> ... </tool_call>`
+- `role=tool` 会输出 `<tool id="..."> ... </tool>`
+
 其中 `content` 的构造规则：
+
 - `type === "text"`：直接拼接 `text`
 - `type !== "text"`：按 `[type] + JSON(rest)` 形式拼接，`rest` 为去掉 `type` 后的全部字段
 - 例如 `tool_result` 会包含 `tool_call_id`、`content` 等全部信息
 
 ## 6.3 `get_current_prompt()`
-- 默认返回 current 的内容文本，不带 role 标记
-- 若 current 包含 `tool_calls`，会额外追加：
 
-```text
-<tool_calls>
-[{...tool_call objects...}]
-```
+当前逻辑分两类：
+
+- 若 `current` 只有一条 `user`，且不含 `tool_calls`
+  - 直接返回纯文本内容，不包 `<user>`
+- 其他情况
+  - 按与 history 一致的 wrapper 结构输出
+  - 例如 `<tool> ... </tool>`、`<user> ... </user>`、`<assistant> ... </assistant>`
 
 ## 6.4 `get_tools_prompt()`
 - 以可读结构列出工具：`Tool i / Name / Description / Parameters`
@@ -199,9 +278,10 @@ new DataManager(internalReq, customConfig?)
 2. `new DataManager(internalReq)`
 3. `await dm.save_data()`
 4. `if (!dm.is_linked())` 则执行 web 初始化并 `dm.update_web_url(url)`
-5. `sessionUrl = dm.get_web_url()`
-6. 发送 `dm.get_current_prompt()` 到网页模型
-7. 模型回复后 `dm.update_current(assistantMessage)` + `await dm.save_data()`
+5. 若已链接但 usage 超过阈值，控制层也可能主动新建 session 并再次 `dm.update_web_url(newUrl)`
+6. `sessionUrl = dm.get_web_url()`
+7. 发送 `dm.get_current_prompt()` 到网页模型
+8. 模型回复后 `dm.update_current(assistantMessage)` + `await dm.save_data()`
 
 这也是 `data-manager` 在运行时最核心的职责边界。
 
@@ -215,7 +295,7 @@ new DataManager(internalReq, customConfig?)
 - `DataManager`
 - `DataManagerConfig` / `DataManagerError` / `DataManagerErrorCode`
 - `computeHashKey` / `computeSystemHash` / `computeHistoryHash` / `computeToolsHash`
-- `buildSystemPrompt` / `buildHistoryPrompt` / `buildCurrentPrompt` / `buildToolsPrompt` / `buildInitPrompt` / `contentToString`
+- `buildSystemPrompt` / `buildHistoryPrompt` / `buildCurrentPrompt` / `buildToolsPrompt` / `buildInitPrompt` / `buildCurrentPromptForWebSend` / `contentToString`
 
 ---
 

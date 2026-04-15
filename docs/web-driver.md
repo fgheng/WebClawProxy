@@ -6,6 +6,13 @@ Web 驱动模块（`src/web-driver/`）是 WebClawProxy 的核心基础模块，
 
 该模块基于 [Playwright](https://playwright.dev/) 构建，提供统一的服务接口，屏蔽各网站的 UI 差异。
 
+当前真实实现还包含：
+
+- 启动阶段统一登录预检（`preflightConfiguredSites`）
+- 可选的站点预打开（`openConfiguredSites`）
+- 长 prompt 自动分块发送
+- `sendOnly()` 只发送不提取回复内容
+
 ## 支持的网站
 
 | SiteKey  | 网站 URL                       |
@@ -14,6 +21,7 @@ Web 驱动模块（`src/web-driver/`）是 WebClawProxy 的核心基础模块，
 | `qwen`   | https://chat.qwen.ai/         |
 | `deepseek` | https://chat.deepseek.com/  |
 | `kimi`   | https://www.kimi.com/         |
+| `glm`    | https://chatglm.cn/           |
 
 ## 快速开始
 
@@ -42,7 +50,14 @@ await manager.close();
 
 ### WebDriverManager
 
-核心管理类，对外提供三个主要服务。
+核心管理类，对外提供多个服务，其中最常用的是：
+
+- `initConversation()`
+- `chat()`
+- `sendOnly()`
+- `openBrowser()`
+- `preflightConfiguredSites()`
+- `openConfiguredSites()`
 
 #### 构造函数
 
@@ -95,6 +110,14 @@ interface InitConversationResult {
 | `NEW_CONVERSATION_FAILED` | 新建对话失败（可能被广告/弹窗遮挡） |
 | `DIALOG_BLOCKED` | 界面被弹窗遮挡 |
 
+**实际行为说明：**
+
+- 会先新建网页对话
+- 发送初始化提示词
+- 等待 URL 从首页变成对话 URL
+- 再等待模型对初始化提示词“完成回复”
+- 初始化回复内容本身不会被提取返回，只返回 `url`
+
 **示例：**
 
 ```typescript
@@ -131,6 +154,13 @@ interface ChatResult {
   content: string; // 模型的回复内容（已过滤思维链）
 }
 ```
+
+**实际行为说明：**
+
+- 若当前页面不是目标 `sessionUrl`，会先跳转到该对话
+- 发送前会等待页面稳定，避免消息被吞
+- 发送后等待模型完成回复
+- 最后再调用驱动的 `extractResponse()` 提取文本
 
 **错误码：**
 
@@ -177,6 +207,63 @@ await manager.openBrowser(
   'https://chatgpt.com/',
   '请在此页面登录 ChatGPT，登录成功后系统将自动继续。'
 );
+```
+
+---
+
+#### `sendOnly(site, sessionUrl, message)` — 仅发送不提取回复
+
+用于：
+
+- 长消息分段发送时的前置分块
+- 初始化/重试等“只要求网页端收到，不需要提取内容”的场景
+
+```typescript
+async sendOnly(
+  site: SiteKey,
+  sessionUrl: string,
+  message: string
+): Promise<void>
+```
+
+行为：
+
+- 会复用与 `chat()` 相同的发送流程
+- 会等待模型回复完成
+- 但不会调用 `extractResponse()`
+
+---
+
+#### `preflightConfiguredSites(sites?)` — 登录预检
+
+在服务启动阶段使用，逐站点确认登录态。
+
+```typescript
+async preflightConfiguredSites(sites?: SiteKey[]): Promise<void>
+```
+
+行为：
+
+- 若未登录，会抛出 `NOT_LOGGED_IN`
+- GUI/调用方可据此提示用户完成网页登录
+
+---
+
+#### `openConfiguredSites(sites?)` — 预打开站点
+
+用于在服务启动后把配置中的站点页面提前打开，减少首次交互延迟。
+
+```typescript
+async openConfiguredSites(sites?: SiteKey[]): Promise<void>
+```
+
+- 若未传 `sites`
+  - 默认打开全部已配置站点
+- 若传入 `sites`
+  - 仅打开指定站点
+
+```typescript
+await manager.openConfiguredSites(['gpt', 'deepseek']);
 ```
 
 ---
@@ -255,6 +342,48 @@ web-driver/
 2. **内容稳定性检测**：每 500ms 检测输出区域内容，连续 3 次相同则认为完成
 
 注意：内容稳定性检测会先等待停止按钮出现再开始计时，避免模型尚未开始输出就误判完成。
+
+### 长 prompt 分块发送
+
+当 prompt 超过站点输入上限时，`WebDriverManager` 会自动拆分为多段发送。
+
+当前真实分块结构：
+
+- 第一块：
+
+```text
+<message>
+<chunk id="1">
+...
+</chunk>
+reply recieved in the required JSON format.
+```
+
+- 中间块：
+
+```text
+<chunk id="2">
+...
+</chunk>
+reply recieved in the required JSON format.
+```
+
+- 最后一块：
+
+```text
+<chunk id="n">
+...
+</chunk>
+</message>
+The information has been sent. Please respond in the required JSON format.
+```
+
+说明：
+
+- 第一块会打开 `<message>`
+- 最后一块会闭合 `</message>`
+- 非最后块只要求网页模型确认接收
+- 最后一块才要求基于完整内容输出正式结果
 
 ### 添加新网站支持
 

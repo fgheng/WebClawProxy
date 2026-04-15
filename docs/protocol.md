@@ -20,7 +20,7 @@ interface InternalRequest {
   system: string;     // 系统提示词（可为空）
   history: Message[]; // 对话历史（不含当前消息，不含 system 消息）
   tools: Tool[];      // 可用工具列表
-  current: Message;   // 当前（最新）用户消息
+  current: Message[]; // 当前待发送消息批次（仅 user/tool）
 }
 ```
 
@@ -30,6 +30,9 @@ interface InternalRequest {
 interface Message {
   role: string; // "user" | "assistant" | "tool" 等
   content: string | ContentItem[];
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  name?: string;
 }
 
 interface ContentItem {
@@ -76,7 +79,7 @@ const internalReq = protocol.parse({
 console.log(internalReq.model);   // "gpt-4o"
 console.log(internalReq.system);  // "你是一个助手"
 console.log(internalReq.history); // []（只有一条用户消息，成为 current）
-console.log(internalReq.current); // { role: 'user', content: '你好' }
+console.log(internalReq.current); // [{ role: 'user', content: '你好' }]
 
 // 格式化响应
 const openAIResp = protocol.format({
@@ -111,7 +114,7 @@ abstract class BaseProtocol {
 | `system` | 提取 `messages` 中所有 `role === 'system'` 的文本内容并按原顺序拼接（以 `\n\n` 分隔） |
 | `history` | 过滤掉所有 `role === 'system'` 的消息后，再去掉最后一条 |
 | `tools` | `input.tools ?? []` |
-| `current` | 过滤掉所有 system 后消息序列的最后一条 |
+| `current` | 按 V5 规则从尾段提取 user/tool 消息批次 |
 
 **示例输入（OpenAI 请求）：**
 
@@ -154,6 +157,19 @@ abstract class BaseProtocol {
 > 说明：
 > - `system` 会聚合所有 `role = system` 消息，拼接顺序与 `messages` 中出现顺序一致。
 > - `history` 会移除所有 `system` 消息，并严格保持剩余消息的相对顺序（不重排）。
+> - `current` 不再固定是一条消息；当尾段包含 `tool + user` 批次时，会整体作为当前待发送批次返回。
+
+#### V5 尾段提取规则
+
+- 从 `messages` 末尾向前扫描
+- 遇到第一个 `assistant` 即停止
+- 取这段尾部中的 `user` / `tool` 消息作为 `current` 候选
+- 若候选中包含 `tool`：
+  - `current = 所有 tool + 所有 user`
+  - `history = 候选之前的前缀`
+- 若候选中只有 user：
+  - 取最后一条 user 作为 `current`
+  - 其前面的消息进入 `history`
 
 ---
 
@@ -163,7 +179,7 @@ abstract class BaseProtocol {
 
 ```typescript
 interface InternalResponse {
-  content?: string;
+  content?: string | null;
   tool_calls?: ToolCall[];
   finish_reason?: string;
   model?: string;
@@ -192,6 +208,17 @@ interface InternalResponse {
   "usage": { "prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30 }
 }
 ```
+
+#### `format()` 的自动补齐行为
+
+- 若未显式提供 `finish_reason`
+  - 有非空 `tool_calls` 时自动补为 `"tool_calls"`
+  - 否则自动补为 `"stop"`
+- `choices[0].logprobs` 固定输出 `null`
+- `usage` 缺失时会补默认值：
+  - `prompt_tokens = 0`
+  - `completion_tokens = 0`
+  - `total_tokens = prompt + completion`
 
 ---
 

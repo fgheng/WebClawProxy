@@ -80,7 +80,7 @@ flowchart TD
     D --> E[inferSiteFromModel]
     E --> F{dm.is_linked}
 
-    F -- 否 --> G[dm.get_init_prompt]
+    F -- 否 --> G[dm.get_init_prompt_for_new_session]
     G --> H[webDriver.initConversation]
     H --> I[dm.update_web_url]
     I --> J[sessionUrl = dm.get_web_url]
@@ -122,19 +122,63 @@ flowchart TD
 
 ### Step 4：模型→站点映射
 
-通过 `inferSiteFromModel(model)` 推断 `SiteKey`：`gpt | qwen | deepseek | kimi`
+通过 `inferSiteFromModel(model)` 推断 `SiteKey`：`gpt | qwen | deepseek | kimi | glm`
 
-### Step 5：会话链接判定与上下文额度切换
+### Step 5：会话链接判定与 session 切换
 
-- `!dm.is_linked()`：
-  - 生成 `initPrompt = dm.get_init_prompt()`
-  - `webDriver.initConversation(site, initPrompt)`
-  - `dm.update_web_url(sessionUrl)`
-- 已链接：`sessionUrl = dm.get_web_url()`
-- 若已链接且启用 `context_switch`，并且 `dm.get_usage().usage` 超过阈值：
-  - 再次 `webDriver.initConversation(site, initPrompt)`
-  - `dm.update_web_url(newSessionUrl)` 追加新会话 URL
-  - 当前请求使用新 URL 继续发送
+控制层是“是否切到新的网页 session”的唯一决策者。
+
+#### 5.1 首次无链接
+
+若 `!dm.is_linked()`：
+
+- 生成 `initPrompt = dm.get_init_prompt_for_new_session()`
+- 调用 `webDriver.initConversation(site, initPrompt)`
+- 获取新的 `sessionUrl`
+- 调用 `dm.update_web_url(sessionUrl)` 绑定该 URL
+
+这是最常见的“首次创建网页会话”路径。
+
+#### 5.2 已链接时默认复用当前 session
+
+若 `dm.is_linked()` 为 `true`：
+
+- 先直接 `sessionUrl = dm.get_web_url()`
+- 默认继续复用当前网页会话
+
+注意：
+
+- `hash` 推进不等于一定切 session
+- 正常多轮对话里，即使 `history` 增长导致 hash 改变，`DataManager` 往往仍会通过 `inheritFromHash` 继承旧 session 映射
+
+#### 5.3 usage 超阈值时主动切新 session
+
+若已链接且启用 `context_switch`，并且 `dm.get_usage().usage` 超过任一阈值：
+
+- `prompt_tokens >= max_prompt_tokens`
+- 或 `total_tokens >= max_total_tokens`
+
+则控制层会：
+
+- 再次调用 `webDriver.initConversation(site, initPromptForNewSession)`
+- 获取新的 `sessionUrl`
+- 调用 `dm.update_web_url(newSessionUrl)`
+- 当前请求改用这个新 URL 继续发送
+
+这就是“上下文过长时切新会话”的主路径。
+
+#### 5.4 session URL 失效时的行为
+
+若 `webDriver.chat()` 报 `INVALID_SESSION_URL`：
+
+- 控制层会执行 `dm.cancel_linked()`
+- 当前请求返回 `422 invalid_session_url`
+- **下一次请求**再进入时，因为 `dm.is_linked()` 已为 `false`，会重新初始化网页会话
+
+这意味着：
+
+- 失效 session 不会在同一次请求里自动透明修复
+- 而是通过取消 linked，让下一次请求重建
 
 ### Step 6：发送当前消息
 
@@ -164,6 +208,24 @@ flowchart TD
 
 - 若 `parsedJson` 可被 `JSON.parse`：直接 `res.json(jsonResponse)`
 - 否则：`protocol.format({ content, model })`
+
+---
+
+## 4.1 Session 切换决策总结
+
+一次请求会切到**新的网页 session**，主要有以下三种情况：
+
+1. 当前没有已链接的 `sessionUrl`
+2. 当前已链接，但 usage 超过 `context_switch` 阈值
+3. 之前的 `sessionUrl` 已失效，且在上一轮请求中已被 `cancel_linked()`
+
+以下情况**通常不会**直接切新网页 session：
+
+1. 正常多轮对话导致 hash 变化
+2. assistant/tool 结果被归档进 history
+3. 仅仅因为 `save_data()` 推进了 `HASH_KEY`
+
+原因是这类情况通常会继承旧 session 映射，而不是立即新建网页对话 URL。
 
 ---
 
