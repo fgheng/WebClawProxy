@@ -448,20 +448,15 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
 
     const firstChunkPayload = mockDriver.sendMessage.mock.calls[0]?.[0] as string;
     const finalChunkPayload = mockDriver.sendMessage.mock.calls[1]?.[0] as string;
-    const streamIdMatch = firstChunkPayload.match(/\[STREAM_ID: ([^\]]+)\]/);
-
     expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
-    expect(streamIdMatch).not.toBeNull();
-    expect(firstChunkPayload).toContain('[PART: 1/2]');
-    expect(firstChunkPayload).toContain('[ROLE: CONTEXT]');
-    expect(firstChunkPayload).toContain('[TYPE: message]');
     expect(firstChunkPayload).toContain('<message>');
     expect(firstChunkPayload).toContain('<chunk id="1">');
-    expect(finalChunkPayload).toContain(`[STREAM_ID: ${streamIdMatch?.[1]}]`);
-    expect(finalChunkPayload).toContain('[PART: 2/2]');
-    expect(finalChunkPayload).toContain('[END: TRUE]');
+    expect(firstChunkPayload).toContain('<reply>only reply with <reply>recieved</reply><reply>');
+    expect(firstChunkPayload).not.toContain('[STREAM_ID:');
     expect(finalChunkPayload).toContain('<chunk id="2">');
     expect(finalChunkPayload).toContain('</message>');
+    expect(finalChunkPayload).toContain('请将<message></message>所有内容视作一个整体，然后作答');
+    expect(finalChunkPayload).not.toContain('<reply>only reply with <reply>recieved</reply><reply>');
     expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 
@@ -529,20 +524,15 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
 
     const firstChunkPayload = mockDriver.sendMessage.mock.calls[0]?.[0] as string;
     const finalChunkPayload = mockDriver.sendMessage.mock.calls[1]?.[0] as string;
-    const streamIdMatch = firstChunkPayload.match(/\[STREAM_ID: ([^\]]+)\]/);
-
     expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
-    expect(streamIdMatch).not.toBeNull();
-    expect(firstChunkPayload).toContain('[PART: 1/2]');
-    expect(firstChunkPayload).toContain('[ROLE: CONTEXT]');
-    expect(firstChunkPayload).toContain('[TYPE: message]');
     expect(firstChunkPayload).toContain('<message>');
     expect(firstChunkPayload).toContain('<chunk id="1">');
-    expect(finalChunkPayload).toContain(`[STREAM_ID: ${streamIdMatch?.[1]}]`);
-    expect(finalChunkPayload).toContain('[PART: 2/2]');
-    expect(finalChunkPayload).toContain('[END: TRUE]');
+    expect(firstChunkPayload).toContain('<reply>only reply with <reply>recieved</reply><reply>');
+    expect(firstChunkPayload).not.toContain('[STREAM_ID:');
     expect(finalChunkPayload).toContain('<chunk id="2">');
     expect(finalChunkPayload).toContain('</message>');
+    expect(finalChunkPayload).toContain('请将<message></message>所有内容视作一个整体，然后作答');
+    expect(finalChunkPayload).not.toContain('<reply>only reply with <reply>recieved</reply><reply>');
     expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 

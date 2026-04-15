@@ -163,7 +163,6 @@ export class WebDriverManager {
   private driverMap: Map<SiteKey, BaseDriver> = new Map();
   /** 每个 provider 一条串行链，避免同一站点并发抢占同一个 page/driver */
   private siteTaskTails: Map<SiteKey, Promise<void>> = new Map();
-  private chunkStreamCounter = 0;
 
   constructor(options: WebDriverManagerOptions = {}) {
     this.options = {
@@ -426,54 +425,38 @@ export class WebDriverManager {
     chunk: string;
     chunkIndex: number;
     chunkTotal: number;
-    streamId: string;
     mode: PromptDispatchMode;
     responseSchemaTemplate?: string;
   }): string {
-    const { chunk, chunkIndex, chunkTotal, streamId } = options;
+    const { chunk, chunkIndex, chunkTotal } = options;
     if (chunkTotal <= 1) return chunk;
 
-    const seq = `${chunkIndex + 1}/${chunkTotal}`;
     const chunkId = `${chunkIndex + 1}`;
     const chunkStartMarker = `<chunk id="${chunkId}">`;
     const chunkEndMarker = '</chunk>';
-    const headers = [
-      `[STREAM_ID: ${streamId}]`,
-      `[PART: ${seq}]`,
-      '[ROLE: CONTEXT]',
-      '[TYPE: message]',
-    ];
+    const replyMarker = '<reply>only reply with <reply>recieved</reply><reply>';
     const wrappedChunk = [chunkStartMarker, chunk, chunkEndMarker].join('\n');
 
     if (chunkIndex === 0) {
       return [
-        ...headers,
-        '',
         '<message>',
         wrappedChunk,
+        replyMarker,
       ].join('\n');
     }
 
     if (chunkIndex < chunkTotal - 1) {
       return [
-        ...headers,
-        '',
         wrappedChunk,
+        replyMarker,
       ].join('\n');
     }
 
     return [
-      ...headers,
-      '[END: TRUE]',
-      '',
       wrappedChunk,
       '</message>',
+      '请将<message></message>所有内容视作一个整体，然后作答',
     ].join('\n');
-  }
-
-  private createChunkStreamId(): string {
-    this.chunkStreamCounter += 1;
-    return `MSG-${this.chunkStreamCounter.toString(36).toUpperCase()}`;
   }
 
   private async dispatchPrompt(
@@ -483,14 +466,12 @@ export class WebDriverManager {
   ): Promise<void> {
     const maxChars = this.getInputMaxChars(site);
     const chunks = this.splitPromptByLimit(options.prompt, maxChars);
-    const streamId = chunks.length > 1 ? this.createChunkStreamId() : '';
 
     for (let i = 0; i < chunks.length; i++) {
       const prompt = this.buildChunkPrompt({
         chunk: chunks[i],
         chunkIndex: i,
         chunkTotal: chunks.length,
-        streamId,
         mode: options.mode,
         responseSchemaTemplate: options.responseSchemaTemplate,
       });
