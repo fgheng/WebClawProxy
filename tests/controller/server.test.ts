@@ -291,12 +291,8 @@ describe('控制模块 API 测试', () => {
         .set('Content-Type', 'application/json');
 
       expect(res.status).toBe(200);
-      expect(mockSendOnly).toHaveBeenCalledWith(
-        'gpt',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        '初始化 prompt（不含当前轮）',
-        { mode: 'init' }
-      );
+      expect(mockSendOnly).not.toHaveBeenCalled();
+      expect(mockInitConversation).toHaveBeenCalledWith('gpt', '初始化 prompt（不含当前轮）');
       expect(mockChat).toHaveBeenCalledWith(
         'gpt',
         'https://chat.deepseek.com/a/chat/s/mock_session_123',
@@ -310,7 +306,7 @@ describe('控制模块 API 测试', () => {
       expect(res.body.choices?.[0]?.message?.content).toBe('最后一段的最终回答');
     });
 
-    it('首次无 session 时应先用默认 init_prompt 建会话，再发送 init_prompt_template，最后发送用户问题', async () => {
+    it('首次无 session 时应直接用 init_prompt_template 建会话，初始化回复不处理，随后发送用户问题', async () => {
       const res = await request(app)
         .post('/v1/chat/completions')
         .send(openAIRequest)
@@ -318,14 +314,8 @@ describe('控制模块 API 测试', () => {
 
       expect(res.status).toBe(200);
       expect(mockInitConversation).toHaveBeenCalledTimes(1);
-      expect(mockInitConversation).toHaveBeenCalledWith('deepseek');
-      expect(mockSendOnly).toHaveBeenCalledTimes(1);
-      expect(mockSendOnly).toHaveBeenCalledWith(
-        'deepseek',
-        'https://chat.deepseek.com/a/chat/s/mock_session_123',
-        '初始化 prompt（不含当前轮）',
-        { mode: 'init' }
-      );
+      expect(mockInitConversation).toHaveBeenCalledWith('deepseek', '初始化 prompt（不含当前轮）');
+      expect(mockSendOnly).not.toHaveBeenCalled();
       expect(mockDm.update_web_url).toHaveBeenCalledWith(
         'https://chat.deepseek.com/a/chat/s/mock_session_123'
       );
@@ -338,8 +328,7 @@ describe('控制模块 API 测试', () => {
           responseSchemaTemplate: expect.any(String),
         })
       );
-      expect(mockInitConversation.mock.invocationCallOrder[0]).toBeLessThan(mockSendOnly.mock.invocationCallOrder[0]);
-      expect(mockSendOnly.mock.invocationCallOrder[0]).toBeLessThan(mockChat.mock.invocationCallOrder[0]);
+      expect(mockInitConversation.mock.invocationCallOrder[0]).toBeLessThan(mockChat.mock.invocationCallOrder[0]);
     });
 
     it('长内容但未分段时，JSON 重试应使用仅格式提醒', async () => {
@@ -404,14 +393,10 @@ describe('控制模块 API 测试', () => {
 
       expect(res.status).toBe(200);
       expect(mockInitConversation).toHaveBeenCalledWith(
-        'deepseek'
-      );
-      expect(mockSendOnly).toHaveBeenCalledWith(
         'deepseek',
-        'https://chat.deepseek.com/a/chat/s/new_session_456',
-        '初始化 prompt（不含当前轮）',
-        { mode: 'init' }
+        '初始化 prompt（不含当前轮）'
       );
+      expect(mockSendOnly).not.toHaveBeenCalled();
       expect(mockDm.update_web_url).toHaveBeenCalledWith(
         'https://chat.deepseek.com/a/chat/s/new_session_456'
       );

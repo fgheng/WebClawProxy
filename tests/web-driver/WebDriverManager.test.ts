@@ -446,23 +446,22 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
       url: 'https://chatgpt.com/c/abc',
     });
 
+    const firstChunkPayload = mockDriver.sendMessage.mock.calls[0]?.[0] as string;
+    const finalChunkPayload = mockDriver.sendMessage.mock.calls[1]?.[0] as string;
+    const streamIdMatch = firstChunkPayload.match(/\[STREAM_ID: ([^\]]+)\]/);
+
     expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('[Chunked input 1/2]')
-    );
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('Reply only with: Received')
-    );
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('[Chunked input 2/2] Final chunk.')
-    );
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('All initialization chunks have now been sent. Complete the initialization based on the full content and reply only with: Received')
-    );
+    expect(streamIdMatch).not.toBeNull();
+    expect(firstChunkPayload).toContain('[PART: 1/2]');
+    expect(firstChunkPayload).toContain('[ROLE: CONTEXT]');
+    expect(firstChunkPayload).toContain('[TYPE: message]');
+    expect(firstChunkPayload).toContain('<message>');
+    expect(firstChunkPayload).toContain('<chunk id="1">');
+    expect(finalChunkPayload).toContain(`[STREAM_ID: ${streamIdMatch?.[1]}]`);
+    expect(finalChunkPayload).toContain('[PART: 2/2]');
+    expect(finalChunkPayload).toContain('[END: TRUE]');
+    expect(finalChunkPayload).toContain('<chunk id="2">');
+    expect(finalChunkPayload).toContain('</message>');
     expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 
@@ -528,27 +527,22 @@ describe('WebDriverManager 发送前页面稳定等待', () => {
     });
     expect(result).toEqual({ content: 'ok' });
 
+    const firstChunkPayload = mockDriver.sendMessage.mock.calls[0]?.[0] as string;
+    const finalChunkPayload = mockDriver.sendMessage.mock.calls[1]?.[0] as string;
+    const streamIdMatch = firstChunkPayload.match(/\[STREAM_ID: ([^\]]+)\]/);
+
     expect(mockDriver.sendMessage).toHaveBeenCalledTimes(2);
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('<wc_all_chunks>')
-    );
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('<wc_chunk seq="1/2">')
-    );
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('Reply only with: Received')
-    );
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('</wc_all_chunks>')
-    );
-    expect(mockDriver.sendMessage).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('Output strictly in the following format, with no extra explanation.')
-    );
+    expect(streamIdMatch).not.toBeNull();
+    expect(firstChunkPayload).toContain('[PART: 1/2]');
+    expect(firstChunkPayload).toContain('[ROLE: CONTEXT]');
+    expect(firstChunkPayload).toContain('[TYPE: message]');
+    expect(firstChunkPayload).toContain('<message>');
+    expect(firstChunkPayload).toContain('<chunk id="1">');
+    expect(finalChunkPayload).toContain(`[STREAM_ID: ${streamIdMatch?.[1]}]`);
+    expect(finalChunkPayload).toContain('[PART: 2/2]');
+    expect(finalChunkPayload).toContain('[END: TRUE]');
+    expect(finalChunkPayload).toContain('<chunk id="2">');
+    expect(finalChunkPayload).toContain('</message>');
     expect(mockDriver.waitForResponse).toHaveBeenCalledTimes(2);
   });
 

@@ -163,6 +163,7 @@ export class WebDriverManager {
   private driverMap: Map<SiteKey, BaseDriver> = new Map();
   /** 每个 provider 一条串行链，避免同一站点并发抢占同一个 page/driver */
   private siteTaskTails: Map<SiteKey, Promise<void>> = new Map();
+  private chunkStreamCounter = 0;
 
   constructor(options: WebDriverManagerOptions = {}) {
     this.options = {
@@ -425,67 +426,54 @@ export class WebDriverManager {
     chunk: string;
     chunkIndex: number;
     chunkTotal: number;
+    streamId: string;
     mode: PromptDispatchMode;
     responseSchemaTemplate?: string;
   }): string {
-    const { chunk, chunkIndex, chunkTotal, mode, responseSchemaTemplate } = options;
+    const { chunk, chunkIndex, chunkTotal, streamId } = options;
     if (chunkTotal <= 1) return chunk;
 
     const seq = `${chunkIndex + 1}/${chunkTotal}`;
-    const chunkStartMarker = `<wc_chunk seq="${seq}">`;
-    const chunkEndMarker = '</wc_chunk>';
-    const allStartMarker = '<wc_all_chunks>';
-    const allEndMarker = '</wc_all_chunks>';
+    const chunkId = `${chunkIndex + 1}`;
+    const chunkStartMarker = `<chunk id="${chunkId}">`;
+    const chunkEndMarker = '</chunk>';
+    const headers = [
+      `[STREAM_ID: ${streamId}]`,
+      `[PART: ${seq}]`,
+      '[ROLE: CONTEXT]',
+      '[TYPE: message]',
+    ];
     const wrappedChunk = [chunkStartMarker, chunk, chunkEndMarker].join('\n');
 
     if (chunkIndex === 0) {
       return [
-        `[Chunked input ${seq}] The remaining content is long and will be sent in chunks.`,
-        `Treat everything between ${allStartMarker} and ${allEndMarker} as one complete chunked payload.`,
-        `Each content block is wrapped by ${chunkStartMarker} and ${chunkEndMarker}.`,
-        `Before you receive the final closing marker ${allEndMarker}, reply only with "Received" and do not provide the final answer.`,
-        '---',
-        allStartMarker,
+        ...headers,
+        '',
+        '<message>',
         wrappedChunk,
-        'Reply only with: Received',
       ].join('\n');
     }
 
     if (chunkIndex < chunkTotal - 1) {
       return [
-        `[Chunked input ${seq}] Middle chunk.`,
+        ...headers,
+        '',
         wrappedChunk,
-        'Reply only with: Received',
-      ].join('\n');
-    }
-
-    if (mode === 'init') {
-      return [
-        `[Chunked input ${seq}] Final chunk.`,
-        wrappedChunk,
-        allEndMarker,
-        'All initialization chunks have now been sent. Complete the initialization based on the full content and reply only with: Received',
-      ].join('\n');
-    }
-
-    if (mode === 'retry') {
-      return [
-        `[Chunked input ${seq}] Final chunk.`,
-        wrappedChunk,
-        allEndMarker,
-        'All chunks have now been sent. Please answer again based on the full chunked content.',
-        'Strictly follow the earlier instructions and do not add extra explanation.',
       ].join('\n');
     }
 
     return [
-      `[Chunked input ${seq}] Final chunk.`,
+      ...headers,
+      '[END: TRUE]',
+      '',
       wrappedChunk,
-      allEndMarker,
-      'All chunks have now been sent. Please provide the final answer based on the full chunked content.',
-      'Output strictly in the following format, with no extra explanation.',
-      responseSchemaTemplate ?? '',
+      '</message>',
     ].join('\n');
+  }
+
+  private createChunkStreamId(): string {
+    this.chunkStreamCounter += 1;
+    return `MSG-${this.chunkStreamCounter.toString(36).toUpperCase()}`;
   }
 
   private async dispatchPrompt(
@@ -495,12 +483,14 @@ export class WebDriverManager {
   ): Promise<void> {
     const maxChars = this.getInputMaxChars(site);
     const chunks = this.splitPromptByLimit(options.prompt, maxChars);
+    const streamId = chunks.length > 1 ? this.createChunkStreamId() : '';
 
     for (let i = 0; i < chunks.length; i++) {
       const prompt = this.buildChunkPrompt({
         chunk: chunks[i],
         chunkIndex: i,
         chunkTotal: chunks.length,
+        streamId,
         mode: options.mode,
         responseSchemaTemplate: options.responseSchemaTemplate,
       });

@@ -959,37 +959,11 @@ export async function chatCompletionsHandler(
     // ===== Step 4: 判断链接状态，初始化或获取 session URL =====
     let sessionUrl: string;
 
-    const handleInitStageError = (err: unknown): boolean => {
-      if (err instanceof WebDriverError) {
-        if (err.code === WebDriverErrorCode.INVALID_SESSION_URL) {
-          res.status(422).json({
-            error: {
-              message: '初始化后的 Session 链接无效，请重新发送请求以创建新对话',
-              type: 'invalid_request_error',
-              code: 'invalid_session_url',
-            },
-          });
-          return true;
-        }
-        if (err.code === WebDriverErrorCode.RESPONSE_TIMEOUT) {
-          res.status(408).json({
-            error: {
-              message: '初始化阶段等待模型响应超时，请稍后重试',
-              type: 'timeout_error',
-              code: 'response_timeout',
-            },
-          });
-          return true;
-        }
-      }
-      return false;
-    };
-
     const initializeConversationAndBind = async (): Promise<string> => {
       logSessionTrace('before_init_conversation', dm, traceId);
       let initResult;
       try {
-        initResult = await webDriver.initConversation(site);
+        initResult = await webDriver.initConversation(site, initPromptForNewSession);
       } catch (err) {
         if (err instanceof WebDriverError) {
           if (err.code === WebDriverErrorCode.NOT_LOGGED_IN) {
@@ -1018,16 +992,6 @@ export async function chatCompletionsHandler(
 
       const newSessionUrl = initResult.url;
       logSessionTrace('after_init_conversation_url_ready', dm, traceId);
-      try {
-        await webDriver.sendOnly(site, newSessionUrl, initPromptForNewSession, {
-          mode: 'init',
-        });
-      } catch (err) {
-        if (handleInitStageError(err)) {
-          throw err;
-        }
-        throw err;
-      }
       dm.update_web_url(newSessionUrl);
       logSessionTrace('after_bind_new_session_url', dm, traceId);
       return newSessionUrl;
