@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
   setBrowserBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.invoke('browser:setBounds', bounds),
   setBrowserSplitRatio: (ratio: number) => ipcRenderer.invoke('browser:setSplitRatio', ratio),
+  navigateBrowser: (url: string) => ipcRenderer.invoke('browser:navigate', url),
   getDesktopState: () => ipcRenderer.invoke('desktop:getState'),
   startService: () => ipcRenderer.invoke('service:start'),
   stopService: () => ipcRenderer.invoke('service:stop'),

@@ -93,6 +93,9 @@ app.whenReady().then(() => {
   ipcMain.handle('browser:setSplitRatio', async (_event, ratio: number) => {
     browserViewManager?.setSplitRatio(ratio);
   });
+  ipcMain.handle('browser:navigate', async (_event, url: string) => {
+    await browserViewManager?.navigateTo(url);
+  });
   ipcMain.handle('desktop:getState', async () => {
     return {
       currentProvider: browserViewManager?.getCurrentProvider() ?? null,

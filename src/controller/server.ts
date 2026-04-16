@@ -1,6 +1,10 @@
 import express, { Request, Response, NextFunction } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import { chatCompletionsHandler, listModelsHandler } from './routes/openai';
 import { logDebug, formatRequestBodyPreview } from './logger';
+import { forwardMonitorBus } from './forward-monitor-bus';
+import { sessionRegistry } from './session-registry';
 
 /**
  * 创建并配置 Express 应用
@@ -59,6 +63,71 @@ export function createApp() {
   // 健康检查
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Forward Monitor — 静态页面
+  const monitorHtmlPath = path.resolve(__dirname, '../../src/static/forward-monitor.html');
+  const monitorHtmlPathAlt = path.resolve(__dirname, '../static/forward-monitor.html');
+  const resolvedMonitorPath = fs.existsSync(monitorHtmlPath) ? monitorHtmlPath : monitorHtmlPathAlt;
+  app.get('/monitor', (_req: Request, res: Response) => {
+    res.sendFile(resolvedMonitorPath);
+  });
+
+  // Forward Monitor — SSE 事件流
+  app.get('/v1/forward-monitor/events', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    // 连接建立后立即推送全量 session 快照
+    const snapshot = sessionRegistry.getSnapshot();
+    const snapshotData = `data: ${JSON.stringify({ type: 'session-snapshot', sessions: snapshot, timestamp: Date.now() })}\n\n`;
+    res.write(snapshotData);
+
+    const removeClient = forwardMonitorBus.addClient(res);
+    req.on('close', () => {
+      removeClient();
+    });
+  });
+
+  // Forward Monitor — REST API: 获取所有 session 列表
+  app.get('/v1/forward-monitor/sessions', (req: Request, res: Response) => {
+    const provider = typeof req.query.provider === 'string' ? req.query.provider : undefined;
+    const sessions = sessionRegistry.getSessions(provider);
+    // 返回摘要，不含完整消息体
+    res.json({
+      sessions: sessions.map((s) => {
+        const { messages, ...rest } = s;
+        return {
+          ...rest,
+          messageCount: messages.length,
+          lastMessage: messages.length > 0 ? messages[messages.length - 1] : null,
+        };
+      }),
+    });
+  });
+
+  // Forward Monitor — REST API: 获取单个 session 完整消息
+  app.get('/v1/forward-monitor/sessions/:id', (req: Request, res: Response) => {
+    const session = sessionRegistry.getSession(req.params.id);
+    if (!session) {
+      res.status(404).json({ error: { message: 'session not found', code: 'not_found' } });
+      return;
+    }
+    res.json({ session });
+  });
+
+  // Forward Monitor — REST API: 删除单个 session
+  app.delete('/v1/forward-monitor/sessions/:id', (req: Request, res: Response) => {
+    const deleted = sessionRegistry.deleteSession(req.params.id);
+    res.json({ deleted });
+  });
+
+  // Forward Monitor — REST API: 获取 provider 列表
+  app.get('/v1/forward-monitor/providers', (_req: Request, res: Response) => {
+    res.json({ providers: sessionRegistry.getProviders() });
   });
 
   // 404

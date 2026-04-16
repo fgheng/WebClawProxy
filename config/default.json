@@ -20,7 +20,7 @@
       }
     },
     "deepseek": {
-      "default_mode": "web",
+      "default_mode": "forward",
       "models": ["deepseek-chat", "deepseek-r1", "deepseek-v3", "deepseek-coder"],
       "web": {
         "site": "https://chat.deepseek.com/",
@@ -28,7 +28,7 @@
       },
       "forward": {
         "base_url": "https://api.deepseek.com",
-        "api_key": "YOUR_DEEPSEEK_API_KEY",
+        "api_key": "<REDACTED_API_KEY>",
         "upstream_model_map": {
           "deepseek-chat": "deepseek-chat",
           "deepseek-r1": "deepseek-chat",

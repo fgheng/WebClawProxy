@@ -15,6 +15,8 @@ import {
   type NormalizedProviderConfig,
 } from '../../config/provider-config';
 import { loadAppConfig } from '../../config/app-config';
+import { forwardMonitorBus } from '../forward-monitor-bus';
+import { sessionRegistry } from '../session-registry';
 
 const config = loadAppConfig();
 
@@ -118,6 +120,29 @@ async function sendForwardRequest(
     requestBody.model = mappedModel;
   }
 
+  // ── Session 注册 & 监控事件推送 ──────────────────────────────
+  const ingestResult = sessionRegistry.ingest(providerKey, originalModel, options.requestBody);
+  if (ingestResult.action === 'new') {
+    forwardMonitorBus.publish({
+      type: 'session-new',
+      sessionId: ingestResult.session.sessionId,
+      providerKey,
+      model: originalModel,
+      tools: ingestResult.session.tools,
+      newMessages: ingestResult.newMessages,
+      timestamp: Date.now(),
+    });
+  } else {
+    forwardMonitorBus.publish({
+      type: 'session-append',
+      sessionId: ingestResult.session.sessionId,
+      providerKey,
+      newMessages: ingestResult.newMessages,
+      timestamp: Date.now(),
+    });
+  }
+  const currentSessionId = ingestResult.session.sessionId;
+
   const upstreamHeaders: Record<string, string> = {
     'content-type': 'application/json',
     authorization: `Bearer ${forwardConfig.api_key}`,
@@ -127,6 +152,7 @@ async function sendForwardRequest(
   const controller = new AbortController();
   const timeoutMs = forwardConfig.timeout_ms ?? 120000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const startTime = Date.now();
 
   logDebug('forward_request', {
     traceId,
@@ -154,15 +180,48 @@ async function sendForwardRequest(
     const isStream = Boolean(requestBody.stream);
     if (isStream && upstreamResponse.body) {
       const reader = upstreamResponse.body.getReader();
+      const decoder = new TextDecoder();
+      const chunks: Uint8Array[] = [];
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           if (value) {
+            chunks.push(value);
             res.write(Buffer.from(value));
           }
         }
         res.end();
+        // 流结束后拼装完整 assistant 内容，追加到 session
+        const fullText = decoder.decode(
+          chunks.reduce((acc, c) => {
+            const merged = new Uint8Array(acc.length + c.length);
+            merged.set(acc);
+            merged.set(c, acc.length);
+            return merged;
+          }, new Uint8Array(0))
+        );
+        let streamContent = '';
+        for (const line of fullText.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const raw = line.slice(5).trim();
+          if (raw === '[DONE]') continue;
+          try {
+            const sseChunk = JSON.parse(raw) as { choices?: Array<{ delta?: { content?: string } }> };
+            const delta = sseChunk?.choices?.[0]?.delta;
+            if (typeof delta?.content === 'string') streamContent += delta.content;
+          } catch { /* ignore */ }
+        }
+        sessionRegistry.appendResponse(currentSessionId, streamContent || null);
+        forwardMonitorBus.publish({
+          type: 'session-response',
+          sessionId: currentSessionId,
+          providerKey,
+          content: streamContent || null,
+          status: upstreamResponse.status,
+          durationMs: Date.now() - startTime,
+          timestamp: Date.now(),
+        });
       } finally {
         reader.releaseLock();
       }
@@ -171,6 +230,47 @@ async function sendForwardRequest(
 
     const bodyText = await upstreamResponse.text();
     res.send(bodyText);
+
+    // 非流式：提取 assistant 内容，追加到 session
+    try {
+      const parsed = JSON.parse(bodyText) as {
+        choices?: Array<{
+          message?: { content?: unknown; tool_calls?: unknown[] };
+          finish_reason?: string;
+        }>;
+      };
+      const choice = parsed?.choices?.[0];
+      const content = choice?.message?.content ?? null;
+      const toolCalls = choice?.message?.tool_calls;
+      const finishReason = choice?.finish_reason;
+      const normalizedContent =
+        typeof content === 'string' ? content : content != null ? JSON.stringify(content) : null;
+
+      sessionRegistry.appendResponse(currentSessionId, normalizedContent, toolCalls, finishReason);
+      forwardMonitorBus.publish({
+        type: 'session-response',
+        sessionId: currentSessionId,
+        providerKey,
+        content: normalizedContent,
+        tool_calls: toolCalls,
+        finish_reason: finishReason,
+        status: upstreamResponse.status,
+        durationMs: Date.now() - startTime,
+        timestamp: Date.now(),
+      });
+    } catch {
+      const fallback = bodyText.slice(0, 500);
+      sessionRegistry.appendResponse(currentSessionId, fallback);
+      forwardMonitorBus.publish({
+        type: 'session-response',
+        sessionId: currentSessionId,
+        providerKey,
+        content: fallback,
+        status: upstreamResponse.status,
+        durationMs: Date.now() - startTime,
+        timestamp: Date.now(),
+      });
+    }
   } catch (error) {
     const message =
       error instanceof Error && error.name === 'AbortError'
@@ -180,6 +280,16 @@ async function sendForwardRequest(
           : '转发到上游失败';
 
     console.error(`[Forward][${traceId}] provider=${providerKey} upstream_error=${message}`);
+    sessionRegistry.appendResponse(currentSessionId, `[Error] ${message}`);
+    forwardMonitorBus.publish({
+      type: 'session-response',
+      sessionId: currentSessionId,
+      providerKey,
+      content: `[Error] ${message}`,
+      status: 502,
+      durationMs: Date.now() - startTime,
+      timestamp: Date.now(),
+    });
     res.status(502).json({
       error: {
         message,

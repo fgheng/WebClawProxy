@@ -21,6 +21,7 @@ const SPLIT_DIVIDER_HEIGHT = 8;
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTabKey>('webclaw');
   const [currentProvider, setCurrentProvider] = useState('gpt');
+  const [displayMode, setDisplayMode] = useState<'web' | 'forward'>('web');
   const [providerSites, setProviderSites] = useState<Record<string, string>>({});
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
   const [serviceStatus, setServiceStatus] = useState('stopped');
@@ -354,6 +355,23 @@ export default function App() {
                     {provider}
                   </option>
                 ))}
+              </select>
+              <select
+                className="control-provider-select control-mode-select"
+                value={displayMode}
+                onChange={(e) => {
+                  const mode = e.target.value as 'web' | 'forward';
+                  setDisplayMode(mode);
+                  if (mode === 'forward') {
+                    void window.webclawDesktop?.navigateBrowser?.('http://127.0.0.1:3000/monitor');
+                  } else {
+                    void window.webclawDesktop?.selectProvider?.(currentProvider);
+                  }
+                }}
+                title="切换 web / forward 模式"
+              >
+                <option value="web">web</option>
+                <option value="forward">forward</option>
               </select>
               {tabs.map((tab) => (
                 <button

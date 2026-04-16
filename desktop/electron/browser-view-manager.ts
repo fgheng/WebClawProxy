@@ -96,6 +96,13 @@ export class BrowserViewManager {
     this.updateBounds();
   }
 
+  navigateTo(url: string): Promise<void> {
+    if (!this.window || !this.currentProvider) return Promise.resolve();
+    const view = this.views.get(this.currentProvider);
+    if (!view) return Promise.resolve();
+    return view.webContents.loadURL(url);
+  }
+
   private updateBounds(): void {
     if (!this.window || !this.currentProvider) return;
     const view = this.views.get(this.currentProvider);

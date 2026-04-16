@@ -1,0 +1,363 @@
+/**
+ * SessionRegistry
+ *
+ * 通过三段 hash（tools / system / user rolling）识别同一对话会话，
+ * 将多次独立 HTTP 请求聚合为连续的 Session。
+ *
+ * 持久化：启动时从 JSON 文件加载，运行时定期保存，优雅退出时保存。
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+// ── Hash 工具 ─────────────────────────────────────────────────────────────────
+
+/** djb2 哈希，返回 8 位十六进制字符串 */
+function djb2(str: string): string {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = (((h << 5) + h) ^ str.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+// ── 类型定义 ──────────────────────────────────────────────────────────────────
+
+export type SessionMessage = {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: unknown | null;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+  name?: string;
+  timestamp: number;
+};
+
+export type Session = {
+  sessionId: string;
+  providerKey: string;
+  model: string;
+  tools: unknown[];
+  messages: SessionMessage[];
+  rounds: number;
+  createdAt: number;
+  lastActiveAt: number;
+};
+
+export type IngestResult =
+  | { action: 'new';    session: Session; newMessages: SessionMessage[] }
+  | { action: 'append'; session: Session; newMessages: SessionMessage[] };
+
+// ── 内部辅助 ──────────────────────────────────────────────────────────────────
+
+type RawMessage = {
+  role: string;
+  content?: unknown;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+  name?: string;
+};
+
+function normalizeContent(c: unknown): unknown | null {
+  if (c == null) return null;
+  return c;
+}
+
+function stringifyContentForHash(c: unknown): string {
+  if (typeof c === 'string') return c;
+  if (c == null) return '';
+  try {
+    return JSON.stringify(c);
+  } catch {
+    return String(c);
+  }
+}
+
+function toSessionMessage(m: RawMessage, ts: number): SessionMessage {
+  return {
+    role: m.role as SessionMessage['role'],
+    content: normalizeContent(m.content),
+    tool_calls: m.tool_calls,
+    tool_call_id: m.tool_call_id,
+    name: m.name,
+    timestamp: ts,
+  };
+}
+
+/**
+ * 从后向前找到最后一个 role=assistant 的位置，
+ * 返回 [历史消息, 新消息] 的切割结果。
+ *
+ * 历史 = messages[0 .. lastAssistantIdx]（含 assistant）
+ * 新消息 = messages[lastAssistantIdx+1 ..]
+ *
+ * 若没有 assistant 消息，历史为空，全部为新消息。
+ */
+function splitMessages(
+  messages: RawMessage[],
+  now: number,
+): { history: SessionMessage[]; newMessages: SessionMessage[] } {
+  let lastAssistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') {
+      lastAssistantIdx = i;
+      break;
+    }
+  }
+
+  if (lastAssistantIdx === -1) {
+    return {
+      history: [],
+      newMessages: messages.map((m) => toSessionMessage(m, now)),
+    };
+  }
+
+  return {
+    history: messages.slice(0, lastAssistantIdx + 1).map((m) => toSessionMessage(m, now)),
+    newMessages: messages.slice(lastAssistantIdx + 1).map((m) => toSessionMessage(m, now)),
+  };
+}
+
+/**
+ * 计算三段 session hash。
+ *
+ * 设计原则：同一个对话的每一轮请求，必须算出相同的 sessionId。
+ * 因此我们取**每轮都保持不变的信息**作为 hash 输入：
+ *   - tools hash：工具集（每轮都传，内容不变）
+ *   - system hash：所有 system 消息内容（每轮都传，内容不变）
+ *   - first-user hash：第一条 role=user 消息内容（每轮都会在历史里保留）
+ *
+ * @param tools      请求体中的 tools 字段
+ * @param allMessages 本次请求的全量 messages（切割前）
+ */
+function computeSessionId(tools: unknown[], allMessages: RawMessage[]): string {
+  // 1. tools hash
+  const toolsHash = djb2(tools.length > 0 ? JSON.stringify(tools) : '');
+
+  // 2. system hash：所有 system 消息拼接（每轮都完整携带）
+  const systemContents = allMessages
+    .filter((m) => m.role === 'system')
+    .map((m) => stringifyContentForHash(m.content))
+    .join('\n');
+  const systemHash = djb2(systemContents);
+
+  // 3. first-user hash：第一条 user 消息（每轮历史里都有，且不变）
+  const firstUser = allMessages.find((m) => m.role === 'user');
+  const firstUserHash = djb2(stringifyContentForHash(firstUser?.content));
+
+  return `${toolsHash}:${systemHash}:${firstUserHash}`;
+}
+
+// ── SessionRegistry ───────────────────────────────────────────────────────────
+
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 分钟不活跃则清理
+const PERSIST_FILE = path.join(process.cwd(), '.data', 'sessions.json'); // 持久化文件路径
+const PERSIST_INTERVAL_MS = 60 * 1000; // 每 1 分钟自动保存一次
+
+export class SessionRegistry {
+  /** sessionId → Session */
+  private sessions = new Map<string, Session>();
+  /** 自动清理定时器 */
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  /** 自动保存定时器 */
+  private persistTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    // 启动时加载持久化数据
+    this.load();
+
+    // 每 5 分钟清理一次过期 session
+    this.cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000);
+
+    // 每 1 分钟自动保存一次
+    this.persistTimer = setInterval(() => this.save(), PERSIST_INTERVAL_MS);
+
+    // 进程退出时保存数据
+    process.on('SIGINT', () => this.gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => this.gracefulShutdown('SIGTERM'));
+  }
+
+  private gracefulShutdown(signal: string): void {
+    console.log(`[SessionRegistry] 接收到 ${signal}，保存数据并退出...`);
+    this.save();
+    process.exit(0);
+  }
+
+  /** 从文件加载持久化数据 */
+  private load(): void {
+    try {
+      if (!fs.existsSync(PERSIST_FILE)) {
+        console.log('[SessionRegistry] 持久化文件不存在，跳过加载');
+        return;
+      }
+
+      const raw = fs.readFileSync(PERSIST_FILE, 'utf-8');
+      const data = JSON.parse(raw) as { sessions: Session[] };
+
+      let loaded = 0;
+      const now = Date.now();
+      for (const sess of data.sessions ?? []) {
+        // 过滤掉已过期的 session
+        if (now - sess.lastActiveAt > SESSION_TTL_MS) continue;
+        this.sessions.set(sess.sessionId, sess);
+        loaded++;
+      }
+
+      console.log(`[SessionRegistry] 从持久化文件加载 ${loaded} 个 session`);
+    } catch (error) {
+      console.error('[SessionRegistry] 加载持久化文件失败:', error);
+    }
+  }
+
+  /** 保存数据到文件 */
+  private save(): void {
+    try {
+      const dir = path.dirname(PERSIST_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      const data = {
+        savedAt: Date.now(),
+        sessions: Array.from(this.sessions.values()),
+      };
+
+      fs.writeFileSync(PERSIST_FILE, JSON.stringify(data, null, 2), 'utf-8');
+      console.log(`[SessionRegistry] 已保存 ${this.sessions.size} 个 session 到持久化文件`);
+    } catch (error) {
+      console.error('[SessionRegistry] 保存持久化文件失败:', error);
+    }
+  }
+
+  /**
+   * 处理一次新的 request：计算 sessionId，命中则 append，否则新建。
+   */
+  ingest(
+    providerKey: string,
+    model: string,
+    requestBody: Record<string, unknown>,
+  ): IngestResult {
+    const now = Date.now();
+    const rawMessages = Array.isArray(requestBody.messages)
+      ? (requestBody.messages as RawMessage[])
+      : [];
+    const tools = Array.isArray(requestBody.tools) ? requestBody.tools : [];
+
+    const { history, newMessages } = splitMessages(rawMessages, now);
+    const sessionId = computeSessionId(tools, rawMessages);
+
+    const existing = this.sessions.get(sessionId);
+
+    if (existing) {
+      // 命中已有 session：追加新消息
+      for (const m of newMessages) {
+        existing.messages.push(m);
+      }
+      existing.lastActiveAt = now;
+      return { action: 'append', session: existing, newMessages };
+    }
+
+    // 新建 session：把历史消息 + 新消息都收入
+    const allMessages = [...history, ...newMessages];
+    const session: Session = {
+      sessionId,
+      providerKey,
+      model,
+      tools,
+      messages: allMessages,
+      rounds: 0,
+      createdAt: now,
+      lastActiveAt: now,
+    };
+    this.sessions.set(sessionId, session);
+    return { action: 'new', session, newMessages: allMessages };
+  }
+
+  /**
+   * assistant 回复到达后，把 assistant 消息追加到 session 并增加 rounds 计数。
+   */
+  appendResponse(
+    sessionId: string,
+    content: unknown | null,
+    toolCalls?: unknown[],
+    finishReason?: string,
+  ): Session | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+
+    const now = Date.now();
+    const assistantMsg: SessionMessage = {
+      role: 'assistant',
+      content,
+      tool_calls: toolCalls,
+      timestamp: now,
+    };
+    session.messages.push(assistantMsg);
+    session.rounds += 1;
+    session.lastActiveAt = now;
+    void finishReason; // 暂不存储，可按需扩展
+    return session;
+  }
+
+  /** 获取所有 session，可选按 provider 过滤 */
+  getSessions(providerKey?: string): Session[] {
+    const all = Array.from(this.sessions.values());
+    if (providerKey) return all.filter((s) => s.providerKey === providerKey);
+    return all;
+  }
+
+  /** 获取单个 session */
+  getSession(sessionId: string): Session | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  /** 删除单个 session */
+  deleteSession(sessionId: string): boolean {
+    const deleted = this.sessions.delete(sessionId);
+    if (deleted) this.save(); // 立即保存
+    return deleted;
+  }
+
+  /** 获取所有 provider 名称（去重） */
+  getProviders(): string[] {
+    const set = new Set<string>();
+    for (const s of this.sessions.values()) set.add(s.providerKey);
+    return Array.from(set);
+  }
+
+  /** 获取 session 摘要（不含完整消息体，供快照用） */
+  getSnapshot(): Array<Omit<Session, 'messages'> & { lastMessage: SessionMessage | null; messageCount: number }> {
+    return Array.from(this.sessions.values()).map((s) => {
+      const { messages, ...rest } = s;
+      return {
+        ...rest,
+        messageCount: messages.length,
+        lastMessage: messages.length > 0 ? messages[messages.length - 1] : null,
+      };
+    });
+  }
+
+  /** 清理超过 TTL 的 session */
+  private cleanup(): void {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [id, session] of this.sessions.entries()) {
+      if (now - session.lastActiveAt > SESSION_TTL_MS) {
+        this.sessions.delete(id);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[SessionRegistry] 清理了 ${cleaned} 个过期 session`);
+      this.save();
+    }
+  }
+
+  /** 销毁（测试用） */
+  destroy(): void {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    if (this.persistTimer) clearInterval(this.persistTimer);
+    this.save(); // 最后保存一次
+  }
+}
+
+export const sessionRegistry = new SessionRegistry();

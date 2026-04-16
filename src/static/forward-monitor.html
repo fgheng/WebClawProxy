@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Forward Monitor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:            #0d1117;
+      --bg-sidebar:    #0b0f18;
+      --bg-card:       #0f1923;
+      --bg-hover:      rgba(30,45,61,0.6);
+      --bg-selected:   rgba(88,166,255,0.1);
+      --border:        #1e2d3d;
+      --border-faint:  #131f2e;
+      --text:          #cdd9e5;
+      --text-muted:    #546e7a;
+      --text-dim:      #3d5166;
+      --accent-blue:   #58a6ff;
+      --accent-green:  #3fb950;
+      --accent-purple: #a371f7;
+      --accent-yellow: #d29922;
+      --accent-red:    #f85149;
+      --role-sys-bg:   rgba(163,113,247,0.07);
+      --role-sys-bdr:  rgba(163,113,247,0.2);
+      --role-sys-clr:  #a371f7;
+      --role-usr-bg:   rgba(88,166,255,0.07);
+      --role-usr-bdr:  rgba(88,166,255,0.18);
+      --role-usr-clr:  #58a6ff;
+      --role-ast-bg:   rgba(63,185,80,0.07);
+      --role-ast-bdr:  rgba(63,185,80,0.18);
+      --role-ast-clr:  #3fb950;
+      --role-tol-bg:   rgba(210,153,34,0.07);
+      --role-tol-bdr:  rgba(210,153,34,0.18);
+      --role-tol-clr:  #d29922;
+      --scrollbar:     #1e2d3d;
+      --sidebar-w:     260px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+      font-size: 13px; line-height: 1.5; overflow: hidden; }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
+
+    #shell { height: 100%; display: flex; flex-direction: column; }
+
+    /* ── Topbar ─────────────────────────────────────────── */
+    #topbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 14px; background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0; flex-wrap: wrap;
+    }
+    #topbar h1 { font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+    .conn-badge { display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+    .conn-badge.on  { background: rgba(63,185,80,.14); color: var(--accent-green); }
+    .conn-badge.off { background: rgba(60,60,60,.25);  color: var(--text-muted); }
+    .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .check-lbl { display: flex; align-items: center; gap: 4px; font-size: 11px;
+      color: var(--text-muted); cursor: pointer; user-select: none; }
+    .check-lbl input { cursor: pointer; accent-color: var(--accent-blue); }
+    .btn { background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+      padding: 3px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; transition: .15s; }
+    .btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+    /* ── Main ───────────────────────────────────────────── */
+    #main { flex: 1; display: flex; overflow: hidden; }
+
+    /* ── Sidebar ────────────────────────────────────────── */
+    #sidebar {
+      width: var(--sidebar-w); flex-shrink: 0;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #sidebar-header {
+      padding: 8px 12px; font-size: 10px; font-weight: 700;
+      color: var(--text-dim); letter-spacing: .08em; text-transform: uppercase;
+      border-bottom: 1px solid var(--border-faint); flex-shrink: 0;
+    }
+    #sidebar-body { flex: 1; overflow-y: auto; }
+
+    .pvd-group { border-bottom: 1px solid var(--border-faint); }
+    .pvd-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 12px; cursor: pointer; user-select: none;
+      font-size: 11px; font-weight: 600; color: var(--text);
+    }
+    .pvd-header:hover { background: var(--bg-hover); }
+    .pvd-toggle { font-size: 10px; color: var(--text-dim); width: 10px; }
+    .pvd-name { flex: 1; }
+    .pvd-count { font-size: 10px; color: var(--text-muted);
+      background: rgba(88,166,255,.12); padding: 1px 5px; border-radius: 3px; }
+
+    .sess-list { display: none; }
+    .sess-list.open { display: block; }
+    .sess-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 12px 5px 22px; cursor: pointer; font-size: 11px;
+      color: var(--text-muted); border-left: 2px solid transparent;
+      transition: background .12s;
+    }
+    .sess-item:hover { background: var(--bg-hover); }
+    .sess-item.active { background: var(--bg-selected); border-left-color: var(--accent-blue); color: var(--text); }
+    .sess-item.unread { color: var(--text); }
+    .sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
+    .sess-dot.live { background: var(--accent-green);
+      box-shadow: 0 0 4px var(--accent-green); animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .sess-id   { font-family: ui-monospace,monospace; font-size: 10px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sess-meta { font-size: 9px; color: var(--text-dim); white-space: nowrap; }
+    .sess-time { font-size: 9px; color: var(--text-muted); margin-left: auto; padding-left: 8px; white-space: nowrap; font-family: ui-monospace,monospace; }
+    .sidebar-empty { padding: 24px 12px; text-align: center; font-size: 11px; color: var(--text-dim); }
+
+    /* ── Content ────────────────────────────────────────── */
+    #content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    #content-header {
+      padding: 8px 14px; font-size: 11px; color: var(--text-muted);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .content-session-id { font-family: ui-monospace,monospace; font-size: 10px; color: var(--accent-blue); }
+    .content-provider { background: rgba(88,166,255,.14); color: var(--accent-blue);
+      padding: 1px 6px; border-radius: 4px; font-size: 10px; }
+    .content-model { color: var(--text); font-size: 11px; }
+    .content-rounds { color: var(--text-dim); font-size: 10px; margin-left: auto; }
+
+    #msg-list { flex: 1; overflow-y: auto; padding: 12px 16px;
+      display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 120px); }
+    
+    .msg-body { 
+      max-height: 500px; 
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .msg-body::-webkit-scrollbar {
+      width: 3px;
+    }
+    .msg-body::-webkit-scrollbar-thumb {
+      background: var(--scrollbar);
+      border-radius: 1.5px;
+    }
+
+    #welcome { display: flex; align-items: center; justify-content: center;
+      flex: 1; flex-direction: column; gap: 8px; }
+    #welcome p { font-size: 12px; color: var(--text-dim); text-align: center; }
+
+    /* ── Round divider ──────────────────────────────────── */
+    .round-divider {
+      display: flex; align-items: center; gap: 8px;
+      margin: 10px 0 2px; font-size: 10px; color: var(--text-dim); flex-shrink: 0;
+    }
+    .round-divider::before, .round-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border-faint); }
+
+    /* ── Message card ───────────────────────────────────── */
+    .msg {
+      border-radius: 8px; font-size: 12px; line-height: 1.6;
+      border: 1px solid; overflow: hidden;
+      flex-shrink: 0;
+      min-height: 120px;
+      margin-bottom: 8px;
+    }
+    .msg-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 10px; font-size: 10px; font-weight: 700;
+      letter-spacing: .05em; text-transform: uppercase;
+      border-bottom: 1px solid var(--border-faint);
+    }
+    .msg-header-meta { margin-left: auto; font-size: 9px; font-weight: 400;
+      color: var(--text-muted); text-transform: none; letter-spacing: 0; }
+    .msg-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; min-height: 80px; }
+
+    /* role colors */
+    .r-sys { background: var(--role-sys-bg); border-color: var(--role-sys-bdr); }
+    .r-sys .msg-header { color: var(--role-sys-clr); background: rgba(163,113,247,0.06); }
+    .r-usr { background: var(--role-usr-bg); border-color: var(--role-usr-bdr); }
+    .r-usr .msg-header { color: var(--role-usr-clr); background: rgba(88,166,255,0.06); }
+    .r-ast { background: var(--role-ast-bg); border-color: var(--role-ast-bdr); }
+    .r-ast .msg-header { color: var(--role-ast-clr); background: rgba(63,185,80,0.06); }
+    .r-tol { background: var(--role-tol-bg); border-color: var(--role-tol-bdr); }
+    .r-tol .msg-header { color: var(--role-tol-clr); background: rgba(210,153,34,0.06); }
+    .r-err { background: rgba(248,81,73,.06); border-color: rgba(248,81,73,.2); }
+    .r-err .msg-header { color: var(--accent-red); background: rgba(248,81,73,.06); }
+
+    /* ── Text content block ─────────────────────────────── */
+    .content-text {
+      white-space: pre-wrap; word-break: break-word;
+      color: var(--text); font-size: 11px; line-height: 1.65;
+      max-height: none; overflow-y: visible;
+    }
+    .content-text.collapsed { 
+      max-height: 100px; 
+      overflow: hidden; 
+      position: relative;
+      cursor: pointer;
+    }
+    .content-text.collapsed::after {
+      content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 40px;
+      background: linear-gradient(transparent, var(--bg-card));
+      pointer-events: none;
+    }
+    .content-group { display: flex; flex-direction: column; gap: 8px; }
+    .content-item-box, .tool-call-box {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+    .content-item-box-header, .tool-call-box-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 8px;
+      font-size: 10px;
+      color: var(--text-dim);
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-faint);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .content-item-box-body, .tool-call-box-body {
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    /* ── Image block ────────────────────────────────────── */
+    .content-image { display: flex; align-items: flex-start; gap: 8px; }
+    .content-image img { max-width: 120px; max-height: 80px; border-radius: 4px;
+      border: 1px solid var(--border); object-fit: cover; }
+    .content-image-url { font-size: 10px; font-family: ui-monospace,monospace;
+      color: var(--text-muted); word-break: break-all; }
+
+    /* ── Tool call block ────────────────────────────────── */
+    .tool-call {
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    .tool-call-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 8px; font-size: 10px;
+      background: rgba(210,153,34,0.08);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer; user-select: none;
+    }
+    .tool-call-header:hover { background: rgba(210,153,34,0.14); }
+    .tool-name { font-weight: 700; font-family: ui-monospace,monospace;
+      color: var(--accent-yellow); font-size: 11px; }
+    .tool-call-id-badge { font-size: 9px; color: var(--text-dim);
+      font-family: ui-monospace,monospace; }
+    .tool-call-toggle { margin-left: auto; font-size: 10px; color: var(--text-dim); }
+    .tool-call-args { padding: 6px 8px; max-height: 300px; overflow-y: auto; }
+    .tool-call-args.hidden { display: none; }
+
+    /* ── Tool result block ──────────────────────────────── */
+    .tool-result { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .tool-result-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 8px; font-size: 10px;
+      background: rgba(210,153,34,0.06);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer; user-select: none;
+    }
+    .tool-result-header:hover { background: rgba(210,153,34,0.12); }
+    .tool-result-id { font-family: ui-monospace,monospace; font-size: 9px; color: var(--text-dim); }
+    .tool-result-toggle { margin-left: auto; font-size: 10px; color: var(--text-dim); }
+    .tool-result-body { padding: 6px 8px; max-height: 300px; overflow-y: auto; }
+    .tool-result-body.hidden { display: none; }
+
+    /* ── Code / JSON pre ────────────────────────────────── */
+    pre.json-block {
+      font-size: 10px; font-family: ui-monospace,monospace;
+      background: rgba(2,8,20,.7); border-radius: 5px; padding: 6px 8px;
+      overflow-x: auto; color: #8b949e; white-space: pre; line-height: 1.5;
+      max-height: 300px; overflow-y: auto; margin: 0;
+    }
+    pre.json-block .jk { color: #7ee787; }   /* key */
+    pre.json-block .js { color: #a5d6ff; }   /* string value */
+    pre.json-block .jn { color: #f0883e; }   /* number */
+    pre.json-block .jb { color: #ff7b72; }   /* boolean/null */
+
+    .raw-content {
+      font-size: 10px; font-family: ui-monospace,monospace;
+      color: var(--text-muted); white-space: pre-wrap; word-break: break-all;
+      max-height: 200px; overflow-y: auto;
+    }
+
+    /* ── Waiting indicator ──────────────────────────────── */
+    .waiting { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
+    .dot { width: 5px; height: 5px; background: var(--accent-blue); border-radius: 50%;
+      animation: blink 1.2s infinite; }
+    .dot:nth-child(2) { animation-delay: .2s; }
+    .dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+
+    .sess-item.flash { animation: flash .6s ease; }
+    @keyframes flash { 0%{background:rgba(88,166,255,.25)} 100%{background:transparent} }
+  </style>
+</head>
+<body>
+<div id="shell">
+
+  <!-- Topbar -->
+  <div id="topbar">
+    <h1>Forward Monitor</h1>
+    <span id="conn-badge" class="conn-badge off">○ 未连接</span>
+    <span id="sess-count" style="font-size:10px;color:var(--text-muted)">0 sessions</span>
+    <div class="topbar-right">
+      <label class="check-lbl">
+        <input type="checkbox" id="auto-scroll" checked /> Auto Scroll
+      </label>
+      <button class="btn" id="clear-btn">清空</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="sidebar">
+      <div id="sidebar-header">Providers</div>
+      <div id="sidebar-body">
+        <p class="sidebar-empty" id="sidebar-empty">暂无 session</p>
+      </div>
+    </div>
+
+    <div id="content">
+      <div id="content-header" style="display:none">
+        <span class="content-session-id" id="ch-sid"></span>
+        <span class="content-provider" id="ch-pvd"></span>
+        <span class="content-model" id="ch-model"></span>
+        <span class="content-rounds" id="ch-rounds"></span>
+      </div>
+      <div id="welcome">
+        <p>← 从左侧选择一个 Session 查看消息</p>
+        <p style="font-size:10px">等待 forward 请求到来…</p>
+      </div>
+      <div id="msg-list" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+const sessions  = new Map();
+let   activeId  = null;
+const providers = new Map();
+
+const connBadge    = document.getElementById('conn-badge');
+const sessCount    = document.getElementById('sess-count');
+const sidebarBody  = document.getElementById('sidebar-body');
+const sidebarEmpty = document.getElementById('sidebar-empty');
+const welcome      = document.getElementById('welcome');
+const msgList      = document.getElementById('msg-list');
+const contentHdr   = document.getElementById('content-header');
+const chSid        = document.getElementById('ch-sid');
+const chPvd        = document.getElementById('ch-pvd');
+const chModel      = document.getElementById('ch-model');
+const chRounds     = document.getElementById('ch-rounds');
+const autoScrollCb = document.getElementById('auto-scroll');
+const clearBtn     = document.getElementById('clear-btn');
+
+function shortId(id) { return String(id ?? '').slice(0, 16); }
+
+function formatTime(timestamp) {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function insertSessItemSorted(item, listEl, lastActiveAt) {
+  const items = Array.from(listEl.children);
+  
+  // 寻找插入位置（按时间倒序：最新的在前面）
+  let insertIndex = 0;
+  for (let i = 0; i < items.length; i++) {
+    const existingItem = items[i];
+    const existingSess = sessions.get(existingItem.dataset.sid);
+    if (existingSess && existingSess.lastActiveAt < lastActiveAt) {
+      break;
+    }
+    insertIndex++;
+  }
+  
+  // 插入到正确位置
+  if (insertIndex >= items.length) {
+    listEl.appendChild(item);
+  } else {
+    listEl.insertBefore(item, items[insertIndex]);
+  }
+}
+
+function sortSessItems(listEl) {
+  const items = Array.from(listEl.children);
+  if (items.length <= 1) return;
+  
+  // 按时间排序（最新的在前）
+  items.sort((a, b) => {
+    const sessA = sessions.get(a.dataset.sid);
+    const sessB = sessions.get(b.dataset.sid);
+    if (!sessA || !sessB) return 0;
+    return sessB.lastActiveAt - sessA.lastActiveAt;
+  });
+  
+  // 重新插入到DOM中
+  for (const item of items) {
+    listEl.appendChild(item);
+  }
+}
+
+function tryJson(s) {
+  if (typeof s !== 'string') return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+function looksLikeStructuredContent(val) {
+  if (Array.isArray(val)) return true;
+  if (!val || typeof val !== 'object') return false;
+  return 'type' in val || 'text' in val || 'image_url' in val || 'role' in val || 'content' in val;
+}
+
+function jsonPre(val) {
+  const pre = document.createElement('pre');
+  pre.className = 'json-block';
+  let str;
+  try {
+    str = typeof val === 'string' ? JSON.stringify(JSON.parse(val), null, 2) : JSON.stringify(val, null, 2);
+  } catch {
+    str = typeof val === 'string' ? val : JSON.stringify(val);
+  }
+  pre.innerHTML = str.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    (match) => {
+      if (/^"/.test(match)) {
+        if (/:$/.test(match)) return `<span class="jk">${match}</span>`;
+        return `<span class="js">${match}</span>`;
+      }
+      if (/true|false|null/.test(match)) return `<span class="jb">${match}</span>`;
+      return `<span class="jn">${match}</span>`;
+    }
+  );
+  return pre;
+}
+
+function makeCard(roleClass, roleLabel, metaText) {
+  const card = document.createElement('div');
+  card.className = `msg ${roleClass}`;
+
+  const hdr = document.createElement('div');
+  hdr.className = 'msg-header';
+  hdr.textContent = roleLabel;
+
+  if (metaText) {
+    const m = document.createElement('span');
+    m.className = 'msg-header-meta';
+    m.textContent = metaText;
+    hdr.appendChild(m);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+
+  card.append(hdr, body);
+  return { card, hdr, body };
+}
+
+function makeTextBlock(text, collapsible) {
+  const div = document.createElement('div');
+  div.className = 'content-text';
+  div.textContent = text;
+
+  if (collapsible && text.length > 300) {
+    div.classList.add('collapsed');
+    div.title = '点击展开/收起';
+    div.addEventListener('click', () => div.classList.toggle('collapsed'));
+  }
+  return div;
+}
+
+function makeBox(className, title, children) {
+  const box = document.createElement('div');
+  box.className = className;
+
+  if (title) {
+    const header = document.createElement('div');
+    header.className = `${className}-header`;
+    header.textContent = title;
+    box.appendChild(header);
+  }
+
+  const body = document.createElement('div');
+  body.className = `${className}-body`;
+  for (const child of children) body.appendChild(child);
+  box.appendChild(body);
+  return box;
+}
+
+function renderContentPart(part) {
+  const els = [];
+  if (part == null || part === '') return els;
+
+  if (typeof part === 'string') {
+    els.push(makeTextBlock(part, true));
+    return els;
+  }
+
+  if (Array.isArray(part)) {
+    return renderContent(part, { groupArray: true });
+  }
+
+  if (typeof part === 'object') {
+    if (part.type === 'text') {
+      if (part.text) els.push(makeTextBlock(part.text, true));
+      return els;
+    }
+
+    if (part.type === 'image_url') {
+      const url = part.image_url?.url ?? '';
+      const wrap = document.createElement('div');
+      wrap.className = 'content-image';
+      if (url.startsWith('data:') || url.startsWith('http')) {
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = 'image';
+        wrap.appendChild(img);
+      }
+      const urlDiv = document.createElement('div');
+      urlDiv.className = 'content-image-url';
+      urlDiv.textContent = url.length > 80 ? url.slice(0, 80) + '…' : url;
+      wrap.appendChild(urlDiv);
+      els.push(wrap);
+      return els;
+    }
+
+    if (typeof part.text === 'string') {
+      els.push(makeTextBlock(part.text, true));
+      return els;
+    }
+  }
+
+  els.push(jsonPre(part));
+  return els;
+}
+
+function getContentPartTitle(part, index) {
+  if (part?.type === 'text') return `文本 ${index + 1}`;
+  if (part?.type === 'image_url') return `图片 ${index + 1}`;
+  if (typeof part === 'string') return `内容 ${index + 1}`;
+  return `元素 ${index + 1}`;
+}
+
+function renderContent(content, options = {}) {
+  const { groupArray = false } = options;
+  const els = [];
+  if (content == null || content === '') return els;
+
+  if (typeof content === 'string') {
+    const parsed = tryJson(content);
+    if (parsed !== null && looksLikeStructuredContent(parsed)) {
+      return renderContent(parsed, options);
+    }
+    els.push(makeTextBlock(content, true));
+    return els;
+  }
+
+  if (Array.isArray(content)) {
+    if (groupArray && content.length > 1) {
+      const group = document.createElement('div');
+      group.className = 'content-group';
+      content.forEach((part, index) => {
+        const children = renderContentPart(part);
+        group.appendChild(makeBox('content-item-box', getContentPartTitle(part, index), children.length ? children : [makeTextBlock('(empty)', false)]));
+      });
+      els.push(group);
+      return els;
+    }
+
+    for (const part of content) {
+      const partEls = renderContentPart(part);
+      for (const el of partEls) els.push(el);
+    }
+    return els;
+  }
+
+  els.push(...renderContentPart(content));
+  return els;
+}
+
+function renderToolCalls(toolCalls) {
+  const els = [];
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return els;
+
+  const group = document.createElement('div');
+  group.className = 'content-group';
+
+  toolCalls.forEach((tc, index) => {
+    const fnName = tc?.function?.name ?? tc?.id ?? '(unknown)';
+    const fnArgs = tc?.function?.arguments;
+    const callId = tc?.id ? ` · #${tc.id.slice(-8)}` : '';
+    const children = [];
+
+    if (fnArgs != null && fnArgs !== '') {
+      const parsed = tryJson(fnArgs);
+      children.push(parsed !== null ? jsonPre(parsed) : makeTextBlock(String(fnArgs), true));
+    } else {
+      children.push(makeTextBlock('(no arguments)', false));
+    }
+
+    group.appendChild(makeBox('tool-call-box', `tool_call ${index + 1} · ${fnName}${callId}`, children));
+  });
+
+  els.push(group);
+  return els;
+}
+
+function makeToolResultEl(msg) {
+  const { card, body } = makeCard('r-tol', 'Tool Result',
+    msg.name ? `fn: ${msg.name}` : undefined);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'tool-result';
+
+  const rh = document.createElement('div');
+  rh.className = 'tool-result-header';
+
+  const idSpan = document.createElement('span');
+  idSpan.className = 'tool-result-id';
+  idSpan.textContent = msg.tool_call_id ? `call_id: ${msg.tool_call_id}` : '(no call_id)';
+
+  const tog = document.createElement('span');
+  tog.className = 'tool-result-toggle';
+  tog.textContent = '▾';
+
+  rh.append(idSpan, tog);
+
+  const rb = document.createElement('div');
+  rb.className = 'tool-result-body';
+
+  const contentEls = renderContent(msg.content, { groupArray: true });
+  if (contentEls.length > 0) {
+    for (const el of contentEls) rb.appendChild(el);
+  } else {
+    const parsed = tryJson(msg.content);
+    if (parsed !== null) {
+      rb.appendChild(jsonPre(parsed));
+    } else if (msg.content != null && msg.content !== '') {
+      if (typeof msg.content === 'string') rb.appendChild(makeTextBlock(msg.content, true));
+      else rb.appendChild(jsonPre(msg.content));
+    } else {
+      const empty = document.createElement('span');
+      empty.style.cssText = 'font-size:10px;color:var(--text-dim)';
+      empty.textContent = '(empty)';
+      rb.appendChild(empty);
+    }
+  }
+
+  rh.addEventListener('click', () => {
+    const hidden = rb.classList.toggle('hidden');
+    tog.textContent = hidden ? '▸' : '▾';
+  });
+
+  wrap.append(rh, rb);
+  body.appendChild(wrap);
+  return card;
+}
+
+function makeUserEl(msg) {
+  const { card, body } = makeCard('r-usr', 'User');
+  const contentEls = renderContent(msg.content, { groupArray: true });
+  if (contentEls.length > 0) {
+    for (const el of contentEls) body.appendChild(el);
+  } else {
+    const empty = document.createElement('span');
+    empty.style.cssText = 'font-size:10px;color:var(--text-dim)';
+    empty.textContent = '(empty)';
+    body.appendChild(empty);
+  }
+  return card;
+}
+
+function makeSystemEl(msg) {
+  const { card, body } = makeCard('r-sys', 'System');
+  const contentEls = renderContent(msg.content);
+  for (const el of contentEls) body.appendChild(el);
+  return card;
+}
+
+function makeAssistantEl(msg) {
+  const { card, body } = makeCard('r-ast', 'Assistant');
+
+  const contentEls = renderContent(msg.content);
+  for (const el of contentEls) body.appendChild(el);
+
+  const tcEls = renderToolCalls(msg.tool_calls);
+  for (const el of tcEls) body.appendChild(el);
+
+  if (contentEls.length === 0 && tcEls.length === 0) {
+    const empty = document.createElement('span');
+    empty.style.cssText = 'font-size:10px;color:var(--text-dim)';
+    empty.textContent = '(empty)';
+    body.appendChild(empty);
+  }
+  return card;
+}
+
+function makeMsgEl(msg) {
+  switch (msg.role) {
+    case 'system':    return makeSystemEl(msg);
+    case 'user':      return makeUserEl(msg);
+    case 'assistant': return makeAssistantEl(msg);
+    case 'tool':      return makeToolResultEl(msg);
+    default: {
+      const { card, body } = makeCard('r-tol', msg.role ?? 'unknown');
+      body.appendChild(jsonPre(msg));
+      return card;
+    }
+  }
+}
+
+function makeRespEl(evt) {
+  const isError = evt.status >= 400 || (typeof evt.content === 'string' && evt.content.startsWith('[Error]'));
+  const metaParts = [evt.status, evt.durationMs ? evt.durationMs + 'ms' : null, evt.finish_reason].filter(Boolean).join(' · ');
+  const { card, body } = makeCard(isError ? 'r-err' : 'r-ast', isError ? 'Error' : 'Assistant', metaParts);
+
+  const contentEls = renderContent(evt.content);
+  for (const el of contentEls) body.appendChild(el);
+
+  const tcEls = renderToolCalls(evt.tool_calls);
+  for (const el of tcEls) body.appendChild(el);
+
+  if (contentEls.length === 0 && tcEls.length === 0 && !isError) {
+    const empty = document.createElement('span');
+    empty.style.cssText = 'font-size:10px;color:var(--text-dim)';
+    empty.textContent = '(empty response)';
+    body.appendChild(empty);
+  }
+  return card;
+}
+
+function makeWaitingEl(sid) {
+  const { card, body } = makeCard('r-ast', 'Assistant');
+  card.id = `waiting-${sid}`;
+
+  const w = document.createElement('div');
+  w.className = 'waiting';
+  for (let i = 0; i < 3; i++) {
+    const d = document.createElement('span');
+    d.className = 'dot';
+    w.appendChild(d);
+  }
+  body.appendChild(w);
+  return card;
+}
+
+function makeRoundDivider(n) {
+  const div = document.createElement('div');
+  div.className = 'round-divider';
+  div.textContent = `第 ${n} 轮`;
+  return div;
+}
+
+function scrollBottom() {
+  if (autoScrollCb.checked) msgList.scrollTop = msgList.scrollHeight;
+}
+
+function getOrCreateProvider(pvdKey) {
+  if (providers.has(pvdKey)) return providers.get(pvdKey);
+
+  const group = document.createElement('div');
+  group.className = 'pvd-group';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'pvd-header';
+
+  const toggle = document.createElement('span');
+  toggle.className = 'pvd-toggle';
+  toggle.textContent = '▾';
+
+  const name = document.createElement('span');
+  name.className = 'pvd-name';
+  name.textContent = pvdKey;
+
+  const countEl = document.createElement('span');
+  countEl.className = 'pvd-count';
+  countEl.textContent = '0';
+
+  hdr.append(toggle, name, countEl);
+
+  const list = document.createElement('div');
+  list.className = 'sess-list open';
+
+  let open = true;
+  hdr.addEventListener('click', () => {
+    open = !open;
+    toggle.textContent = open ? '▾' : '▸';
+    list.classList.toggle('open', open);
+  });
+
+  group.append(hdr, list);
+  sidebarBody.appendChild(group);
+  if (sidebarEmpty) sidebarEmpty.style.display = 'none';
+
+  const obj = { el: group, listEl: list, countEl };
+  providers.set(pvdKey, obj);
+  return obj;
+}
+
+function updateProviderCount(pvdKey) {
+  const obj = providers.get(pvdKey);
+  if (!obj) return;
+  obj.countEl.textContent = String([...sessions.values()].filter(s => s.providerKey === pvdKey).length);
+}
+
+function updateSessCount() {
+  sessCount.textContent = `${sessions.size} sessions`;
+}
+
+function createSessItem(sess) {
+  const pvdObj = getOrCreateProvider(sess.providerKey);
+
+  const item = document.createElement('div');
+  item.className = 'sess-item';
+  item.dataset.sid = sess.sessionId;
+
+  const dot = document.createElement('span');
+  dot.className = 'sess-dot';
+
+  const idEl = document.createElement('span');
+  idEl.className = 'sess-id';
+  idEl.textContent = shortId(sess.sessionId);
+  idEl.title = sess.sessionId;
+
+  const meta = document.createElement('span');
+  meta.className = 'sess-meta';
+  meta.textContent = `${sess.rounds ?? 0}轮`;
+
+  item.append(dot, idEl, meta);
+  item.addEventListener('click', () => selectSession(sess.sessionId));
+
+  const timeEl = document.createElement('span');
+  timeEl.className = 'sess-time';
+  timeEl.textContent = formatTime(sess.lastActiveAt);
+  item.appendChild(timeEl);
+
+  insertSessItemSorted(item, pvdObj.listEl, sess.lastActiveAt);
+
+  sess.el = item;
+  sess.dotEl = dot;
+  sess.metaEl = meta;
+  sess.timeEl = timeEl;
+  updateProviderCount(sess.providerKey);
+}
+
+function updateSessItemMeta(sess) {
+  if (sess.metaEl) sess.metaEl.textContent = `${sess.rounds ?? 0}轮`;
+}
+
+function updateSessItemTime(sess) {
+  if (sess.timeEl) sess.timeEl.textContent = formatTime(sess.lastActiveAt);
+}
+
+function reorderSessItem(sess) {
+  const pvdObj = providers.get(sess.providerKey);
+  if (!pvdObj || !sess.el) return;
+  if (sess.el.parentNode === pvdObj.listEl) pvdObj.listEl.removeChild(sess.el);
+  insertSessItemSorted(sess.el, pvdObj.listEl, sess.lastActiveAt);
+}
+
+function flashSessItem(sess) {
+  if (!sess.el) return;
+  sess.el.classList.remove('flash');
+  void sess.el.offsetWidth;
+  sess.el.classList.add('flash');
+  if (sess.sessionId !== activeId) sess.el.classList.add('unread');
+}
+
+async function selectSession(sid) {
+  if (activeId === sid) return;
+
+  if (activeId) {
+    const prev = sessions.get(activeId);
+    if (prev?.el) prev.el.classList.remove('active');
+  }
+
+  activeId = sid;
+  const sess = sessions.get(sid);
+  if (!sess) return;
+
+  sess.el.classList.remove('unread', 'flash');
+  sess.el.classList.add('active');
+
+  welcome.style.display = 'none';
+  msgList.style.display = 'flex';
+  contentHdr.style.display = 'flex';
+  chSid.textContent   = shortId(sess.sessionId);
+  chPvd.textContent   = sess.providerKey;
+  chModel.textContent = sess.model;
+  chRounds.textContent = `${sess.rounds ?? 0} 轮`;
+
+  if (!sess.loaded) {
+    await loadSessionMessages(sess);
+  } else {
+    renderMessages(sess);
+  }
+}
+
+async function loadSessionMessages(sess) {
+  try {
+    const resp = await fetch(`/v1/forward-monitor/sessions/${encodeURIComponent(sess.sessionId)}`);
+    const data = await resp.json();
+    if (data.session) {
+      sess.messages = data.session.messages ?? [];
+      sess.rounds   = data.session.rounds ?? sess.rounds;
+    }
+  } catch {
+    sess.messages = [];
+  }
+  sess.loaded = true;
+  renderMessages(sess);
+}
+
+function renderMessages(sess) {
+  if (sess.sessionId !== activeId) return;
+  msgList.innerHTML = '';
+
+  const msgs = sess.messages ?? [];
+  let roundNum = 1;
+  let inRound = false;
+
+  for (const m of msgs) {
+    if (!inRound) {
+      msgList.appendChild(makeRoundDivider(roundNum));
+      inRound = true;
+    }
+    msgList.appendChild(makeMsgEl(m));
+    if (m.role === 'assistant') { roundNum++; inRound = false; }
+  }
+
+  if (sess.waitingResp) {
+    if (!inRound) msgList.appendChild(makeRoundDivider(roundNum));
+    const wid = `waiting-${sess.sessionId}`;
+    if (!document.getElementById(wid)) msgList.appendChild(makeWaitingEl(sess.sessionId));
+  }
+
+  chRounds.textContent = `${sess.rounds ?? 0} 轮`;
+  scrollBottom();
+}
+
+function onSnapshot(evt) {
+  for (const s of (evt.sessions ?? [])) {
+    if (!sessions.has(s.sessionId)) {
+      sessions.set(s.sessionId, { ...s, messages: [], loaded: false, waitingResp: false, el: null, dotEl: null, metaEl: null });
+      createSessItem(sessions.get(s.sessionId));
+    }
+  }
+  updateSessCount();
+}
+
+function onSessionNew(evt) {
+  if (!sessions.has(evt.sessionId)) {
+    const sess = {
+      sessionId: evt.sessionId, providerKey: evt.providerKey, model: evt.model,
+      tools: evt.tools, rounds: 0, createdAt: evt.timestamp, lastActiveAt: evt.timestamp,
+      messageCount: 0, messages: [], loaded: true, waitingResp: false,
+      el: null, dotEl: null, metaEl: null,
+    };
+    sessions.set(evt.sessionId, sess);
+    createSessItem(sess);
+    updateSessCount();
+  }
+
+  const sess = sessions.get(evt.sessionId);
+  for (const m of (evt.newMessages ?? [])) sess.messages.push(m);
+  sess.lastActiveAt = evt.timestamp;
+  updateSessItemTime(sess);
+  reorderSessItem(sess);
+  sess.waitingResp = true;
+  if (sess.dotEl) sess.dotEl.classList.add('live');
+  flashSessItem(sess);
+
+  if (activeId === evt.sessionId) renderMessages(sess);
+}
+
+function onSessionAppend(evt) {
+  const sess = sessions.get(evt.sessionId);
+  if (!sess) return;
+
+  for (const m of (evt.newMessages ?? [])) sess.messages.push(m);
+  sess.lastActiveAt = evt.timestamp;
+  updateSessItemTime(sess);
+  reorderSessItem(sess);
+  sess.waitingResp = true;
+  if (sess.dotEl) sess.dotEl.classList.add('live');
+  flashSessItem(sess);
+
+  if (activeId === evt.sessionId) {
+    const newMsgs = evt.newMessages ?? [];
+    if (newMsgs.length > 0) {
+      const roundNum = (sess.rounds ?? 0) + 1;
+      msgList.appendChild(makeRoundDivider(roundNum));
+      for (const m of newMsgs) msgList.appendChild(makeMsgEl(m));
+    }
+    const wid = `waiting-${sess.sessionId}`;
+    if (!document.getElementById(wid)) msgList.appendChild(makeWaitingEl(sess.sessionId));
+    scrollBottom();
+  }
+}
+
+function onSessionResponse(evt) {
+  const sess = sessions.get(evt.sessionId);
+  if (!sess) return;
+
+  sess.messages.push({ role: 'assistant', content: evt.content, tool_calls: evt.tool_calls, timestamp: evt.timestamp });
+  sess.rounds = (sess.rounds ?? 0) + 1;
+  sess.waitingResp = false;
+  sess.lastActiveAt = evt.timestamp;
+  if (sess.dotEl) sess.dotEl.classList.remove('live');
+  updateSessItemMeta(sess);
+  updateSessItemTime(sess);
+  reorderSessItem(sess);
+  flashSessItem(sess);
+
+  if (activeId === evt.sessionId) {
+    const waitEl = document.getElementById(`waiting-${sess.sessionId}`);
+    const respEl = makeRespEl(evt);
+    if (waitEl) waitEl.replaceWith(respEl);
+    else msgList.appendChild(respEl);
+    chRounds.textContent = `${sess.rounds} 轮`;
+    scrollBottom();
+  }
+}
+
+clearBtn.addEventListener('click', () => {
+  sessions.clear();
+  providers.clear();
+  activeId = null;
+  sidebarBody.innerHTML = '<p class="sidebar-empty" id="sidebar-empty">暂无 session</p>';
+  welcome.style.display = 'flex';
+  msgList.style.display = 'none';
+  contentHdr.style.display = 'none';
+  msgList.innerHTML = '';
+  sessCount.textContent = '0 sessions';
+});
+
+function connect() {
+  const es = new EventSource(`${location.origin}/v1/forward-monitor/events`);
+
+  es.onopen = () => {
+    connBadge.className = 'conn-badge on';
+    connBadge.textContent = '● 已连接';
+  };
+
+  es.onerror = () => {
+    connBadge.className = 'conn-badge off';
+    connBadge.textContent = '○ 未连接';
+    es.close();
+    setTimeout(connect, 3000);
+  };
+
+  es.onmessage = (e) => {
+    let evt;
+    try { evt = JSON.parse(e.data); } catch { return; }
+    switch (evt.type) {
+      case 'session-snapshot': onSnapshot(evt);        break;
+      case 'session-new':      onSessionNew(evt);      break;
+      case 'session-append':   onSessionAppend(evt);   break;
+      case 'session-response': onSessionResponse(evt); break;
+    }
+  };
+}
+
+connect();
+
+})();
+</script>
+</body>
+</html>

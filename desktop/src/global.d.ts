@@ -9,6 +9,7 @@ declare global {
       openBrowserDevTools: () => Promise<void>;
       setBrowserBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
       setBrowserSplitRatio: (ratio: number) => Promise<void>;
+      navigateBrowser: (url: string) => Promise<void>;
       getDesktopState: () => Promise<{
         currentProvider: string | null;
         providerSites: Record<string, string>;
