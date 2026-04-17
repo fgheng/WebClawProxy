@@ -1,6 +1,6 @@
 {
   "data": {
-    "root_dir": "./data"
+    "root_dir": ".data"
   },
   "providers": {
     "gpt": {
@@ -28,7 +28,7 @@
       },
       "forward": {
         "base_url": "https://api.deepseek.com",
-        "api_key": "<REDACTED_API_KEY>",
+        "api_key": "sk-81831352669b4f3289572be14dd9913c",
         "upstream_model_map": {
           "deepseek-chat": "deepseek-chat",
           "deepseek-r1": "deepseek-chat",

@@ -5,8 +5,12 @@
   "main": "dist/controller/index.js",
   "scripts": {
     "build": "tsc",
+    "build:desktop": "pnpm --filter webclaw-console run build",
+    "build:all": "pnpm build && pnpm build:desktop",
     "start": "node dist/controller/index.js",
+    "start:desktop": "pnpm --filter webclaw-console run start",
     "dev": "ts-node src/controller/index.ts",
+    "dev:desktop": "pnpm --filter webclaw-console run dev",
     "test": "jest",
     "test:web-driver": "jest tests/web-driver",
     "test:protocol": "jest tests/protocol",

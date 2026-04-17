@@ -253,6 +253,8 @@ export class SessionRegistry {
         existing.messages.push(m);
       }
       existing.lastActiveAt = now;
+      // ✅ 立即持久化（防止数据丢失）
+      this.save();
       return { action: 'append', session: existing, newMessages };
     }
 
@@ -269,6 +271,9 @@ export class SessionRegistry {
       lastActiveAt: now,
     };
     this.sessions.set(sessionId, session);
+    // ✅ 立即持久化（防止数据丢失）
+    this.save();
+    console.log(`[SessionRegistry] 新建 session ${sessionId.slice(0, 16)} (provider=${providerKey}, model=${model})`);
     return { action: 'new', session, newMessages: allMessages };
   }
 
@@ -295,6 +300,9 @@ export class SessionRegistry {
     session.rounds += 1;
     session.lastActiveAt = now;
     void finishReason; // 暂不存储，可按需扩展
+    // ✅ 立即持久化（防止数据丢失）
+    this.save();
+    console.log(`[SessionRegistry] session ${sessionId.slice(0, 16)} rounds=${session.rounds}`);
     return session;
   }
 

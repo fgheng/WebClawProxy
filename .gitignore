@@ -6,3 +6,4 @@ desktop/.electron-dist/
 dist/
 *.map
 desktop/dist/
+.data/

@@ -1,294 +1,292 @@
 # WebClawProxy
 
-> 将各大 AI 模型 Web 页面封装成标准 API 接口（OpenAI 兼容）的代理服务
+将各大 AI 模型 Web 页面封装成标准 OpenAI API 接口的代理服务，支持 ChatGPT、Claude、DeepSeek、Qwen 等多个 AI Provider。
 
-WebClawProxy 通过浏览器自动化技术，将 ChatGPT、DeepSeek、Qwen、Kimi、GLM、Claude、Doubao 等 AI 模型的 Web 界面封装成 OpenAI 兼容的 API 接口，让任何支持 OpenAI SDK 的应用都能无缝接入这些模型。
+## 特性
 
-## 架构概览
+- 🚀 **统一 API 接口**：将不同 AI 平台的 Web 界面统一封装为 OpenAI 兼容的 REST API
+- 🎯 **Forward Monitor**：实时监控和调试转发的请求/响应，支持 Session 管理
+- 🖥️ **桌面应用**：Electron 桌面客户端，提供可视化的服务管理和监控界面
+- 🌐 **多 Provider 支持**：ChatGPT / Claude / DeepSeek / Qwen 等
+- 🔧 **灵活配置**：支持自定义 Provider、Model、Cookie 等配置
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       客户端请求                             │
-│            (OpenAI SDK / Anthropic / Gemini / Llama)        │
-└────────────────────────┬────────────────────────────────────┘
-                         │ HTTP
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   控制模块 (Controller)                       │
-│              src/controller/ - Express HTTP 服务             │
-└──────┬──────────────────┬──────────────────┬────────────────┘
-       │                  │                  │
-       ▼                  ▼                  ▼
-┌──────────────┐ ┌──────────────────┐ ┌─────────────────────┐
-│  协议转换模块  │ │   数据管理模块    │ │    Web 驱动模块      │
-│ src/protocol/ │ │src/data-manager/ │ │  src/web-driver/    │
-│               │ │                  │ │                     │
-│ OpenAI ──────►│ │ 对话数据持久化    │ │ ChatGPT / DeepSeek  │
-│ Anthropic (预)│ │ Hash Key 计算    │ │ Qwen / Kimi / GLM   │
-│              │ │                  │ │ Claude / Doubao     │
-│ Gemini (预)   │ │ Prompt 构造      │ │ (基于 Playwright)   │
-└──────────────┘ └──────────────────┘ └─────────────────────┘
-```
+## 系统要求
 
-## 支持的网站
-
-| 网站 | Key | URL |
-|------|-----|-----|
-| ChatGPT | `gpt` | https://chatgpt.com/ |
-| Qwen | `qwen` | https://chat.qwen.ai/ |
-| DeepSeek | `deepseek` | https://chat.deepseek.com/ |
-| Kimi | `kimi` | https://www.kimi.com/ |
-| GLM | `glm` | https://chatglm.cn/ |
-| Claude | `claude` | https://claude.ai/ |
-| Doubao | `doubao` | https://www.doubao.com/ |
+- **Node.js**: >= 18.0.0
+- **pnpm**: >= 8.0.0
+- **操作系统**: macOS / Linux / Windows
+- **Chrome/Chromium**: 用于 Playwright 自动化
 
 ## 快速开始
 
 ### 1. 安装依赖
 
 ```bash
-npm install
+# 安装 pnpm（如果未安装）
+npm install -g pnpm
+
+# 安装所有依赖（包括 desktop 子项目）
+pnpm install
 ```
 
-### 2. 安装 Playwright 浏览器
+### 2. 配置服务
 
-```bash
-npx playwright install chromium
+编辑 `config/default.json`，配置你的 AI Providers：
+
+```json
+{
+  "providers": {
+    "gpt": {
+      "url": "https://chatgpt.com",
+      "cookie": "your_chatgpt_cookie_here",
+      "model": "gpt-4",
+      "default_mode": "web"
+    },
+    "claude": {
+      "url": "https://claude.ai",
+      "cookie": "your_claude_cookie_here",
+      "model": "claude-3-5-sonnet-20241022",
+      "default_mode": "web"
+    }
+  }
+}
 ```
+
+> 💡 **如何获取 Cookie**：
+> 1. 打开浏览器，登录对应的 AI 平台（如 ChatGPT）
+> 2. 打开开发者工具（F12）→ Application → Cookies
+> 3. 复制所有 Cookie 值（格式：`key1=value1; key2=value2`）
 
 ### 3. 启动服务
 
+#### 方式一：CLI 命令行模式
+
 ```bash
-# 开发模式
-npm run dev
+# 开发模式（自动重启）
+pnpm dev
 
 # 生产模式
-npm run build && npm start
+pnpm build
+pnpm start
 ```
 
-### 4. 发送请求
+服务将在 `http://127.0.0.1:3000` 启动。
+
+#### 方式二：桌面应用模式（推荐）
 
 ```bash
-# 使用 curl 测试
-curl http://localhost:3000/v1/chat/completions \
+# 开发模式（热重载）
+pnpm dev:desktop
+
+# 生产模式
+pnpm build:all
+pnpm start:desktop
+```
+
+桌面应用提供：
+- 可视化服务启动/停止控制
+- 多 Provider Web 界面切换
+- Forward Monitor 实时监控
+- 内置终端和日志查看
+
+### 4. 测试 API
+
+```bash
+# 发送测试请求
+curl -X POST http://127.0.0.1:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o",
-    "messages": [{"role": "user", "content": "你好"}]
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": false
   }'
-```
-
-服务启动后会自动打开浏览器，如未登录会提示用户完成登录。
-
-### 5. 启动桌面 GUI
-
-项目同时提供 Electron GUI，用于管理浏览器页面、服务状态与调试面板：
-
-```bash
-cd desktop
-npm install
-npm run dev
-```
-
-GUI 当前支持：
-
-- 浏览器内嵌视图
-- 服务启动/停止
-- provider 切换
-- 会话/日志/终端调试面板
-
-## 集成使用
-
-### Python
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:3000/v1",
-    api_key="not-needed"
-)
-
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {"role": "system", "content": "你是一个专业助手"},
-        {"role": "user", "content": "你好"}
-    ]
-)
-print(response.choices[0].message.content)
-```
-
-### Node.js
-
-```javascript
-import OpenAI from 'openai';
-
-const client = new OpenAI({
-    baseURL: 'http://localhost:3000/v1',
-    apiKey: 'not-needed',
-});
-
-const response = await client.chat.completions.create({
-    model: 'deepseek-chat',
-    messages: [{ role: 'user', content: '你好' }],
-});
-console.log(response.choices[0].message.content);
-```
-
-## 运行测试
-
-```bash
-# 运行所有单元测试
-npm test
-
-# 运行特定模块测试
-npm run test:protocol       # 协议转换模块
-npm run test:data-manager   # 数据管理模块
-npm run test:web-driver     # Web 驱动模块
-npm run test:controller     # 控制模块
-
-# 功能测试脚本（可直接运行）
-npm run script:protocol     # 协议转换功能测试（mock 数据）
-npm run script:data-manager # 数据管理功能测试（mock 数据）
-npm run script:web-driver   # Web 驱动功能测试（真实浏览器）
-npm run script:all          # 统一测试程序（mock 模式）
-npm run script:all -- --mode=real --site=deepseek  # 真实浏览器集成测试
 ```
 
 ## 项目结构
 
 ```
 WebClawProxy/
-├── package.json
-├── tsconfig.json
-├── README.md
-├── config/
-│   └── default.json           # 配置文件（网站映射、模型映射、默认 prompt 等）
-├── desktop/                    # Electron GUI
-│   ├── electron/               # 主进程、服务管理、BrowserView
-│   └── src/                    # Renderer 界面
-├── src/
-│   ├── web-driver/            # Web 驱动模块
-│   │   ├── index.ts           # 模块入口
-│   │   ├── types.ts           # 类型定义
-│   │   ├── WebDriverManager.ts # 核心服务类
-│   │   └── drivers/
-│   │       ├── BaseDriver.ts  # 抽象基类
-│   │       ├── ChatGPTDriver.ts
-│   │       ├── QwenDriver.ts
-│   │       ├── DeepSeekDriver.ts
-│   │       ├── KimiDriver.ts
-│   │       ├── GLMDriver.ts
-│   │       ├── ClaudeDriver.ts
-│   │       └── DoubaoDriver.ts
-│   ├── protocol/              # 协议转换模块
-│   │   ├── index.ts
-│   │   ├── types.ts           # 内部统一结构类型
-│   │   ├── BaseProtocol.ts    # 抽象基类
-│   │   └── openai/
-│   │       ├── OpenAIProtocol.ts
-│   │       └── types.ts
-│   ├── data-manager/          # 数据管理模块
-│   │   ├── index.ts
-│   │   ├── types.ts
-│   │   ├── DataManager.ts     # 核心类
-│   │   └── utils/
-│   │       ├── hash.ts        # Hash 计算
-│   │       └── prompt.ts      # Prompt 构造
-│   └── controller/            # 控制模块
-│       ├── index.ts           # 服务入口
-│       ├── server.ts          # Express 应用
-│       └── routes/
-│           └── openai.ts      # OpenAI 兼容路由
-├── tests/
-│   ├── web-driver/
-│   ├── protocol/
-│   ├── data-manager/
-│   └── controller/
-├── scripts/
-│   ├── test-protocol.ts       # 协议模块功能测试
-│   ├── test-data-manager.ts   # 数据管理功能测试
-│   ├── test-web-driver.ts     # Web 驱动功能测试
-│   └── test-all.ts            # 统一测试程序
-└── docs/
-    ├── web-driver.md
-    ├── protocol.md
-    ├── data-manager.md
-    └── controller.md
+├── config/              # 配置文件目录
+│   └── default.json     # 主配置文件
+├── src/                 # 核心服务代码
+│   ├── controller/      # API 路由和控制器
+│   ├── web-driver/      # Playwright 自动化
+│   ├── data-manager/    # 数据管理
+│   └── protocol/        # 协议解析
+├── desktop/             # Electron 桌面应用
+│   ├── electron/        # Electron 主进程
+│   └── src/             # React 渲染进程
+├── tests/               # 测试用例
+├── docs/                # 文档
+└── pnpm-workspace.yaml  # pnpm workspace 配置
 ```
 
-## 配置文件
+## 可用命令
 
-`config/default.json` 主要配置项：
+### 根目录（服务端）
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `data.root_dir` | 数据存储根目录 | `./data` |
-| `server.port` | HTTP 服务端口 | `3000` |
-| `webdriver.headless` | 是否无头模式 | `false` |
-| `webdriver.response_timeout_ms` | 等待响应超时 | `120000` |
-| `sites.*` | 网站 key → URL 映射 | - |
-| `models.*` | 模型大类 → 模型列表映射 | - |
-| `defaults.init_prompt` | 默认初始化提示词 | - |
-| `defaults.init_prompt_template` | 初始化会话模板 | - |
-| `defaults.user_message_template` | 发送到网页前的用户消息模板 | - |
-| `defaults.format_only_retry_template` | JSON 格式重试模板 | - |
-| `context_switch.*` | usage 超阈值时是否切新 session | - |
+```bash
+# 开发
+pnpm dev                 # 启动服务（开发模式）
+pnpm build               # 编译 TypeScript
+pnpm start               # 启动服务（生产模式）
 
-## 模块文档
+# 测试
+pnpm test                # 运行所有测试
+pnpm test:web-driver     # 测试 Web Driver
+pnpm test:protocol       # 测试协议解析
+pnpm test:controller     # 测试控制器
 
-- [Web 驱动模块](docs/web-driver.md) — 浏览器自动化、登录检测、消息发送/接收
-- [协议转换模块](docs/protocol.md) — OpenAI 协议解析与格式转换
-- [数据管理模块](docs/data-manager.md) — 对话数据持久化、Prompt 构造
-- [控制模块](docs/controller.md) — HTTP 服务、请求处理流程
+# 脚本
+pnpm script:all          # 运行所有测试脚本
+pnpm client              # 运行客户端测试
+```
 
-## 扩展
+### Desktop（桌面应用）
 
-### 添加新网站支持
+```bash
+# 开发
+pnpm dev:desktop         # 启动桌面应用（开发模式）
+pnpm build:desktop       # 编译桌面应用
+pnpm start:desktop       # 启动桌面应用（生产模式）
 
-1. 继承 `BaseDriver` 创建新驱动类（参考 `src/web-driver/drivers/`）
-2. 在 `WebDriverManager.ts` 中添加新 case
-3. 在 `config/default.json` 的 `sites` 和 `models` 中添加映射
-4. 更新 `SiteKey` 类型
+# 一键构建所有
+pnpm build:all           # 编译服务端 + 桌面端
+```
 
-### 添加新协议支持
+## API 端点
 
-1. 继承 `BaseProtocol` 创建新协议类（参考 `src/protocol/openai/`）
-2. 在 `src/protocol/index.ts` 中导出
-3. 在控制模块路由中添加对应的请求处理
+### OpenAI 兼容接口
 
-## 当前行为说明
+```
+POST /v1/chat/completions
+```
 
-- 首次请求若无已链接 session，会直接发送 `init_prompt_template` 初始化网页会话并获取新的 `session url`
-- 正常多轮对话里，hash 变化不一定切 session；只有首次无链接、usage 超阈值或旧 session 失效时才会切新网页会话
-- 控制层会对网页模型返回的 JSON 做容错归一化：
-  - 自动补 `finish_reason`
-  - 自动补 `index`
-  - 自动补 `logprobs`
-  - 修复 `tool_calls.function.arguments` 的常见转义问题
-- DataManager 生成的 history/current prompt 目前使用 `<system> / <history> / <user> / <assistant> / <tool>` 结构，并输出成对闭合标签
-- 长 prompt 在网页端会自动分块发送，最后一块才要求正式按 JSON 模板输出
+**请求体**：
+```json
+{
+  "model": "gpt-4",
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ],
+  "stream": false
+}
+```
 
-## 注意事项
+**响应**：
+```json
+{
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "gpt-4",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "Hi! How can I help you today?"
+    },
+    "finish_reason": "stop"
+  }]
+}
+```
 
-- 首次使用某个网站时，需要在浏览器中完成登录
-- Web 界面选择器可能随网站更新而失效，需要及时更新对应驱动的 `SELECTORS` 配置
-- 对话数据按 `session-index + sessionDir` 结构存储，不再单纯按 hash 目录直接映射网页 session
-- GUI 退出时会主动停止桌面内启动的 `webclaw` 服务，避免端口残留
+### Forward Monitor 接口
 
-## 技术栈
+```
+GET /v1/forward-monitor/events          # SSE 事件流
+GET /v1/forward-monitor/sessions        # 获取所有 Session
+GET /v1/forward-monitor/sessions/:id    # 获取单个 Session
+DELETE /v1/forward-monitor/sessions/:id # 删除 Session
+GET /monitor                            # Forward Monitor 页面
+```
 
-- **语言**: TypeScript
-- **浏览器自动化**: Playwright
-- **HTTP 服务**: Express.js
-- **测试框架**: Jest
-- **运行时**: Node.js 18+
+## 配置说明
 
-## TODO
-- [ ] 会话有效性预检方案（请求前判断 web session 是否存在）暂缓：当前已回滚，后续找到更优实现再恢复
-- [ ] session 分片还需补更多真实场景测试
-- [ ] 接入 openclaw
-- [ ] 内部再转换成 openai-responses 协议
-- [ ] 前端支持多种协议：openai-chat / responses / anthropic / gemini
-- [ ] 多媒体支持
+### Provider 配置
+
+```json
+{
+  "providers": {
+    "provider_key": {
+      "url": "https://example.com",
+      "cookie": "session=xxx; auth=yyy",
+      "model": "model-name",
+      "default_mode": "web",        // 或 "forward"
+      "chat_path": "/chat/xxx",     // 可选
+      "forward": {
+        "api_key": "sk-xxx",        // Forward 模式 API Key
+        "base_url": "https://api.example.com"
+      }
+    }
+  }
+}
+```
+
+### 模式说明
+
+- **web 模式**：通过 Playwright 操作 Web 页面获取响应
+- **forward 模式**：直接转发到上游 API（如官方 API）
+
+## 常见问题
+
+### 1. Cookie 过期怎么办？
+
+重新登录对应平台，更新 `config/default.json` 中的 Cookie 值。
+
+### 2. Playwright 启动失败？
+
+```bash
+# 安装浏览器
+npx playwright install chromium
+```
+
+### 3. 端口冲突？
+
+修改 `config/default.json` 中的 `server.port` 和 `cdp.port`。
+
+### 4. Desktop 应用无法启动？
+
+确保已安装依赖：
+```bash
+cd desktop && pnpm install
+```
+
+### 5. 终端不可用？
+
+确保系统有可执行的 shell（`/bin/sh` 或 `/bin/bash`）。
+
+## 开发
+
+### 添加新 Provider
+
+1. 在 `config/default.json` 添加配置
+2. 在 `src/web-driver/` 创建对应的 driver 文件
+3. 在 `src/protocol/` 添加协议解析逻辑
+4. 更新 `desktop/electron/provider-sites.ts`
+
+### 调试
+
+```bash
+# 服务端日志
+pnpm dev  # 控制台输出
+
+# 桌面端日志
+pnpm dev:desktop  # 查看 Logs 标签页
+```
+
+## 许可证
+
+MIT License
+
+Copyright (c) 2024 fuguoheng
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 相关链接
+
+- [OpenAI API 文档](https://platform.openai.com/docs/api-reference)
+- [Playwright 文档](https://playwright.dev/)
+- [Electron 文档](https://www.electronjs.org/)

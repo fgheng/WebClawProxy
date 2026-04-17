@@ -192,7 +192,7 @@ async function sendForwardRequest(
           }
         }
         res.end();
-        // 流结束后拼装完整 assistant 内容，追加到 session
+        // 流结束后拼装完整 assistant 内容（content + tool_calls），追加到 session
         const fullText = decoder.decode(
           chunks.reduce((acc, c) => {
             const merged = new Uint8Array(acc.length + c.length);
@@ -202,22 +202,74 @@ async function sendForwardRequest(
           }, new Uint8Array(0))
         );
         let streamContent = '';
+        const toolCallsMap: Record<
+          number,
+          { id?: string; type?: string; function?: { name?: string; arguments?: string } }
+        > = {};
+        let finishReason: string | undefined;
+
         for (const line of fullText.split('\n')) {
           if (!line.startsWith('data:')) continue;
           const raw = line.slice(5).trim();
           if (raw === '[DONE]') continue;
           try {
-            const sseChunk = JSON.parse(raw) as { choices?: Array<{ delta?: { content?: string } }> };
-            const delta = sseChunk?.choices?.[0]?.delta;
+            const sseChunk = JSON.parse(raw) as {
+              choices?: Array<{
+                delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; type?: string; function?: { name?: string; arguments?: string } }> };
+                finish_reason?: string;
+              }>;
+            };
+            const choice = sseChunk?.choices?.[0];
+            const delta = choice?.delta;
+            
+            // 拼接 content
             if (typeof delta?.content === 'string') streamContent += delta.content;
+            
+            // 聚合 tool_calls (按 index 累加)
+            if (Array.isArray(delta?.tool_calls)) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index;
+                if (!toolCallsMap[idx]) {
+                  toolCallsMap[idx] = { id: tc.id, type: tc.type, function: { name: '', arguments: '' } };
+                }
+                const existing = toolCallsMap[idx];
+                if (tc.id) existing.id = tc.id;
+                if (tc.type) existing.type = tc.type;
+                if (tc.function) {
+                  if (!existing.function) existing.function = { name: '', arguments: '' };
+                  if (tc.function.name) existing.function.name += tc.function.name;
+                  if (tc.function.arguments) existing.function.arguments += tc.function.arguments;
+                }
+              }
+            }
+
+            // finish_reason
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
           } catch { /* ignore */ }
         }
-        sessionRegistry.appendResponse(currentSessionId, streamContent || null);
+
+        // 转换 toolCallsMap 为数组
+        const mergedToolCalls = Object.keys(toolCallsMap).length > 0
+          ? Object.values(toolCallsMap).map(tc => ({
+              id: tc.id,
+              type: tc.type || 'function',
+              function: tc.function,
+            }))
+          : undefined;
+
+        sessionRegistry.appendResponse(
+          currentSessionId,
+          streamContent || null,
+          mergedToolCalls,
+          finishReason
+        );
         forwardMonitorBus.publish({
           type: 'session-response',
           sessionId: currentSessionId,
           providerKey,
           content: streamContent || null,
+          tool_calls: mergedToolCalls,
+          finish_reason: finishReason,
           status: upstreamResponse.status,
           durationMs: Date.now() - startTime,
           timestamp: Date.now(),
