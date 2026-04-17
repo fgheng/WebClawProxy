@@ -4,19 +4,21 @@ import type {
   ClientConfig,
   OpenAIRequestBody,
   OpenAIResponseBody,
-} from '../../../src/client/types';
-import type { ClientTransport } from '../../../src/client/core/types';
+} from '../../../client-core/src/types';
+import type { ClientTransport } from '../../../client-core/src/core/types';
 
 export class WebClawBrowserTransport implements ClientTransport {
   private config: Required<ClientConfig>;
   private messages: ChatMessage[] = [];
   private requestSeq = 0;
+  private routeMode: 'web' | 'forward';
 
-  constructor(config: ClientConfig) {
+  constructor(config: ClientConfig & { routeMode?: 'web' | 'forward' }) {
     this.config = {
       baseUrl: config.baseUrl.replace(/\/$/, ''),
       model: config.model,
       stream: config.stream ?? false,
+      routeMode: config.routeMode ?? 'web',
       system: config.system ?? '',
       tools: config.tools ?? [],
       timeoutMs: config.timeoutMs ?? 180000,
@@ -24,6 +26,7 @@ export class WebClawBrowserTransport implements ClientTransport {
       traceEnabled: config.traceEnabled ?? true,
       tracePreviewChars: config.tracePreviewChars ?? 180,
     };
+    this.routeMode = config.routeMode ?? 'web';
   }
 
   setSystem(system: string): void {
@@ -44,8 +47,21 @@ export class WebClawBrowserTransport implements ClientTransport {
     this.config.traceEnabled = enabled;
   }
 
+  setRouteMode(mode: 'web' | 'forward'): void {
+    this.routeMode = mode;
+    this.config.routeMode = mode;
+  }
+
+  getRouteMode(): 'web' | 'forward' {
+    return this.routeMode;
+  }
+
   clearHistory(): void {
     this.messages = [];
+  }
+
+  importHistory(messages: ChatMessage[]): void {
+    this.messages = [...messages];
   }
 
   getHistory(): ChatMessage[] {
@@ -93,6 +109,7 @@ export class WebClawBrowserTransport implements ClientTransport {
           'Content-Type': 'application/json',
           'x-trace-id': traceId,
           'x-session-id': this.config.sessionId,
+          'x-webclaw-mode': this.routeMode,
         },
         body: JSON.stringify(body),
         signal: controller.signal,

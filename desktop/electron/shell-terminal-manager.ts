@@ -80,6 +80,7 @@ export class ShellTerminalManager {
   async close(terminalId: string): Promise<{ closed: boolean }> {
     const sess = this.sessions.get(terminalId);
     if (!sess) return { closed: false };
+    this.sessions.delete(terminalId);
 
     if (sess.proc) {
       try {
@@ -98,9 +99,7 @@ export class ShellTerminalManager {
     sess.backend = null;
     sess.pid = null;
     sess.status = 'stopped';
-    this.emitStatus(sess);
-    const deleted = this.sessions.delete(terminalId);
-    return { closed: deleted };
+    return { closed: true };
   }
 
   async ensureStarted(terminalId: string): Promise<TerminalInfo | null> {
@@ -204,6 +203,7 @@ export class ShellTerminalManager {
 
         sess.proc.onData((data) => this.emitOutput(sess.id, data, 'stdout'));
         sess.proc.onExit(({ exitCode, signal }) => {
+          if (!this.sessions.has(sess.id)) return;
           this.emitOutput(sess.id, `\r\n[SYS ] Shell exited (code=${exitCode ?? 'null'}, signal=${signal ?? 'null'})\r\n`, 'system');
           sess.proc = null;
           sess.rawProc = null;
@@ -252,6 +252,7 @@ export class ShellTerminalManager {
         child.stdout.on('data', (buf) => this.emitOutput(sess.id, this.normalizeOutputText(String(buf)), 'stdout'));
         child.stderr.on('data', (buf) => this.emitOutput(sess.id, this.normalizeOutputText(String(buf)), 'stdout'));
         child.on('exit', (exitCode, signal) => {
+          if (!this.sessions.has(sess.id)) return;
           this.emitOutput(sess.id, `\r\n[SYS ] Shell exited (code=${exitCode ?? 'null'}, signal=${signal ?? 'null'})\r\n`, 'system');
           sess.proc = null;
           sess.rawProc = null;

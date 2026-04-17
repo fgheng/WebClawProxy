@@ -20,7 +20,7 @@
     "script:data-manager": "ts-node scripts/test-data-manager.ts",
     "script:web-driver": "ts-node scripts/test-web-driver.ts",
     "script:all": "ts-node scripts/test-all.ts",
-    "client": "ts-node src/client/index.ts"
+    "client": "ts-node tui/src/index.ts"
   },
   "keywords": [
     "proxy",

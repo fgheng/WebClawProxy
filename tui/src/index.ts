@@ -12,11 +12,10 @@
  */
 
 import { ChatCLI } from './ChatCLI';
-import { ClientConfig } from './types';
+import { ClientConfig } from '../../client-core/src/types';
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadAppConfig } from '../config/app-config';
-import { loadClientCoreRuntimeConfig } from './core/core-config';
+import { loadClientCoreRuntimeConfig } from '../../client-core/src/core/core-config';
 
 // 解析命令行参数
 const args = process.argv.slice(2);
@@ -122,16 +121,7 @@ function buildDefaultSessionId(): string {
   return `cli-${now}-${rand}`;
 }
 
-// 尝试从配置文件读取默认端口
-let defaultPort = 3000;
-try {
-  const cfg = loadAppConfig();
-  if (cfg.server?.port) {
-    defaultPort = cfg.server.port;
-  }
-} catch {
-  // 忽略配置读取失败
-}
+const defaultPort = 3000;
 
 const coreRuntime = loadClientCoreRuntimeConfig(getArg('--config'));
 

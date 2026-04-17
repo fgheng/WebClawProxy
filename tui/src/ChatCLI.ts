@@ -1,14 +1,14 @@
 import * as readline from 'readline';
-import { ClientConfig, ChatMessage } from './types';
+import { ClientConfig, ChatMessage } from '../../client-core/src/types';
 import {
   colorize,
   printSeparator,
   printHeader,
   formatAssistantContent,
 } from './utils/display';
-import { WebClawClientCore } from './core/WebClawClientCore';
-import { ClientCoreResult } from './core/types';
-import { createNodeClientCore } from './core/createNodeClientCore';
+import { WebClawClientCore } from '../../client-core/src/core/WebClawClientCore';
+import { ClientCoreResult } from '../../client-core/src/core/types';
+import { createNodeClientCore } from '../../client-core/src/core/createNodeClientCore';
 
 /**
  * 交互式 CLI 界面

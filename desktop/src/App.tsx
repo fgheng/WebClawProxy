@@ -46,6 +46,7 @@ export default function App() {
   const [logAutoScroll, setLogAutoScroll] = useState(true);
   const [errors, setErrors] = useState<string[]>([]);
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
+  const [terminalInited, setTerminalInited] = useState(false);
   const [splitRatio, setSplitRatio] = useState(() => {
     const saved = window.localStorage.getItem('webclaw:split-ratio');
     const parsed = saved ? Number(saved) : 0.56;
@@ -84,6 +85,12 @@ export default function App() {
     window.addEventListener('pointerdown', onDown);
     return () => window.removeEventListener('pointerdown', onDown);
   }, [terminalMenuOpen]);
+
+  useEffect(() => {
+    if (displayMode !== 'forward') return;
+    if (serviceStatus !== 'running') return;
+    void window.webclawDesktop?.navigateBrowser?.('http://127.0.0.1:3000/monitor');
+  }, [displayMode, serviceStatus]);
 
   useEffect(() => {
     let mounted = true;
@@ -166,25 +173,6 @@ export default function App() {
         return { ...prev, [event.terminalId]: next };
       });
     });
-    void window.webclawDesktop?.initTerminal?.().then((state) => {
-      if (!mounted || !state) return;
-      const terminals = state.terminals ?? [];
-      const nextById: Record<string, any> = {};
-      for (const t of terminals) {
-        nextById[t.terminalId] = {
-          terminalId: t.terminalId,
-          status: t.status,
-          backend: t.backend,
-          shell: t.shell,
-          cwd: t.cwd,
-          pid: t.pid,
-          chunks: [],
-        };
-      }
-      setTerminalsById(nextById);
-      setActiveTerminalId(state.activeTerminalId ?? terminals[0]?.terminalId ?? null);
-    });
-
     return () => {
       mounted = false;
       disposeLog?.();
@@ -194,6 +182,35 @@ export default function App() {
       disposeTerminalStatus?.();
     };
   }, [pushError]);
+
+  const ensureTerminalReady = useCallback(async () => {
+    if (terminalInited) return;
+    const state = await window.webclawDesktop?.initTerminal?.();
+    const terminals = state?.terminals ?? [];
+    const nextById: Record<string, {
+      terminalId: string;
+      status: string;
+      backend: 'pty' | 'raw' | null;
+      shell: string;
+      cwd: string;
+      pid: number | null;
+      chunks: string[];
+    }> = {};
+    for (const t of terminals) {
+      nextById[t.terminalId] = {
+        terminalId: t.terminalId,
+        status: t.status,
+        backend: t.backend,
+        shell: t.shell,
+        cwd: t.cwd,
+        pid: t.pid,
+        chunks: [],
+      };
+    }
+    setTerminalsById(nextById);
+    setActiveTerminalId(state?.activeTerminalId ?? terminals[0]?.terminalId ?? null);
+    setTerminalInited(true);
+  }, [terminalInited]);
 
   const syncBrowserBounds = useCallback(() => {
     const pane = browserPaneRef.current;
@@ -301,6 +318,11 @@ export default function App() {
     event.preventDefault();
   }
 
+  useEffect(() => {
+    if (activeTab !== 'terminal') return;
+    void ensureTerminalReady();
+  }, [activeTab, ensureTerminalReady]);
+
   const panel = useMemo(() => {
     const filteredLogLines = serviceLogs.filter((line) => {
       const lower = line.toLowerCase();
@@ -323,6 +345,7 @@ export default function App() {
           <WebClawPanel
             apiBaseUrl={apiBaseUrl}
             currentProvider={currentProvider}
+            displayMode={displayMode}
             providerModels={providerModels}
             serviceStatus={serviceStatus}
             onProviderChange={handleProviderChange}
@@ -339,7 +362,6 @@ export default function App() {
             onSelectTerminal={(terminalId) => {
               setActiveTerminalId(terminalId);
             }}
-            onCreateTerminal={createTerminalAndFocus}
             onCloseTerminal={async (terminalId) => {
               const confirmed = window.confirm(`确认关闭终端 ${terminalId} 吗？`);
               if (!confirmed) return;
@@ -377,7 +399,7 @@ export default function App() {
       default:
         return null;
     }
-  }, [activeTab, apiBaseUrl, currentProvider, errors, handleProviderChange, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalsById, activeTerminalId]);
+  }, [activeTab, apiBaseUrl, currentProvider, displayMode, errors, handleProviderChange, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalsById, activeTerminalId, createTerminalAndFocus]);
 
   return (
     <div className="console-shell">
@@ -494,25 +516,31 @@ export default function App() {
                 return (
                   <div key={tab.key} className="tab-with-menu">
                     <button
-                      className={tab.key === activeTab ? 'tab active' : 'tab'}
-                      onClick={() => {
+                      className={tab.key === activeTab ? 'tab active tab-merged' : 'tab tab-merged'}
+                      onClick={async () => {
                         setTerminalMenuOpen(false);
                         setActiveTab(tab.key);
+                        if (!terminalInited) {
+                          await ensureTerminalReady();
+                        }
                       }}
+                      title="终端"
                     >
-                      {tab.label}
+                      <span>{tab.label}</span>
                     </button>
                     <button
-                      className="tab-menu-trigger"
-                      onClick={(e) => {
+                      className="tab-menu-hitbox"
+                      onClick={async (e) => {
                         e.stopPropagation();
                         setActiveTab('terminal');
+                        if (!terminalInited) {
+                          await ensureTerminalReady();
+                        }
                         setTerminalMenuOpen((prev) => !prev);
                       }}
                       title="终端菜单"
-                    >
-                      ▾
-                    </button>
+                      aria-label="终端菜单"
+                    />
                     {terminalMenuOpen ? (
                       <div
                         className="tab-menu"
@@ -552,7 +580,6 @@ function TerminalPanel({
   terminals,
   activeTerminalId,
   onSelectTerminal,
-  onCreateTerminal,
   onCloseTerminal,
 }: {
   terminals: Array<{
@@ -566,10 +593,10 @@ function TerminalPanel({
   }>;
   activeTerminalId: string | null;
   onSelectTerminal: (terminalId: string) => void;
-  onCreateTerminal: () => Promise<void>;
   onCloseTerminal: (terminalId: string) => Promise<void>;
 }) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
+  const terminalRootRef = useRef<HTMLDivElement | null>(null);
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -617,6 +644,7 @@ function TerminalPanel({
 
     const observer = new ResizeObserver(() => applySize());
     observer.observe(host);
+    if (terminalRootRef.current) observer.observe(terminalRootRef.current);
 
     const dataDisposable = terminal.onData((data) => {
       const id = activeIdRef.current;
@@ -680,8 +708,13 @@ function TerminalPanel({
     renderedCountByTerminalRef.current[id] = active.chunks.length;
   }, [terminals, activeTerminalId]);
 
+  const showList = terminals.length > 1;
+
   return (
-    <div className="panel-shell terminal-panel terminal-split">
+    <div
+      ref={terminalRootRef}
+      className={showList ? 'panel-shell terminal-panel terminal-split' : 'panel-shell terminal-panel'}
+    >
       <div className="terminal-main">
         <div
           className="terminal-view"
@@ -703,13 +736,11 @@ function TerminalPanel({
           <div className="terminal-host" ref={terminalHostRef} />
         </div>
       </div>
+      {showList ? (
       <div className="terminal-list panel-box">
         <div className="panel-title terminal-list-title">终端</div>
         <div className="terminal-list-body">
-          {terminals.length === 0 ? (
-            <div className="terminal-empty">暂无终端</div>
-          ) : (
-            terminals.map((t) => (
+            {terminals.map((t) => (
               <div
                 key={t.terminalId}
                 className={t.terminalId === activeTerminalId ? 'terminal-item active' : 'terminal-item'}
@@ -720,19 +751,22 @@ function TerminalPanel({
                   title={`${t.shell} · ${t.cwd}`}
                 >
                   <span className="terminal-item-id">{t.terminalId}</span>
-                </button>
-                <button
-                  className="terminal-item-close"
-                  onClick={() => void onCloseTerminal(t.terminalId)}
-                  title="关闭终端"
-                >
-                  ×
+                  <span
+                    className="terminal-item-close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onCloseTerminal(t.terminalId);
+                    }}
+                    title="关闭终端"
+                  >
+                    ×
+                  </span>
                 </button>
               </div>
-            ))
-          )}
+            ))}
         </div>
       </div>
+      ) : null}
     </div>
   );
 }

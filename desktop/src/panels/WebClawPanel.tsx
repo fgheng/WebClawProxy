@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { WebClawClientCore } from '../../../src/client/core/WebClawClientCore';
-import type { ClientCoreResult } from '../../../src/client/core/types';
-import type { ProviderKey, ProviderModelCatalog } from '../../../src/client/core/provider-models';
+import { WebClawClientCore } from '../../../client-core/src/core/WebClawClientCore';
+import type { ClientCoreResult } from '../../../client-core/src/core/types';
+import type { ProviderKey, ProviderModelCatalog } from '../../../client-core/src/core/provider-models';
 import { WebClawBrowserTransport } from '../lib/WebClawBrowserTransport';
+import { BrowserClientSessionStore } from '../lib/BrowserClientSessionStore';
 
 type FeedItem = {
   id: string;
@@ -14,6 +15,7 @@ type FeedItem = {
 type WebClawPanelProps = {
   apiBaseUrl: string;
   currentProvider: string;
+  displayMode: 'web' | 'forward';
   providerModels: Record<string, string[]>;
   serviceStatus: string;
   onProviderChange: (provider: string) => Promise<void> | void;
@@ -37,9 +39,10 @@ function buildCatalog(providerModels: Record<string, string[]>): ProviderModelCa
 }
 
 export function WebClawPanel(props: WebClawPanelProps) {
-  const { apiBaseUrl, currentProvider, providerModels, serviceStatus, onProviderChange, onError } = props;
+  const { apiBaseUrl, currentProvider, displayMode, providerModels, serviceStatus, onProviderChange, onError } = props;
   const feedRef = useRef<HTMLDivElement | null>(null);
   const coreRef = useRef<WebClawClientCore | null>(null);
+  const onProviderChangeRef = useRef(onProviderChange);
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([
@@ -51,12 +54,17 @@ export function WebClawPanel(props: WebClawPanelProps) {
     },
   ]);
 
+  useEffect(() => {
+    onProviderChangeRef.current = onProviderChange;
+  }, [onProviderChange]);
+
   const catalog = useMemo(() => buildCatalog(providerModels), [providerModels]);
   useEffect(() => {
     if (!apiBaseUrl || coreRef.current) return;
     const transport = new WebClawBrowserTransport({
       baseUrl: apiBaseUrl,
       model: providerModels[currentProvider]?.[0] ?? 'gpt-4o',
+      routeMode: displayMode,
       stream: false,
       traceEnabled: true,
     });
@@ -64,17 +72,18 @@ export function WebClawPanel(props: WebClawPanelProps) {
     const nextCore = new WebClawClientCore({
       transport,
       catalog,
+      sessionStore: new BrowserClientSessionStore(),
       hostActions: {
         onEvent: (event) => {
           if (event.type === 'provider-change' && event.provider) {
-            void onProviderChange(event.provider);
+            void onProviderChangeRef.current(event.provider);
           }
         },
       },
     });
 
     coreRef.current = nextCore;
-  }, [apiBaseUrl, catalog, currentProvider, onProviderChange, providerModels]);
+  }, [apiBaseUrl, catalog, currentProvider, displayMode, onProviderChange, providerModels]);
 
   useEffect(() => {
     const core = coreRef.current;
@@ -93,6 +102,26 @@ export function WebClawPanel(props: WebClawPanelProps) {
       },
     ]);
   }, [currentProvider, providerModels]);
+
+  useEffect(() => {
+    const core = coreRef.current;
+    if (!core) return;
+    const transport = core.getTransport() as WebClawBrowserTransport;
+    if (transport.getRouteMode() === displayMode) return;
+    transport.setRouteMode(displayMode);
+    setFeed((prev) => [
+      ...prev,
+      {
+        id: `route-${Date.now()}`,
+        role: 'webclaw',
+        content:
+          displayMode === 'forward'
+            ? `已切换为 forward 路由：${currentProvider} 将走直连转发`
+            : `已切换为 web 路由：${currentProvider} 将走 WebClaw 网页驱动`,
+        tone: 'muted',
+      },
+    ]);
+  }, [currentProvider, displayMode]);
 
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });

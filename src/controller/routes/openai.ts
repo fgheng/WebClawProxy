@@ -25,7 +25,10 @@ const webDriver = new WebDriverManager();
 
 function getConfiguredSiteKeys(): SiteKey[] {
   return Object.entries(getNormalizedProviderConfigMap())
-    .filter(([providerKey, provider]) => isSiteKey(providerKey) && provider.default_mode === 'web')
+    .filter(([providerKey, provider]) => {
+      if (!isSiteKey(providerKey)) return false;
+      return typeof provider.web?.site === 'string' && provider.web.site.trim().length > 0;
+    })
     .map(([providerKey]) => providerKey as SiteKey);
 }
 
@@ -113,7 +116,8 @@ async function sendForwardRequest(
   }
 
   const upstreamUrl = buildUpstreamChatCompletionsUrl(forwardConfig.base_url);
-  const requestBody = { ...options.requestBody };
+  const requestBody = { ...options.requestBody } as Record<string, unknown>;
+  delete requestBody.mode;
   const originalModel = typeof requestBody.model === 'string' ? requestBody.model : '';
   const mappedModel = forwardConfig.upstream_model_map?.[originalModel];
   if (mappedModel) {
@@ -1216,7 +1220,13 @@ export async function chatCompletionsHandler(
 
     const providerKey = inferProviderFromModel(requestedModel);
     const providerConfig = getNormalizedProviderConfig(providerKey);
-    const providerMode = providerConfig?.default_mode ?? 'web';
+    const requestedModeHeader = String(req.headers['x-webclaw-mode'] ?? '').trim().toLowerCase();
+    const requestedModeBody = String((requestBody as { mode?: unknown })?.mode ?? '').trim().toLowerCase();
+    const requestedModeRaw = requestedModeHeader || requestedModeBody;
+    const requestedMode = requestedModeRaw === 'forward' || requestedModeRaw === 'web'
+      ? requestedModeRaw
+      : undefined;
+    const providerMode = requestedMode ?? providerConfig?.default_mode ?? 'web';
 
     if (providerMode === 'forward') {
       await sendForwardRequest(res, {
