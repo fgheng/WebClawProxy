@@ -88,24 +88,28 @@ export class ShellTerminalManager {
   }
 
   private resolveShellPath(): string {
+    // 优先使用系统默认 shell
     const candidates = [
-      process.env.SHELL,
-      '/bin/zsh',
+      '/bin/sh',  // ✅ POSIX 标准，最可靠
       '/bin/bash',
-      '/bin/sh',
+      '/bin/zsh',
+      process.env.SHELL,
     ]
       .map((item) => (item ?? '').trim())
       .filter((item, index, array) => item.length > 0 && array.indexOf(item) === index);
 
     for (const candidate of candidates) {
       try {
-        fs.accessSync(candidate, fs.constants.X_OK);
+        // 检查文件是否存在且可执行
+        fs.accessSync(candidate, fs.constants.F_OK | fs.constants.X_OK);
+        console.log(`[ShellTerminalManager] Using shell: ${candidate}`);
         return candidate;
       } catch {
         // try next candidate
       }
     }
 
+    console.warn('[ShellTerminalManager] No valid shell found, falling back to /bin/sh');
     return '/bin/sh';
   }
 

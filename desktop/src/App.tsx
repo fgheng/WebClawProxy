@@ -62,7 +62,12 @@ export default function App() {
       setProviderModels(state.providerModels);
       setServiceStatus(state.serviceStatus);
       setApiBaseUrl(state.apiBaseUrl);
-      setServiceControlReady(true);
+      
+      // ✅ 延迟设置 ready 状态，等待 BrowserView 初始化完成
+      // 避免用户在初始化期间点击按钮导致冲突
+      setTimeout(() => {
+        if (mounted) setServiceControlReady(true);
+      }, 500);
     });
 
     const disposeLog = window.webclawDesktop?.onServiceLog?.((event) => {
@@ -169,8 +174,12 @@ export default function App() {
 
   const handleProviderChange = useCallback(async (provider: string) => {
     setCurrentProvider(provider);
-    await window.webclawDesktop?.selectProvider?.(provider);
-  }, []);
+    // ✅ 只有在 web 模式下才切换 BrowserView
+    // forward 模式下切换 provider 应该停留在 forward 界面
+    if (displayMode === 'web') {
+      await window.webclawDesktop?.selectProvider?.(provider);
+    }
+  }, [displayMode]);
 
   const handleStartService = useCallback(async () => {
     await window.webclawDesktop?.startService?.();
@@ -349,6 +358,7 @@ export default function App() {
                 className="control-provider-select"
                 value={currentProvider}
                 onChange={(e) => void handleProviderChange(e.target.value)}
+                disabled={!serviceControlReady}
               >
                 {Object.keys(providerSites).map((provider) => (
                   <option key={provider} value={provider}>
@@ -362,13 +372,17 @@ export default function App() {
                 onChange={(e) => {
                   const mode = e.target.value as 'web' | 'forward';
                   setDisplayMode(mode);
+                  // ✅ 切换 mode 时同步界面显示
                   if (mode === 'forward') {
+                    // forward 模式：直接加载 forward-monitor 界面
+                    // 不等待服务启动，页面内的 EventSource 会自动重连
                     void window.webclawDesktop?.navigateBrowser?.('http://127.0.0.1:3000/monitor');
                   } else {
+                    // web 模式：切换到当前 provider 的 BrowserView
                     void window.webclawDesktop?.selectProvider?.(currentProvider);
                   }
                 }}
-                title="切换 web / forward 模式"
+                title="切换 web / forward 模式（forward 模式会自动连接服务）"
               >
                 <option value="web">web</option>
                 <option value="forward">forward</option>
@@ -483,13 +497,6 @@ function TerminalPanel({
 
   return (
     <div className="panel-shell terminal-panel">
-      <div className="panel-toolbar">
-        <span className="terminal-badge mono">{shell}</span>
-        <span className="terminal-status mono">status: {status}</span>
-        <span className="terminal-status mono">pid: {pid ?? '-'}</span>
-      </div>
-
-      <div className="terminal-meta mono">{cwd}</div>
       <div className="terminal-view" ref={terminalHostRef} />
     </div>
   );

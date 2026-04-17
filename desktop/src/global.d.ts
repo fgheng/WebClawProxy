@@ -14,6 +14,7 @@ declare global {
         currentProvider: string | null;
         providerSites: Record<string, string>;
         providerModels: Record<string, string[]>;
+        providerDefaultModes: Record<string, 'web' | 'forward'>;
         currentUrl: string;
         serviceStatus: string;
         apiBaseUrl: string;

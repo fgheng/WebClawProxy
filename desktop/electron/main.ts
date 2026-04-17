@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import * as path from 'path';
 import { BrowserViewManager } from './browser-view-manager';
-import { readProviderSites, type ProviderKey } from './provider-sites';
+import { readProviderSites, readProviderDefaultModes, type ProviderKey } from './provider-sites';
 import { ServiceManager } from './service-manager';
 import { readProviderModels } from './provider-models';
 import { ShellTerminalManager } from './shell-terminal-manager';
@@ -17,6 +17,7 @@ let serviceManager: ServiceManager | null = null;
 let shellTerminalManager: ShellTerminalManager | null = null;
 let providerSites: Record<ProviderKey, string> = {} as Record<ProviderKey, string>;
 let providerModels: Record<ProviderKey, string[]> = {} as Record<ProviderKey, string[]>;
+let providerDefaultModes: Record<ProviderKey, 'web' | 'forward'> = {} as Record<ProviderKey, 'web' | 'forward'>;
 let isAppShuttingDown = false;
 
 app.setPath('userData', path.join(APP_DATA_ROOT, 'user-data'));
@@ -50,6 +51,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
 
   providerSites = readProviderSites(PROJECT_ROOT);
   providerModels = readProviderModels(PROJECT_ROOT);
+  providerDefaultModes = readProviderDefaultModes(PROJECT_ROOT);
   browserViewManager = new BrowserViewManager({ providerSites });
   const initialProvider = (Object.keys(providerSites)[0] ?? 'gpt') as ProviderKey;
   await browserViewManager.attach(window, initialProvider);
@@ -101,6 +103,7 @@ app.whenReady().then(() => {
       currentProvider: browserViewManager?.getCurrentProvider() ?? null,
       providerSites,
       providerModels,
+      providerDefaultModes,
       currentUrl: browserViewManager?.getCurrentUrl() ?? '',
       serviceStatus: serviceManager?.getStatus() ?? 'stopped',
       apiBaseUrl: 'http://127.0.0.1:3000',

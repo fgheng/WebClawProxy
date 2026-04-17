@@ -66,6 +66,15 @@ export class BrowserViewManager {
 
     this.currentProvider = provider;
     this.window.addBrowserView(nextView);
+    
+    // ✅ 检查并恢复 provider 的原始 URL
+    // 如果当前 URL 不是该 provider 的预期 URL（可能被 navigateTo forward-monitor 覆盖），则重新加载
+    const currentUrl = nextView.webContents.getURL();
+    const expectedUrl = this.options.providerSites[provider];
+    if (expectedUrl && !currentUrl.startsWith(expectedUrl)) {
+      void nextView.webContents.loadURL(expectedUrl);
+    }
+    
     this.updateBounds();
   }
 
