@@ -23,10 +23,13 @@ declare global {
       startService: () => Promise<{ status: string }>;
       stopService: () => Promise<{ status: string }>;
       restartService: () => Promise<{ status: string }>;
-      initTerminal: () => Promise<{ status: string; shell: string; cwd: string; pid: number | null } | undefined>;
-      writeTerminal: (command: string) => Promise<void>;
-      interruptTerminal: () => Promise<void>;
-      resizeTerminal: (cols: number, rows: number) => Promise<void>;
+      initTerminal: () => Promise<{ terminals: Array<{ terminalId: string; status: string; backend: 'pty' | 'raw' | null; shell: string; cwd: string; pid: number | null }>; activeTerminalId: string | null } | undefined>;
+      listTerminals: () => Promise<{ terminals: Array<{ terminalId: string; status: string; backend: 'pty' | 'raw' | null; shell: string; cwd: string; pid: number | null }> } | undefined>;
+      createTerminal: (options?: { shell?: string; cwd?: string }) => Promise<{ terminalId: string; status: string; backend: 'pty' | 'raw' | null; shell: string; cwd: string; pid: number | null } | undefined>;
+      closeTerminal: (terminalId: string) => Promise<{ closed: boolean } | undefined>;
+      writeTerminal: (terminalId: string, command: string) => Promise<void>;
+      interruptTerminal: (terminalId: string) => Promise<void>;
+      resizeTerminal: (terminalId: string, cols: number, rows: number) => Promise<void>;
       onServiceLog: (
         callback: (event: { stream: 'stdout' | 'stderr'; message: string; timestamp: number }) => void
       ) => () => void;
@@ -37,10 +40,10 @@ declare global {
         callback: (event: { message: string; timestamp: number }) => void
       ) => () => void;
       onTerminalOutput: (
-        callback: (event: { stream: 'stdout' | 'system'; message: string; timestamp: number }) => void
+        callback: (event: { terminalId: string; stream: 'stdout' | 'system'; message: string; timestamp: number }) => void
       ) => () => void;
       onTerminalStatus: (
-        callback: (event: { status: string; timestamp: number; shell: string; cwd: string; pid: number | null }) => void
+        callback: (event: { terminalId: string; status: string; backend: 'pty' | 'raw' | null; timestamp: number; shell: string; cwd: string; pid: number | null }) => void
       ) => () => void;
     };
   }

@@ -14,9 +14,13 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
   stopService: () => ipcRenderer.invoke('service:stop'),
   restartService: () => ipcRenderer.invoke('service:restart'),
   initTerminal: () => ipcRenderer.invoke('terminal:init'),
-  writeTerminal: (command: string) => ipcRenderer.invoke('terminal:write', command),
-  interruptTerminal: () => ipcRenderer.invoke('terminal:interrupt'),
-  resizeTerminal: (cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', cols, rows),
+  listTerminals: () => ipcRenderer.invoke('terminal:list'),
+  createTerminal: (options?: { shell?: string; cwd?: string }) => ipcRenderer.invoke('terminal:create', options),
+  closeTerminal: (terminalId: string) => ipcRenderer.invoke('terminal:close', terminalId),
+  writeTerminal: (terminalId: string, command: string) => ipcRenderer.invoke('terminal:write', terminalId, command),
+  interruptTerminal: (terminalId: string) => ipcRenderer.invoke('terminal:interrupt', terminalId),
+  resizeTerminal: (terminalId: string, cols: number, rows: number) =>
+    ipcRenderer.invoke('terminal:resize', terminalId, cols, rows),
   onServiceLog: (callback: (event: { stream: 'stdout' | 'stderr'; message: string; timestamp: number }) => void) => {
     const listener = (_event: unknown, payload: { stream: 'stdout' | 'stderr'; message: string; timestamp: number }) => {
       callback(payload);
@@ -39,11 +43,11 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
     return () => ipcRenderer.removeListener('service:error', listener);
   },
   onTerminalOutput: (
-    callback: (event: { stream: 'stdout' | 'system'; message: string; timestamp: number }) => void
+    callback: (event: { terminalId: string; stream: 'stdout' | 'system'; message: string; timestamp: number }) => void
   ) => {
     const listener = (
       _event: unknown,
-      payload: { stream: 'stdout' | 'system'; message: string; timestamp: number }
+      payload: { terminalId: string; stream: 'stdout' | 'system'; message: string; timestamp: number }
     ) => {
       callback(payload);
     };
@@ -51,11 +55,11 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
     return () => ipcRenderer.removeListener('terminal:output', listener);
   },
   onTerminalStatus: (
-    callback: (event: { status: string; timestamp: number; shell: string; cwd: string; pid: number | null }) => void
+    callback: (event: { terminalId: string; status: string; backend: 'pty' | 'raw' | null; timestamp: number; shell: string; cwd: string; pid: number | null }) => void
   ) => {
     const listener = (
       _event: unknown,
-      payload: { status: string; timestamp: number; shell: string; cwd: string; pid: number | null }
+      payload: { terminalId: string; status: string; backend: 'pty' | 'raw' | null; timestamp: number; shell: string; cwd: string; pid: number | null }
     ) => {
       callback(payload);
     };

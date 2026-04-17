@@ -131,6 +131,10 @@
       padding: 1px 6px; border-radius: 4px; font-size: 10px; }
     .content-model { color: var(--text); font-size: 11px; }
     .content-rounds { color: var(--text-dim); font-size: 10px; margin-left: auto; }
+    .content-controls { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; }
+    .content-controls .check-lbl { font-size: 10px; }
+    .content-controls .content-hint { font-size: 10px; color: var(--text-dim); }
+    .content-controls .content-rounds { margin-left: 0; }
 
     #msg-list { flex: 1; overflow-y: auto; padding: 12px 16px;
       display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 120px); }
@@ -173,10 +177,13 @@
       padding: 5px 10px; font-size: 10px; font-weight: 700;
       letter-spacing: .05em; text-transform: uppercase;
       border-bottom: 1px solid var(--border-faint);
+      cursor: pointer;
     }
     .msg-header-meta { margin-left: auto; font-size: 9px; font-weight: 400;
       color: var(--text-muted); text-transform: none; letter-spacing: 0; }
     .msg-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; min-height: 80px; }
+    .msg.collapsed { min-height: unset; }
+    .msg.collapsed .msg-body { display: none; }
 
     /* role colors */
     .r-sys { background: var(--role-sys-bg); border-color: var(--role-sys-bdr); }
@@ -223,6 +230,27 @@
       border-bottom: 1px solid var(--border-faint);
       text-transform: uppercase;
       letter-spacing: .04em;
+    }
+    .tool-call-box-header { text-transform: none; }
+    .tool-call-box-header .tool-label {
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      font-weight: 700;
+    }
+    .tool-call-box-header .tool-fn-name {
+      font-size: 12px;
+      font-weight: 800;
+      font-family: ui-monospace,monospace;
+      color: var(--accent-yellow);
+      letter-spacing: 0;
+    }
+    .tool-call-box-header .tool-call-id {
+      font-size: 10px;
+      font-family: ui-monospace,monospace;
+      color: var(--text-dim);
+      margin-left: auto;
     }
     .content-item-box-body, .tool-call-box-body {
       padding: 8px;
@@ -332,7 +360,14 @@
         <span class="content-session-id" id="ch-sid"></span>
         <span class="content-provider" id="ch-pvd"></span>
         <span class="content-model" id="ch-model"></span>
-        <span class="content-rounds" id="ch-rounds"></span>
+        <span class="content-controls">
+          <label class="check-lbl" title="折叠模式下默认只展开最近 5 条，新增消息不会自动折叠旧卡片">
+            <input type="checkbox" id="expand-all-toggle" />
+            展开全部
+          </label>
+          <span class="content-hint" id="collapse-hint">默认展开最近 5 条</span>
+          <span class="content-rounds" id="ch-rounds"></span>
+        </span>
       </div>
       <div id="welcome">
         <p>← 从左侧选择一个 Session 查看消息</p>
@@ -362,10 +397,48 @@ const chSid        = document.getElementById('ch-sid');
 const chPvd        = document.getElementById('ch-pvd');
 const chModel      = document.getElementById('ch-model');
 const chRounds     = document.getElementById('ch-rounds');
+const expandAllToggle = document.getElementById('expand-all-toggle');
+const collapseHint = document.getElementById('collapse-hint');
 const autoScrollCb = document.getElementById('auto-scroll');
 const clearBtn     = document.getElementById('clear-btn');
 
 function shortId(id) { return String(id ?? '').slice(0, 16); }
+
+function ensureSessUi(sess) {
+  if (!sess.ui) {
+    sess.ui = { expandAll: false, initialized: false };
+  }
+  if (typeof sess.ui.expandAll !== 'boolean') sess.ui.expandAll = false;
+  if (typeof sess.ui.initialized !== 'boolean') sess.ui.initialized = false;
+  return sess.ui;
+}
+
+function getMsgCards() {
+  return Array.from(msgList.querySelectorAll('.msg'));
+}
+
+function applyExpandAllUi() {
+  const cards = getMsgCards();
+  for (const card of cards) card.classList.remove('collapsed');
+}
+
+function applyCollapsedUi({ expandLastN = 5 } = {}) {
+  const cards = getMsgCards();
+  for (const card of cards) card.classList.add('collapsed');
+  const n = Math.max(0, Number(expandLastN) || 0);
+  if (n <= 0) return;
+  const tail = cards.slice(-n);
+  for (const card of tail) card.classList.remove('collapsed');
+}
+
+function syncContentControlsForSession(sess) {
+  if (!expandAllToggle) return;
+  const ui = ensureSessUi(sess);
+  expandAllToggle.checked = ui.expandAll;
+  if (collapseHint) {
+    collapseHint.style.display = ui.expandAll ? 'none' : 'inline';
+  }
+}
 
 function formatTime(timestamp) {
   if (!timestamp) return '';
@@ -460,6 +533,7 @@ function makeCard(roleClass, roleLabel, metaText) {
   const hdr = document.createElement('div');
   hdr.className = 'msg-header';
   hdr.textContent = roleLabel;
+  hdr.title = '点击展开/收起';
 
   if (metaText) {
     const m = document.createElement('span');
@@ -472,6 +546,9 @@ function makeCard(roleClass, roleLabel, metaText) {
   body.className = 'msg-body';
 
   card.append(hdr, body);
+  hdr.addEventListener('click', () => {
+    card.classList.toggle('collapsed');
+  });
   return { card, hdr, body };
 }
 
@@ -607,7 +684,6 @@ function renderToolCalls(toolCalls) {
   toolCalls.forEach((tc, index) => {
     const fnName = tc?.function?.name ?? tc?.id ?? '(unknown)';
     const fnArgs = tc?.function?.arguments;
-    const callId = tc?.id ? ` · #${tc.id.slice(-8)}` : '';
     const children = [];
 
     if (fnArgs != null && fnArgs !== '') {
@@ -617,7 +693,28 @@ function renderToolCalls(toolCalls) {
       children.push(makeTextBlock('(no arguments)', false));
     }
 
-    group.appendChild(makeBox('tool-call-box', `tool_call ${index + 1} · ${fnName}${callId}`, children));
+    const box = document.createElement('div');
+    box.className = 'tool-call-box';
+    const header = document.createElement('div');
+    header.className = 'tool-call-box-header';
+    const label = document.createElement('span');
+    label.className = 'tool-label';
+    label.textContent = `tool_call ${index + 1}`;
+    const name = document.createElement('span');
+    name.className = 'tool-fn-name';
+    name.textContent = fnName;
+    header.append(label, name);
+    if (tc?.id) {
+      const idBadge = document.createElement('span');
+      idBadge.className = 'tool-call-id';
+      idBadge.textContent = `call_id: ${String(tc.id)}`;
+      header.appendChild(idBadge);
+    }
+    const body = document.createElement('div');
+    body.className = 'tool-call-box-body';
+    for (const child of children) body.appendChild(child);
+    box.append(header, body);
+    group.appendChild(box);
   });
 
   els.push(group);
@@ -907,6 +1004,7 @@ async function selectSession(sid) {
   chPvd.textContent   = sess.providerKey;
   chModel.textContent = sess.model;
   chRounds.textContent = `${sess.rounds ?? 0} 轮`;
+  syncContentControlsForSession(sess);
 
   if (!sess.loaded) {
     await loadSessionMessages(sess);
@@ -954,7 +1052,34 @@ function renderMessages(sess) {
   }
 
   chRounds.textContent = `${sess.rounds ?? 0} 轮`;
+
+  const ui = ensureSessUi(sess);
+  if (ui.expandAll) {
+    applyExpandAllUi();
+  } else if (!ui.initialized) {
+    applyCollapsedUi({ expandLastN: 5 });
+    ui.initialized = true;
+  }
   scrollBottom();
+}
+
+if (expandAllToggle) {
+  expandAllToggle.addEventListener('change', () => {
+    const sess = activeId ? sessions.get(activeId) : null;
+    if (!sess) return;
+    const ui = ensureSessUi(sess);
+    ui.expandAll = Boolean(expandAllToggle.checked);
+    if (collapseHint) collapseHint.style.display = ui.expandAll ? 'none' : 'inline';
+    if (ui.expandAll) {
+      applyExpandAllUi();
+      ui.initialized = true;
+      scrollBottom();
+      return;
+    }
+    applyCollapsedUi({ expandLastN: 5 });
+    ui.initialized = true;
+    scrollBottom();
+  });
 }
 
 function onSnapshot(evt) {

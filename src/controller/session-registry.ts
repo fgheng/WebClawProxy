@@ -9,6 +9,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { FileConversationStore } from '../conversation/FileConversationStore';
+import type { ConversationMessage, ConversationRecord, ConversationSnapshot } from '../conversation/types';
+import { loadAppConfig } from '../config/app-config';
 
 // ── Hash 工具 ─────────────────────────────────────────────────────────────────
 
@@ -150,20 +153,33 @@ function computeSessionId(tools: unknown[], allMessages: RawMessage[]): string {
 // ── SessionRegistry ───────────────────────────────────────────────────────────
 
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 分钟不活跃则清理
-const PERSIST_FILE = path.join(process.cwd(), '.data', 'sessions.json'); // 持久化文件路径
 const PERSIST_INTERVAL_MS = 60 * 1000; // 每 1 分钟自动保存一次
 
 export class SessionRegistry {
   /** sessionId → Session */
   private sessions = new Map<string, Session>();
+  /** 统一会话仓库（当前阶段仅做双写） */
+  private readonly conversationStore: FileConversationStore;
+  private readonly persistFilePath: string;
   /** 自动清理定时器 */
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   /** 自动保存定时器 */
   private persistTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
+    const config = loadAppConfig();
+    const dataRootDir = typeof config?.data?.root_dir === 'string' ? config.data.root_dir : '.data';
+    const dataRootAbs = path.isAbsolute(dataRootDir) ? dataRootDir : path.resolve(process.cwd(), dataRootDir);
+
+    this.persistFilePath = path.join(dataRootAbs, 'sessions.json');
+    this.conversationStore = new FileConversationStore(path.join(dataRootAbs, 'conversations'));
+
     // 启动时加载持久化数据
     this.load();
+    this.hydrateFromConversationStore();
+    for (const session of this.sessions.values()) {
+      this.syncConversationMirror(session);
+    }
 
     // 每 5 分钟清理一次过期 session
     this.cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000);
@@ -185,12 +201,12 @@ export class SessionRegistry {
   /** 从文件加载持久化数据 */
   private load(): void {
     try {
-      if (!fs.existsSync(PERSIST_FILE)) {
+      if (!fs.existsSync(this.persistFilePath)) {
         console.log('[SessionRegistry] 持久化文件不存在，跳过加载');
         return;
       }
 
-      const raw = fs.readFileSync(PERSIST_FILE, 'utf-8');
+      const raw = fs.readFileSync(this.persistFilePath, 'utf-8');
       const data = JSON.parse(raw) as { sessions: Session[] };
 
       let loaded = 0;
@@ -211,7 +227,7 @@ export class SessionRegistry {
   /** 保存数据到文件 */
   private save(): void {
     try {
-      const dir = path.dirname(PERSIST_FILE);
+      const dir = path.dirname(this.persistFilePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
@@ -221,11 +237,147 @@ export class SessionRegistry {
         sessions: Array.from(this.sessions.values()),
       };
 
-      fs.writeFileSync(PERSIST_FILE, JSON.stringify(data, null, 2), 'utf-8');
+      fs.writeFileSync(this.persistFilePath, JSON.stringify(data, null, 2), 'utf-8');
       console.log(`[SessionRegistry] 已保存 ${this.sessions.size} 个 session 到持久化文件`);
     } catch (error) {
       console.error('[SessionRegistry] 保存持久化文件失败:', error);
     }
+  }
+
+  private toSessionMessages(messages: ConversationMessage[]): SessionMessage[] {
+    return messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      tool_calls: message.tool_calls,
+      tool_call_id: message.tool_call_id,
+      name: message.name,
+      timestamp: message.timestamp,
+    }));
+  }
+
+  private buildSessionFromConversationRecord(record: ConversationRecord): Session {
+    return {
+      sessionId: record.identity.sessionId ?? record.conversationId,
+      providerKey: record.providerKey,
+      model: record.model,
+      tools: record.promptState.tools,
+      messages: this.toSessionMessages(record.messages),
+      rounds: record.stats.rounds,
+      createdAt: record.stats.createdAt,
+      lastActiveAt: record.stats.lastActiveAt,
+    };
+  }
+
+  private toSnapshot(
+    snapshot: ConversationSnapshot
+  ): Omit<Session, 'messages'> & { lastMessage: SessionMessage | null; messageCount: number } {
+    const record = this.conversationStore.findByConversationId(snapshot.conversationId);
+    return {
+      sessionId: snapshot.conversationId,
+      providerKey: snapshot.providerKey,
+      model: snapshot.model,
+      tools: record?.promptState.tools ?? [],
+      rounds: snapshot.rounds,
+      createdAt: snapshot.createdAt,
+      lastActiveAt: snapshot.lastActiveAt,
+      messageCount: snapshot.messageCount,
+      lastMessage: snapshot.lastMessage
+        ? {
+            role: snapshot.lastMessage.role,
+            content: snapshot.lastMessage.content,
+            tool_calls: snapshot.lastMessage.tool_calls,
+            tool_call_id: snapshot.lastMessage.tool_call_id,
+            name: snapshot.lastMessage.name,
+            timestamp: snapshot.lastMessage.timestamp,
+          }
+        : null,
+    };
+  }
+
+  private listForwardConversationRecords(providerKey?: string): ConversationRecord[] {
+    return this.conversationStore
+      .listByProvider(providerKey)
+      .filter((record) => record.mode === 'forward');
+  }
+
+  private hydrateFromConversationStore(): void {
+    let hydrated = 0;
+    for (const record of this.listForwardConversationRecords()) {
+      const session = this.buildSessionFromConversationRecord(record);
+      const existing = this.sessions.get(session.sessionId);
+      if (!existing || existing.lastActiveAt < session.lastActiveAt) {
+        this.sessions.set(session.sessionId, session);
+        hydrated++;
+      }
+    }
+
+    if (hydrated > 0) {
+      console.log(`[SessionRegistry] 从 ConversationStore 回灌 ${hydrated} 个 forward session`);
+    }
+  }
+
+  private extractSystemPrompt(messages: SessionMessage[]): string {
+    return messages
+      .filter((message) => message.role === 'system')
+      .map((message) => {
+        if (typeof message.content === 'string') return message.content;
+        if (message.content == null) return '';
+        try {
+          return JSON.stringify(message.content);
+        } catch {
+          return String(message.content);
+        }
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private toConversationMessages(messages: SessionMessage[]): ConversationMessage[] {
+    return messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      tool_calls: message.tool_calls,
+      tool_call_id: message.tool_call_id,
+      name: message.name,
+      timestamp: message.timestamp,
+    }));
+  }
+
+  private buildConversationRecord(session: Session): ConversationRecord {
+    const parts = session.sessionId.split(':');
+    return {
+      conversationId: session.sessionId,
+      mode: 'forward',
+      providerKey: session.providerKey,
+      model: session.model,
+      identity: {
+        sessionId: session.sessionId,
+        toolsHash: parts[0],
+        systemHash: parts[1],
+        firstUserHash: parts[2],
+      },
+      promptState: {
+        system: this.extractSystemPrompt(session.messages),
+        tools: session.tools,
+      },
+      linkage: {
+        linked: false,
+        webUrls: [],
+      },
+      messages: this.toConversationMessages(session.messages),
+      stats: {
+        rounds: session.rounds,
+        createdAt: session.createdAt,
+        lastActiveAt: session.lastActiveAt,
+      },
+      retention: {
+        ttlMs: SESSION_TTL_MS,
+      },
+    };
+  }
+
+  private syncConversationMirror(session: Session): void {
+    this.conversationStore.save(this.buildConversationRecord(session));
   }
 
   /**
@@ -255,6 +407,7 @@ export class SessionRegistry {
       existing.lastActiveAt = now;
       // ✅ 立即持久化（防止数据丢失）
       this.save();
+      this.syncConversationMirror(existing);
       return { action: 'append', session: existing, newMessages };
     }
 
@@ -273,6 +426,7 @@ export class SessionRegistry {
     this.sessions.set(sessionId, session);
     // ✅ 立即持久化（防止数据丢失）
     this.save();
+    this.syncConversationMirror(session);
     console.log(`[SessionRegistry] 新建 session ${sessionId.slice(0, 16)} (provider=${providerKey}, model=${model})`);
     return { action: 'new', session, newMessages: allMessages };
   }
@@ -302,46 +456,48 @@ export class SessionRegistry {
     void finishReason; // 暂不存储，可按需扩展
     // ✅ 立即持久化（防止数据丢失）
     this.save();
+    this.syncConversationMirror(session);
     console.log(`[SessionRegistry] session ${sessionId.slice(0, 16)} rounds=${session.rounds}`);
     return session;
   }
 
   /** 获取所有 session，可选按 provider 过滤 */
   getSessions(providerKey?: string): Session[] {
-    const all = Array.from(this.sessions.values());
-    if (providerKey) return all.filter((s) => s.providerKey === providerKey);
-    return all;
+    return this.listForwardConversationRecords(providerKey).map((record) =>
+      this.buildSessionFromConversationRecord(record)
+    );
   }
 
   /** 获取单个 session */
   getSession(sessionId: string): Session | undefined {
-    return this.sessions.get(sessionId);
+    const record = this.conversationStore.findBySessionId(sessionId);
+    if (!record || record.mode !== 'forward') return undefined;
+    return this.buildSessionFromConversationRecord(record);
   }
 
   /** 删除单个 session */
   deleteSession(sessionId: string): boolean {
     const deleted = this.sessions.delete(sessionId);
-    if (deleted) this.save(); // 立即保存
+    if (deleted) {
+      this.save(); // 立即保存
+      this.conversationStore.delete(sessionId);
+    }
     return deleted;
   }
 
   /** 获取所有 provider 名称（去重） */
   getProviders(): string[] {
     const set = new Set<string>();
-    for (const s of this.sessions.values()) set.add(s.providerKey);
+    for (const s of this.listForwardConversationRecords()) set.add(s.providerKey);
     return Array.from(set);
   }
 
   /** 获取 session 摘要（不含完整消息体，供快照用） */
   getSnapshot(): Array<Omit<Session, 'messages'> & { lastMessage: SessionMessage | null; messageCount: number }> {
-    return Array.from(this.sessions.values()).map((s) => {
-      const { messages, ...rest } = s;
-      return {
-        ...rest,
-        messageCount: messages.length,
-        lastMessage: messages.length > 0 ? messages[messages.length - 1] : null,
-      };
-    });
+    return this.conversationStore
+      .listSnapshots()
+      .filter((snapshot) => snapshot.mode === 'forward')
+      .map((snapshot) => this.toSnapshot(snapshot));
   }
 
   /** 清理超过 TTL 的 session */
@@ -357,6 +513,10 @@ export class SessionRegistry {
     if (cleaned > 0) {
       console.log(`[SessionRegistry] 清理了 ${cleaned} 个过期 session`);
       this.save();
+    }
+    const cleanedMirror = this.conversationStore.cleanupExpired(now);
+    if (cleanedMirror > 0) {
+      console.log(`[SessionRegistry] ConversationStore 清理了 ${cleanedMirror} 个过期镜像`);
     }
   }
 

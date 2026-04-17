@@ -342,6 +342,13 @@ select {
 .terminal-view {
   min-height: 0;
   padding: 6px;
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-host {
+  height: 100%;
+  width: 100%;
 }
 
 .terminal-meta {
@@ -356,6 +363,169 @@ select {
 
 .terminal-view .xterm-viewport {
   overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: none;
+}
+
+.terminal-view .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.terminal-view.show-scrollbar .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-view.show-scrollbar .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+}
+
+.terminal-view.show-scrollbar .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
+}
+
+.terminal-split {
+  grid-template-rows: 1fr;
+  grid-template-columns: 1fr 160px;
+  gap: 12px;
+}
+
+.terminal-main {
+  min-height: 0;
+}
+
+.terminal-list {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  min-height: 0;
+}
+
+.terminal-list-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.terminal-list-body {
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.terminal-empty {
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 6px 2px;
+}
+
+.terminal-item {
+  display: grid;
+  grid-template-columns: 1fr 26px;
+  gap: 6px;
+  align-items: center;
+}
+
+.terminal-item-main {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  background: #0b1220;
+  padding: 7px 8px;
+  color: #cbd5e1;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.terminal-item.active .terminal-item-main {
+  border-color: #1d4ed8;
+  background: rgba(29, 78, 216, 0.12);
+}
+
+.terminal-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.terminal-item-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-item-close {
+  height: 30px;
+  width: 26px;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.terminal-item-close:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.tab-with-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab-menu-trigger {
+  background: transparent;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  height: 28px;
+  padding: 0 8px;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.tab-menu-trigger:hover {
+  border-color: #1d4ed8;
+  color: #e2e8f0;
+}
+
+.tab-menu {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 6px;
+  z-index: 20;
+  min-width: 160px;
+}
+
+.tab-menu-item {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.tab-menu-item:hover {
+  border-color: #1d4ed8;
+  background: rgba(29, 78, 216, 0.12);
 }
 
 .trace-list,

@@ -30,16 +30,22 @@ export default function App() {
   const [serviceLogs, setServiceLogs] = useState<string[]>([
     '等待服务日志...',
   ]);
-  const [terminalChunks, setTerminalChunks] = useState<string[]>([]);
-  const [terminalStatus, setTerminalStatus] = useState('stopped');
-  const [terminalShell, setTerminalShell] = useState('/bin/zsh');
-  const [terminalCwd, setTerminalCwd] = useState('/Users/fgh001/Workspace/WebClawProxy');
-  const [terminalPid, setTerminalPid] = useState<number | null>(null);
+  const [terminalsById, setTerminalsById] = useState<Record<string, {
+    terminalId: string;
+    status: string;
+    backend: 'pty' | 'raw' | null;
+    shell: string;
+    cwd: string;
+    pid: number | null;
+    chunks: string[];
+  }>>({});
+  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
   const [logTypeFilter, setLogTypeFilter] = useState('all');
   const [logProviderFilter, setLogProviderFilter] = useState('all');
   const [logSearch, setLogSearch] = useState('');
   const [logAutoScroll, setLogAutoScroll] = useState(true);
   const [errors, setErrors] = useState<string[]>([]);
+  const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [splitRatio, setSplitRatio] = useState(() => {
     const saved = window.localStorage.getItem('webclaw:split-ratio');
     const parsed = saved ? Number(saved) : 0.56;
@@ -52,6 +58,32 @@ export default function App() {
     setErrors((prev) => [`${new Date().toLocaleTimeString()} ${message}`, ...prev].slice(0, 100));
     setActiveTab('errors');
   }, []);
+
+  const createTerminalAndFocus = useCallback(async () => {
+    const created = await window.webclawDesktop?.createTerminal?.();
+    if (!created) return;
+    setTerminalsById((prev) => ({
+      ...prev,
+      [created.terminalId]: {
+        terminalId: created.terminalId,
+        status: created.status,
+          backend: created.backend,
+        shell: created.shell,
+        cwd: created.cwd,
+        pid: created.pid,
+        chunks: [],
+      },
+    }));
+    setActiveTerminalId(created.terminalId);
+    setActiveTab('terminal');
+  }, []);
+
+  useEffect(() => {
+    if (!terminalMenuOpen) return;
+    const onDown = () => setTerminalMenuOpen(false);
+    window.addEventListener('pointerdown', onDown);
+    return () => window.removeEventListener('pointerdown', onDown);
+  }, [terminalMenuOpen]);
 
   useEffect(() => {
     let mounted = true;
@@ -94,20 +126,63 @@ export default function App() {
       window.alert(event.message);
     });
     const disposeTerminalOutput = window.webclawDesktop?.onTerminalOutput?.((event) => {
-      setTerminalChunks((prev) => [...prev, event.message].slice(-1200));
+      setTerminalsById((prev) => {
+        const existing = prev[event.terminalId];
+        if (!existing) {
+          return {
+            ...prev,
+            [event.terminalId]: {
+              terminalId: event.terminalId,
+              status: 'running',
+              backend: null,
+              shell: '',
+              cwd: '',
+              pid: null,
+              chunks: [event.message],
+            },
+          };
+        }
+        return {
+          ...prev,
+          [event.terminalId]: {
+            ...existing,
+            chunks: [...existing.chunks, event.message].slice(-1200),
+          },
+        };
+      });
     });
     const disposeTerminalStatus = window.webclawDesktop?.onTerminalStatus?.((event) => {
-      setTerminalStatus(event.status);
-      setTerminalShell(event.shell);
-      setTerminalCwd(event.cwd);
-      setTerminalPid(event.pid);
+      setTerminalsById((prev) => {
+        const existing = prev[event.terminalId];
+        const next = {
+          terminalId: event.terminalId,
+          status: event.status,
+          backend: event.backend,
+          shell: event.shell,
+          cwd: event.cwd,
+          pid: event.pid,
+          chunks: existing?.chunks ?? [],
+        };
+        return { ...prev, [event.terminalId]: next };
+      });
     });
     void window.webclawDesktop?.initTerminal?.().then((state) => {
       if (!mounted || !state) return;
-      setTerminalStatus(state.status);
-      setTerminalShell(state.shell);
-      setTerminalCwd(state.cwd);
-      setTerminalPid(state.pid);
+      const terminals = state.terminals ?? [];
+      const nextById: Record<string, any> = {};
+      for (const t of terminals) {
+        nextById[t.terminalId] = {
+          terminalId: t.terminalId,
+          status: t.status,
+          backend: t.backend,
+          shell: t.shell,
+          cwd: t.cwd,
+          pid: t.pid,
+          chunks: [],
+        };
+      }
+      setTerminalsById(nextById);
+      setActiveTerminalId(state.activeTerminalId ?? terminals[0]?.terminalId ?? null);
     });
 
     return () => {
@@ -259,11 +334,27 @@ export default function App() {
       case 'terminal':
         return (
           <TerminalPanel
-            chunks={terminalChunks}
-            status={terminalStatus}
-            shell={terminalShell}
-            cwd={terminalCwd}
-            pid={terminalPid}
+            terminals={Object.values(terminalsById)}
+            activeTerminalId={activeTerminalId}
+            onSelectTerminal={(terminalId) => {
+              setActiveTerminalId(terminalId);
+            }}
+            onCreateTerminal={createTerminalAndFocus}
+            onCloseTerminal={async (terminalId) => {
+              const confirmed = window.confirm(`确认关闭终端 ${terminalId} 吗？`);
+              if (!confirmed) return;
+              const res = await window.webclawDesktop?.closeTerminal?.(terminalId);
+              if (!res?.closed) return;
+              setTerminalsById((prev) => {
+                const next = { ...prev };
+                delete next[terminalId];
+                const remaining = Object.keys(next);
+                setActiveTerminalId((activePrev) =>
+                  activePrev === terminalId ? (remaining[0] ?? null) : activePrev
+                );
+                return next;
+              });
+            }}
           />
         );
       case 'logs':
@@ -286,7 +377,7 @@ export default function App() {
       default:
         return null;
     }
-  }, [activeTab, apiBaseUrl, currentProvider, errors, handleProviderChange, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalChunks, terminalCwd, terminalPid, terminalShell, terminalStatus]);
+  }, [activeTab, apiBaseUrl, currentProvider, errors, handleProviderChange, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalsById, activeTerminalId]);
 
   return (
     <div className="console-shell">
@@ -372,13 +463,13 @@ export default function App() {
                 onChange={(e) => {
                   const mode = e.target.value as 'web' | 'forward';
                   setDisplayMode(mode);
-                  // ✅ 切换 mode 时同步界面显示
                   if (mode === 'forward') {
-                    // forward 模式：直接加载 forward-monitor 界面
-                    // 不等待服务启动，页面内的 EventSource 会自动重连
-                    void window.webclawDesktop?.navigateBrowser?.('http://127.0.0.1:3000/monitor');
+                    if (serviceStatus === 'running') {
+                      void window.webclawDesktop?.navigateBrowser?.('http://127.0.0.1:3000/monitor');
+                    } else {
+                      pushError('WebClaw 服务未启动，无法加载 Forward Monitor（需要 3000 端口服务运行）');
+                    }
                   } else {
-                    // web 模式：切换到当前 provider 的 BrowserView
                     void window.webclawDesktop?.selectProvider?.(currentProvider);
                   }
                 }}
@@ -387,15 +478,60 @@ export default function App() {
                 <option value="web">web</option>
                 <option value="forward">forward</option>
               </select>
-              {tabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  className={tab.key === activeTab ? 'tab active' : 'tab'}
-                  onClick={() => setActiveTab(tab.key)}
-                >
-                  {tab.label}
-                </button>
-              ))}
+              {tabs.map((tab) => {
+                if (tab.key !== 'terminal') {
+                  return (
+                    <button
+                      key={tab.key}
+                      className={tab.key === activeTab ? 'tab active' : 'tab'}
+                      onClick={() => setActiveTab(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                }
+
+                return (
+                  <div key={tab.key} className="tab-with-menu">
+                    <button
+                      className={tab.key === activeTab ? 'tab active' : 'tab'}
+                      onClick={() => {
+                        setTerminalMenuOpen(false);
+                        setActiveTab(tab.key);
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                    <button
+                      className="tab-menu-trigger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveTab('terminal');
+                        setTerminalMenuOpen((prev) => !prev);
+                      }}
+                      title="终端菜单"
+                    >
+                      ▾
+                    </button>
+                    {terminalMenuOpen ? (
+                      <div
+                        className="tab-menu"
+                        onPointerDown={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          className="tab-menu-item"
+                          onClick={() => {
+                            setTerminalMenuOpen(false);
+                            void createTerminalAndFocus();
+                          }}
+                        >
+                          新建终端
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -413,22 +549,38 @@ export default function App() {
 }
 
 function TerminalPanel({
-  chunks,
-  status,
-  shell,
-  cwd,
-  pid,
+  terminals,
+  activeTerminalId,
+  onSelectTerminal,
+  onCreateTerminal,
+  onCloseTerminal,
 }: {
-  chunks: string[];
-  status: string;
-  shell: string;
-  cwd: string;
-  pid: number | null;
+  terminals: Array<{
+    terminalId: string;
+    status: string;
+    backend: 'pty' | 'raw' | null;
+    shell: string;
+    cwd: string;
+    pid: number | null;
+    chunks: string[];
+  }>;
+  activeTerminalId: string | null;
+  onSelectTerminal: (terminalId: string) => void;
+  onCreateTerminal: () => Promise<void>;
+  onCloseTerminal: (terminalId: string) => Promise<void>;
 }) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
+  const terminalContainerRef = useRef<HTMLDivElement | null>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const renderedChunkCountRef = useRef(0);
+  const renderedCountByTerminalRef = useRef<Record<string, number>>({});
+  const activeIdRef = useRef<string | null>(activeTerminalId);
+  const terminalsRef = useRef(terminals);
+  const scrollbarTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    terminalsRef.current = terminals;
+  }, [terminals]);
 
   useEffect(() => {
     const host = terminalHostRef.current;
@@ -437,8 +589,9 @@ function TerminalPanel({
     const fitAddon = new FitAddon();
     const terminal = new Terminal({
       cursorBlink: true,
-      convertEol: false,
-      fontSize: 11,
+      convertEol: true,
+      fontSize: 10,
+      lineHeight: 1.15,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       theme: {
         background: '#0b1220',
@@ -453,23 +606,36 @@ function TerminalPanel({
 
     terminalInstanceRef.current = terminal;
     fitAddonRef.current = fitAddon;
-    renderedChunkCountRef.current = 0;
+    renderedCountByTerminalRef.current = {};
 
     const applySize = () => {
       fitAddon.fit();
-      void window.webclawDesktop?.resizeTerminal?.(terminal.cols, terminal.rows);
+      const id = activeIdRef.current;
+      if (!id) return;
+      void window.webclawDesktop?.resizeTerminal?.(id, terminal.cols, terminal.rows);
     };
 
     const observer = new ResizeObserver(() => applySize());
     observer.observe(host);
 
     const dataDisposable = terminal.onData((data) => {
-      void window.webclawDesktop?.writeTerminal?.(data);
+      const id = activeIdRef.current;
+      if (!id) return;
+      const active = terminalsRef.current.find((t) => t.terminalId === id);
+      const payload = active?.backend === 'raw'
+        ? data.replace(/\r/g, '\n')
+        : data;
+      if (active?.backend === 'raw') {
+        terminal.write(data);
+      }
+      void window.webclawDesktop?.writeTerminal?.(id, payload);
     });
 
     const keyDisposable = terminal.onKey(({ domEvent }) => {
       if ((domEvent.ctrlKey || domEvent.metaKey) && domEvent.key.toLowerCase() === 'c') {
-        void window.webclawDesktop?.interruptTerminal?.();
+        const id = activeIdRef.current;
+        if (!id) return;
+        void window.webclawDesktop?.interruptTerminal?.(id);
       }
     });
 
@@ -486,18 +652,87 @@ function TerminalPanel({
   }, []);
 
   useEffect(() => {
+    activeIdRef.current = activeTerminalId;
     const terminal = terminalInstanceRef.current;
     if (!terminal) return;
-    for (let index = renderedChunkCountRef.current; index < chunks.length; index += 1) {
-      terminal.write(chunks[index]);
-    }
-    renderedChunkCountRef.current = chunks.length;
+    terminal.reset();
+    terminalContainerRef.current?.classList.remove('show-scrollbar');
+    const active = terminals.find((t) => t.terminalId === activeTerminalId);
+    const chunks = active?.chunks ?? [];
+    for (const chunk of chunks) terminal.write(chunk);
+    if (activeTerminalId) renderedCountByTerminalRef.current[activeTerminalId] = chunks.length;
+    fitAddonRef.current?.fit();
     terminal.focus();
-  }, [chunks]);
+  }, [activeTerminalId]);
+
+  useEffect(() => {
+    const id = activeTerminalId;
+    if (!id) return;
+    const terminal = terminalInstanceRef.current;
+    if (!terminal) return;
+    const active = terminals.find((t) => t.terminalId === id);
+    if (!active) return;
+    const already = renderedCountByTerminalRef.current[id] ?? 0;
+    if (active.chunks.length <= already) return;
+    for (let i = already; i < active.chunks.length; i += 1) {
+      terminal.write(active.chunks[i]);
+    }
+    renderedCountByTerminalRef.current[id] = active.chunks.length;
+  }, [terminals, activeTerminalId]);
 
   return (
-    <div className="panel-shell terminal-panel">
-      <div className="terminal-view" ref={terminalHostRef} />
+    <div className="panel-shell terminal-panel terminal-split">
+      <div className="terminal-main">
+        <div
+          className="terminal-view"
+          ref={terminalContainerRef}
+          onWheel={() => {
+            const el = terminalContainerRef.current;
+            if (!el) return;
+            const viewport = el.querySelector('.xterm-viewport') as HTMLDivElement | null;
+            if (!viewport) return;
+            const canScroll = viewport.scrollHeight > viewport.clientHeight + 1;
+            if (!canScroll) return;
+            el.classList.add('show-scrollbar');
+            if (scrollbarTimerRef.current) window.clearTimeout(scrollbarTimerRef.current);
+            scrollbarTimerRef.current = window.setTimeout(() => {
+              terminalContainerRef.current?.classList.remove('show-scrollbar');
+            }, 900);
+          }}
+        >
+          <div className="terminal-host" ref={terminalHostRef} />
+        </div>
+      </div>
+      <div className="terminal-list panel-box">
+        <div className="panel-title terminal-list-title">终端</div>
+        <div className="terminal-list-body">
+          {terminals.length === 0 ? (
+            <div className="terminal-empty">暂无终端</div>
+          ) : (
+            terminals.map((t) => (
+              <div
+                key={t.terminalId}
+                className={t.terminalId === activeTerminalId ? 'terminal-item active' : 'terminal-item'}
+              >
+                <button
+                  className="terminal-item-main"
+                  onClick={() => onSelectTerminal(t.terminalId)}
+                  title={`${t.shell} · ${t.cwd}`}
+                >
+                  <span className="terminal-item-id">{t.terminalId}</span>
+                </button>
+                <button
+                  className="terminal-item-close"
+                  onClick={() => void onCloseTerminal(t.terminalId)}
+                  title="关闭终端"
+                >
+                  ×
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }

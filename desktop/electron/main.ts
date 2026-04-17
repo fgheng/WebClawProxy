@@ -119,15 +119,22 @@ app.whenReady().then(() => {
   ipcMain.handle('service:start', async () => ({ status: await serviceManager?.start() ?? 'stopped' }));
   ipcMain.handle('service:stop', async () => ({ status: await serviceManager?.stop() ?? 'stopped' }));
   ipcMain.handle('service:restart', async () => ({ status: await serviceManager?.restart() ?? 'stopped' }));
-  ipcMain.handle('terminal:init', async () => await shellTerminalManager?.ensureStarted());
-  ipcMain.handle('terminal:write', async (_event, command: string) => {
-    await shellTerminalManager?.write(command);
+  ipcMain.handle('terminal:init', async () => await shellTerminalManager?.ensureDefaultStarted());
+  ipcMain.handle('terminal:list', async () => ({ terminals: shellTerminalManager?.list() ?? [] }));
+  ipcMain.handle('terminal:create', async (_event, options?: { shell?: string; cwd?: string }) => {
+    return await shellTerminalManager?.create(options);
   });
-  ipcMain.handle('terminal:interrupt', async () => {
-    await shellTerminalManager?.interrupt();
+  ipcMain.handle('terminal:close', async (_event, terminalId: string) => {
+    return await shellTerminalManager?.close(terminalId);
   });
-  ipcMain.handle('terminal:resize', async (_event, cols: number, rows: number) => {
-    await shellTerminalManager?.resize(cols, rows);
+  ipcMain.handle('terminal:write', async (_event, terminalId: string, command: string) => {
+    await shellTerminalManager?.write(terminalId, command);
+  });
+  ipcMain.handle('terminal:interrupt', async (_event, terminalId: string) => {
+    await shellTerminalManager?.interrupt(terminalId);
+  });
+  ipcMain.handle('terminal:resize', async (_event, terminalId: string, cols: number, rows: number) => {
+    await shellTerminalManager?.resize(terminalId, cols, rows);
   });
 
   void createMainWindow();

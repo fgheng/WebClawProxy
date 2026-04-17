@@ -115,7 +115,7 @@
   "logging": {
     "enabled": true,
     "debug": true,
-    "dir": "./data/logs",
+    "dir": ".data/logs",
     "file_prefix": "webclaw-proxy",
     "pretty_json": false,
     "pretty_json_indent": 4,

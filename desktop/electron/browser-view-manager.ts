@@ -1,4 +1,5 @@
 import { BrowserView, BrowserWindow } from 'electron';
+import * as path from 'path';
 import type { ProviderKey } from './provider-sites';
 
 type BrowserViewManagerOptions = {
@@ -16,6 +17,12 @@ type ViewBounds = {
   width: number;
   height: number;
 };
+
+function buildLoadingUrl(targetUrl: string): string {
+  const loadingPath = path.join(process.cwd(), 'electron', 'loading.html');
+  const encodedTarget = encodeURIComponent(targetUrl);
+  return `file://${loadingPath}?target=${encodedTarget}`;
+}
 
 export class BrowserViewManager {
   private window: BrowserWindow | null = null;
@@ -35,7 +42,8 @@ export class BrowserViewManager {
           sandbox: false,
         },
       });
-      await view.webContents.loadURL(siteUrl);
+      const loadingUrl = buildLoadingUrl(siteUrl);
+      await view.webContents.loadURL(loadingUrl);
       this.views.set(provider, view);
     }
 
