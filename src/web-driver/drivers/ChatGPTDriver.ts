@@ -16,7 +16,7 @@ const SELECTORS = {
   /** 备用新建对话按钮 */
   newChatButtonAlt: 'a[href="/"]',
   /** 消息输入框 */
-  inputArea: '#prompt-textarea',
+  inputArea: '#prompt-textarea, textarea[data-testid="prompt-textarea"], form textarea, [contenteditable="true"][role="textbox"]',
   /** 发送按钮 */
   sendButton: '[data-testid="send-button"]',
   /** 停止生成按钮 */
@@ -55,17 +55,39 @@ export class ChatGPTDriver extends BaseDriver {
   async createNewConversation(): Promise<void> {
     // 统一采用回到主页的方式创建新会话，避免污染已有 session。
     await this.page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await this.sleep(500);
     await this.dismissDialogs();
 
-    // 等待输入框出现，确认新对话已创建
-    try {
-      await this.page.waitForSelector(SELECTORS.inputArea, { timeout: 10000, state: 'visible' });
-    } catch {
+    const url = this.page.url();
+    if (/\/auth|\/login|\/signin/i.test(url)) {
       throw new WebDriverError(
-        WebDriverErrorCode.NEW_CONVERSATION_FAILED,
-        'ChatGPT 新建对话失败，输入框未出现'
+        WebDriverErrorCode.NOT_LOGGED_IN,
+        `ChatGPT 未登录或被重定向到登录页: ${url}`
       );
     }
+
+    const inputReady = await this.page
+      .waitForSelector(SELECTORS.inputArea, { timeout: 15000, state: 'visible' })
+      .then(() => true)
+      .catch(() => false);
+
+    if (inputReady) return;
+
+    const overlayVisible = await this.page
+      .isVisible(SELECTORS.modalOverlay)
+      .catch(() => false);
+
+    if (overlayVisible) {
+      throw new WebDriverError(
+        WebDriverErrorCode.DIALOG_BLOCKED,
+        `ChatGPT 页面被弹窗遮挡，无法定位输入框: ${this.page.url()}`
+      );
+    }
+
+    throw new WebDriverError(
+      WebDriverErrorCode.NEW_CONVERSATION_FAILED,
+      `ChatGPT 新建对话失败，输入框未出现，当前 URL: ${this.page.url()}`
+    );
   }
 
   async sendMessage(text: string): Promise<void> {
@@ -440,22 +462,17 @@ export class ChatGPTDriver extends BaseDriver {
    * 关闭可能存在的弹窗/广告
    */
   private async dismissDialogs(): Promise<void> {
-    try {
-      const closeBtn = await this.page.$(SELECTORS.dialogClose);
-      if (closeBtn) {
-        await closeBtn.click();
-        await this.sleep(500);
-      }
-    } catch {
-      // 忽略关闭失败
-    }
-
-    // 按 Escape 键关闭弹窗
-    try {
-      await this.page.keyboard.press('Escape');
-      await this.sleep(300);
-    } catch {
-      // 忽略
+    for (let i = 0; i < 3; i += 1) {
+      await this.page
+        .click('[data-testid="close-button"], button[aria-label="Close"], button[aria-label="关闭"]', { timeout: 500 })
+        .catch(() => null);
+      await this.page
+        .click('text=/^(Close|Not now|Skip|知道了|我知道了|以后再说)$/', { timeout: 500 })
+        .catch(() => null);
+      await this.page.keyboard.press('Escape').catch(() => null);
+      await this.sleep(250);
+      const blocked = await this.page.isVisible(SELECTORS.modalOverlay).catch(() => false);
+      if (!blocked) break;
     }
   }
 

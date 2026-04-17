@@ -21,7 +21,7 @@
     {
       "id": "gpt_input_ready",
       "kind": "selector_visible",
-      "selector": "textarea, [contenteditable='true']",
+      "selector": "#prompt-textarea, textarea[data-testid='prompt-textarea']",
       "weight": 0.8
     }
   ],

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { WebClawClientCore } from '../../../client-core/src/core/WebClawClientCore';
 import type { ClientCoreResult } from '../../../client-core/src/core/types';
 import type { ProviderKey, ProviderModelCatalog } from '../../../client-core/src/core/provider-models';
+import type { ChatMessage } from '../../../client-core/src/types';
 import { WebClawBrowserTransport } from '../lib/WebClawBrowserTransport';
 import { BrowserClientSessionStore } from '../lib/BrowserClientSessionStore';
 
@@ -21,6 +22,7 @@ type WebClawPanelProps = {
   serviceStatus: string;
   onProviderChange: (provider: string) => Promise<void> | void;
   onError: (message: string) => void;
+  onSendingChange?: (sending: boolean) => void;
 };
 
 function buildCatalog(providerModels: Record<string, string[]>): ProviderModelCatalog {
@@ -39,11 +41,33 @@ function buildCatalog(providerModels: Record<string, string[]>): ProviderModelCa
   return { modelToProvider, providerToModels };
 }
 
+function buildFeedFromHistory(history: ChatMessage[]): FeedItem[] {
+  const items: FeedItem[] = [];
+  for (let i = 0; i < history.length; i += 1) {
+    const msg = history[i];
+    if (!msg) continue;
+    if (msg.role === 'user') {
+      items.push({ id: `history-${i}-user`, role: 'user', content: msg.content ?? '', tone: 'normal' });
+      continue;
+    }
+    if (msg.role === 'assistant') {
+      items.push({ id: `history-${i}-assistant`, role: 'webclaw', content: msg.content ?? '', tone: 'normal' });
+      continue;
+    }
+    if (msg.role === 'system') {
+      items.push({ id: `history-${i}-system`, role: 'webclaw', content: msg.content ?? '', tone: 'muted' });
+    }
+  }
+  return items;
+}
+
 export function WebClawPanel(props: WebClawPanelProps) {
-  const { apiBaseUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError } = props;
+  const { apiBaseUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError, onSendingChange } = props;
   const feedRef = useRef<HTMLDivElement | null>(null);
   const coreRef = useRef<WebClawClientCore | null>(null);
   const onProviderChangeRef = useRef(onProviderChange);
+  const hydratedRef = useRef(false);
+  const abortRequestedRef = useRef(false);
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([
@@ -58,6 +82,10 @@ export function WebClawPanel(props: WebClawPanelProps) {
   useEffect(() => {
     onProviderChangeRef.current = onProviderChange;
   }, [onProviderChange]);
+
+  useEffect(() => {
+    onSendingChange?.(isSending);
+  }, [isSending, onSendingChange]);
 
   const catalog = useMemo(() => buildCatalog(providerModels), [providerModels]);
   useEffect(() => {
@@ -89,12 +117,34 @@ export function WebClawPanel(props: WebClawPanelProps) {
   useEffect(() => {
     const core = coreRef.current;
     if (!core) return;
+    if (serviceStatus !== 'running') return;
+    if (hydratedRef.current) return;
+    if (feed.some((item) => item.role === 'user')) return;
+    hydratedRef.current = true;
+    const run = async () => {
+      try {
+        await core.executeInput('/history');
+        const items = buildFeedFromHistory(core.getState().history);
+        if (items.length > 0) setFeed(items);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onError(message);
+        hydratedRef.current = false;
+      }
+    };
+    void run();
+  }, [feed, onError, serviceStatus]);
+
+  useEffect(() => {
+    const core = coreRef.current;
+    if (!core) return;
     const nextModel = selectedModel || providerModels[currentProvider]?.[0];
     if (!nextModel) return;
     const transport = core.getTransport();
     if (transport.getConfig().model === nextModel) return;
     transport.setModel(nextModel);
-    setFeed([
+    setFeed((prev) => [
+      ...prev,
       {
         id: `provider-${Date.now()}`,
         role: 'webclaw',
@@ -190,6 +240,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
     const isCommand = input.startsWith('/');
 
     try {
+      abortRequestedRef.current = false;
       if (blockedCommand) {
         setFeed((prev) => [
           ...prev,
@@ -205,7 +256,8 @@ export function WebClawPanel(props: WebClawPanelProps) {
       const nextModel = selectedModel || providerModels[currentProvider]?.[0];
       if (nextModel && core.getTransport().getConfig().model !== nextModel) {
         core.getTransport().setModel(nextModel);
-        setFeed([
+        setFeed((prev) => [
+          ...prev,
           {
             id: `provider-${Date.now()}`,
             role: 'webclaw',
@@ -225,9 +277,13 @@ export function WebClawPanel(props: WebClawPanelProps) {
       applyResultToFeed(result, pendingId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      onError(message);
+      if (message !== '已终止') {
+        onError(message);
+      }
       setFeed((prev) => prev.map((item) => (
-        item.id === pendingId ? { ...item, content: message, tone: 'error' } : item
+        item.id === pendingId
+          ? { ...item, content: message, tone: message === '已终止' ? 'muted' : 'error' }
+          : item
       )));
     } finally {
       setIsSending(false);
@@ -245,6 +301,20 @@ export function WebClawPanel(props: WebClawPanelProps) {
     }
 
     if (result.command === 'noop') return;
+    if (result.command === 'session') {
+      hydratedRef.current = true;
+      const items = buildFeedFromHistory(result.state.history ?? []);
+      setFeed([
+        ...items,
+        {
+          id: `cmd-${Date.now()}-${result.command}`,
+          role: 'webclaw',
+          content: result.lines.join('\n'),
+          tone: 'muted',
+        },
+      ]);
+      return;
+    }
     if (result.command === 'clear' || result.command === 'new' || result.command === 'reset') {
       setFeed([
         {
@@ -288,6 +358,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
           value={draft}
           placeholder={serviceStatus === 'running' ? '输入消息或 /help 查看命令' : '服务未启动，输入后也可直接尝试发送'}
           onChange={(e) => setDraft(e.target.value)}
+          disabled={isSending}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -295,8 +366,20 @@ export function WebClawPanel(props: WebClawPanelProps) {
             }
           }}
         />
-        <button className="primary webclaw-send-button" onClick={() => void handleSubmit()} disabled={isSending || !draft.trim()}>
-          {isSending ? '发送中...' : '发送'}
+        <button
+          className={`primary webclaw-send-button ${isSending ? 'danger' : ''}`}
+          onClick={() => {
+            if (!isSending) {
+              void handleSubmit();
+              return;
+            }
+            abortRequestedRef.current = true;
+            const transport = coreRef.current?.getTransport() as WebClawBrowserTransport | undefined;
+            transport?.abortInFlight?.();
+          }}
+          disabled={!isSending && !draft.trim()}
+        >
+          {isSending ? '终止' : '发送'}
         </button>
       </div>
     </div>

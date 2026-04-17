@@ -1014,10 +1014,11 @@ describe('Driver 新建对话策略', () => {
 describe('ChatGPTDriver 发送稳定性', () => {
   it('首次投递未确认时应恢复并重试发送', async () => {
     const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
+    const inputSelector = '#prompt-textarea, textarea[data-testid="prompt-textarea"], form textarea, [contenteditable="true"][role="textbox"]';
 
     const mockPage = {
       waitForSelector: jest.fn().mockImplementation((selector: string) => {
-        if (selector === '[data-testid="send-button"]' || selector === '#prompt-textarea') {
+        if (selector === '[data-testid="send-button"]' || selector === inputSelector) {
           return Promise.resolve({});
         }
         return Promise.reject(new Error('not visible'));
@@ -1048,10 +1049,10 @@ describe('ChatGPTDriver 发送稳定性', () => {
     await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
 
     expect(mockPage.fill).toHaveBeenCalledTimes(4);
-    expect(mockPage.fill).toHaveBeenNthCalledWith(1, '#prompt-textarea', '');
-    expect(mockPage.fill).toHaveBeenNthCalledWith(2, '#prompt-textarea', 'hello world');
-    expect(mockPage.fill).toHaveBeenNthCalledWith(3, '#prompt-textarea', '');
-    expect(mockPage.fill).toHaveBeenNthCalledWith(4, '#prompt-textarea', 'hello world');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(1, inputSelector, '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(2, inputSelector, 'hello world');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(3, inputSelector, '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(4, inputSelector, 'hello world');
     expect(mockPage.click).toHaveBeenCalledWith('[data-testid="send-button"]', { timeout: 1000 });
     expect(recoverSpy).toHaveBeenCalledTimes(1);
   });
@@ -1087,6 +1088,7 @@ describe('ChatGPTDriver 发送稳定性', () => {
 
   it('发送前应先显式清空输入框再写入新内容', async () => {
     const { ChatGPTDriver } = await import('../../src/web-driver/drivers/ChatGPTDriver');
+    const inputSelector = '#prompt-textarea, textarea[data-testid="prompt-textarea"], form textarea, [contenteditable="true"][role="textbox"]';
 
     const mockPage = {
       waitForSelector: jest.fn().mockResolvedValue({}),
@@ -1111,8 +1113,8 @@ describe('ChatGPTDriver 发送稳定性', () => {
 
     await expect(driver.sendMessage('hello world')).resolves.toBeUndefined();
 
-    expect(mockPage.fill).toHaveBeenNthCalledWith(1, '#prompt-textarea', '');
-    expect(mockPage.fill).toHaveBeenNthCalledWith(2, '#prompt-textarea', 'hello world');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(1, inputSelector, '');
+    expect(mockPage.fill).toHaveBeenNthCalledWith(2, inputSelector, 'hello world');
   });
 
   it('初始化首发时若 URL 已切到新对话，应视为已投递', async () => {

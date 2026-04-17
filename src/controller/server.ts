@@ -6,6 +6,7 @@ import { logDebug, formatRequestBodyPreview } from './logger';
 import { forwardMonitorBus } from './forward-monitor-bus';
 import { sessionRegistry } from './session-registry';
 import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-config';
+import { clearAppConfigCache, getAppConfigPath } from '../config/app-config';
 
 /**
  * 创建并配置 Express 应用
@@ -19,18 +20,23 @@ export function createApp() {
 
   // 请求日志
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-    logDebug('http_request', {
-      method: req.method,
-      path: req.path,
-      query: req.query,
-      headers: {
-        'x-trace-id': req.headers['x-trace-id'] ?? '',
-        'x-session-id': req.headers['x-session-id'] ?? '',
-        authorization_present: Boolean(req.headers.authorization),
-      },
-      body_preview: formatRequestBodyPreview(req.body ?? {}),
-    });
+    const isNoisy =
+      req.method === 'GET' &&
+      (req.path === '/health' || req.path === '/v1/providers');
+    if (!isNoisy) {
+      console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+      logDebug('http_request', {
+        method: req.method,
+        path: req.path,
+        query: req.query,
+        headers: {
+          'x-trace-id': req.headers['x-trace-id'] ?? '',
+          'x-session-id': req.headers['x-session-id'] ?? '',
+          authorization_present: Boolean(req.headers.authorization),
+        },
+        body_preview: formatRequestBodyPreview(req.body ?? {}),
+      });
+    }
     next();
   });
 
@@ -71,10 +77,114 @@ export function createApp() {
           models: provider.models ?? [],
           default_mode: provider.default_mode ?? 'web',
           site: isSiteKey(providerKey) ? (provider.web?.site ?? '') : '',
+          input_max_chars: typeof provider.web?.input_max_chars === 'number' ? provider.web.input_max_chars : null,
+          forward_base_url: provider.forward?.base_url ?? '',
+          api_key: provider.forward?.api_key ?? '',
+          api_key_masked: provider.forward?.api_key ? '****' : '',
         },
       ])
     );
     res.json({ providers });
+  });
+
+  app.patch('/v1/providers/:provider', (req: Request, res: Response) => {
+    const provider = String(req.params.provider ?? '').trim();
+    if (!provider) {
+      res.status(400).json({ error: { message: 'provider is required', code: 'invalid_provider' } });
+      return;
+    }
+    const body = req.body as {
+      models?: unknown;
+      default_mode?: unknown;
+      input_max_chars?: unknown;
+      forward_base_url?: unknown;
+      api_key?: unknown;
+    };
+    const configPath = getAppConfigPath();
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
+      providers?: Record<string, any>;
+    };
+    if (!raw.providers || !raw.providers[provider]) {
+      res.status(404).json({ error: { message: 'provider not found', code: 'provider_not_found' } });
+      return;
+    }
+    const target = raw.providers[provider] as Record<string, any>;
+    if (Array.isArray(body.models)) {
+      target.models = body.models
+        .map((item) => String(item ?? '').trim())
+        .filter((item) => item.length > 0);
+    }
+    if (typeof body.default_mode === 'string') {
+      const mode = body.default_mode.trim();
+      if (mode === 'web' || mode === 'forward') {
+        target.default_mode = mode;
+      }
+    }
+    if (body.input_max_chars === null) {
+      if (target.web && typeof target.web === 'object') {
+        delete target.web.input_max_chars;
+      }
+      delete target.input_max_chars;
+    } else if (typeof body.input_max_chars === 'number' && Number.isInteger(body.input_max_chars) && body.input_max_chars > 0) {
+      target.web = target.web ?? {};
+      target.web.input_max_chars = body.input_max_chars;
+      delete target.input_max_chars;
+    }
+    if (typeof body.forward_base_url === 'string') {
+      target.forward = target.forward ?? {};
+      target.forward.base_url = body.forward_base_url.trim();
+    }
+    if (typeof body.api_key === 'string') {
+      target.forward = target.forward ?? {};
+      target.forward.api_key = body.api_key.trim();
+    }
+    fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf-8');
+    clearAppConfigCache();
+    const normalized = getNormalizedProviderConfigMap()[provider];
+    res.json({
+      ok: true,
+      provider,
+      data: {
+        models: normalized?.models ?? [],
+        default_mode: normalized?.default_mode ?? 'web',
+        site: normalized?.web?.site ?? '',
+        input_max_chars: typeof normalized?.web?.input_max_chars === 'number' ? normalized.web.input_max_chars : null,
+        forward_base_url: normalized?.forward?.base_url ?? '',
+        api_key: normalized?.forward?.api_key ?? '',
+        api_key_masked: normalized?.forward?.api_key ? '****' : '',
+      },
+    });
+  });
+
+  app.get('/v1/settings', (_req: Request, res: Response) => {
+    const configPath = getAppConfigPath();
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
+      server?: { port?: unknown };
+    };
+    const portNum = Number(raw?.server?.port);
+    res.json({
+      settings: {
+        server_port: Number.isFinite(portNum) && portNum > 0 ? Math.floor(portNum) : 3000,
+      },
+    });
+  });
+
+  app.patch('/v1/settings', (req: Request, res: Response) => {
+    const body = req.body as { server_port?: unknown };
+    const nextPort = Number(body.server_port);
+    if (!Number.isInteger(nextPort) || nextPort < 1 || nextPort > 65535) {
+      res.status(400).json({
+        error: { message: 'server_port must be an integer between 1 and 65535', code: 'invalid_server_port' },
+      });
+      return;
+    }
+    const configPath = getAppConfigPath();
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
+    raw.server = raw.server ?? {};
+    raw.server.port = nextPort;
+    fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf-8');
+    clearAppConfigCache();
+    res.json({ ok: true, settings: { server_port: nextPort } });
   });
 
   // 健康检查

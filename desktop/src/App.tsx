@@ -25,6 +25,7 @@ export default function App() {
   const [currentProvider, setCurrentProvider] = useState('gpt');
   const [displayMode, setDisplayMode] = useState<'web' | 'forward'>('web');
   const [selectedForwardModel, setSelectedForwardModel] = useState('');
+  const [webclawSending, setWebclawSending] = useState(false);
   const [providerSites, setProviderSites] = useState<Record<string, string>>({});
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
   const [providerDefaultModes, setProviderDefaultModes] = useState<Record<string, 'web' | 'forward'>>({});
@@ -98,6 +99,27 @@ export default function App() {
     setActiveTerminalId(null);
     setTerminalInited(false);
     void window.webclawDesktop?.showBrowserWaiting?.();
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    let timer: number | null = null;
+    const onScroll = () => {
+      root.classList.add('is-scrolling');
+      if (timer != null) {
+        window.clearTimeout(timer);
+      }
+      timer = window.setTimeout(() => {
+        timer = null;
+        root.classList.remove('is-scrolling');
+      }, 700);
+    };
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener('scroll', onScroll, true);
+      if (timer != null) window.clearTimeout(timer);
+      root.classList.remove('is-scrolling');
+    };
   }, []);
 
   useEffect(() => {
@@ -436,20 +458,31 @@ export default function App() {
   );
 
   const handleStartService = useCallback(async () => {
-    await window.webclawDesktop?.startService?.();
-    requestSyncBrowserBounds();
-  }, [requestSyncBrowserBounds]);
+    try {
+      await window.webclawDesktop?.startService?.();
+      requestSyncBrowserBounds();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushError(message);
+    }
+  }, [pushError, requestSyncBrowserBounds]);
 
   const handleStopService = useCallback(async () => {
-    await window.webclawDesktop?.stopService?.();
-    requestSyncBrowserBounds();
-  }, [requestSyncBrowserBounds]);
+    try {
+      await window.webclawDesktop?.stopService?.();
+      requestSyncBrowserBounds();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushError(message);
+    }
+  }, [pushError, requestSyncBrowserBounds]);
 
   const handleToggleService = useCallback(async () => {
     if (!serviceControlReady) return;
     if (serviceStatus === 'running') {
       const confirmed = window.confirm('确认停止 WebClaw 服务吗？');
       if (!confirmed) return;
+      setServiceStatus('stopping');
       await handleStopService();
       return;
     }
@@ -487,7 +520,23 @@ export default function App() {
     void ensureTerminalReady();
   }, [activeTab, ensureTerminalReady]);
 
+  const webclawPanel = useMemo(() => (
+    <WebClawPanel
+      apiBaseUrl={apiBaseUrl}
+      currentProvider={currentProvider}
+      displayMode={displayMode}
+      selectedModel={displayMode === 'forward' ? selectedForwardModel : undefined}
+      providerModels={providerModels}
+      serviceStatus={serviceStatus}
+      onProviderChange={handleProviderChange}
+      onError={pushError}
+      onSendingChange={setWebclawSending}
+    />
+  ), [apiBaseUrl, currentProvider, displayMode, selectedForwardModel, providerModels, serviceStatus, handleProviderChange, pushError]);
+
   const panel = useMemo(() => {
+    if (activeTab === 'webclaw') return null;
+
     const filteredLogLines = serviceLogs.filter((line) => {
       const lower = line.toLowerCase();
       const typeMatches =
@@ -504,19 +553,6 @@ export default function App() {
     });
 
     switch (activeTab) {
-      case 'webclaw':
-        return (
-          <WebClawPanel
-            apiBaseUrl={apiBaseUrl}
-            currentProvider={currentProvider}
-            displayMode={displayMode}
-            selectedModel={displayMode === 'forward' ? selectedForwardModel : undefined}
-            providerModels={providerModels}
-            serviceStatus={serviceStatus}
-            onProviderChange={handleProviderChange}
-            onError={pushError}
-          />
-        );
       case 'config':
         return (
           <ConfigPanel
@@ -581,7 +617,7 @@ export default function App() {
       default:
         return null;
     }
-  }, [activeTab, apiBaseUrl, currentProvider, displayMode, selectedForwardModel, errors, handleProviderChange, handleProviderConfigSave, handleServiceSettingsSave, handlePromptConfigSave, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, providerDefaultModes, providerInputMaxChars, providerForwardBaseUrls, providerApiKeys, providerApiKeyMasked, servicePort, promptConfig, pushError, serviceLogs, serviceStatus, terminalsById, activeTerminalId, createTerminalAndFocus]);
+  }, [activeTab, activeTerminalId, errors, handlePromptConfigSave, handleProviderConfigSave, handleServiceSettingsSave, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, promptConfig, providerApiKeyMasked, providerApiKeys, providerDefaultModes, providerForwardBaseUrls, providerInputMaxChars, providerModels, providerSites, serviceLogs, servicePort, serviceStatus, terminalsById, pushError]);
 
   return (
     <div className="console-shell">
@@ -653,7 +689,7 @@ export default function App() {
                 className="control-provider-select"
                 value={currentProvider}
                 onChange={(e) => void handleProviderChange(e.target.value)}
-                disabled={!serviceControlReady || serviceStatus !== 'running' || Object.keys(providerSites).length === 0}
+                disabled={!serviceControlReady || serviceStatus !== 'running' || Object.keys(providerSites).length === 0 || (activeTab === 'webclaw' && webclawSending)}
               >
                 {(Object.keys(providerSites).length > 0 ? Object.keys(providerSites) : [currentProvider]).map((provider) => (
                   <option key={provider} value={provider}>
@@ -678,7 +714,7 @@ export default function App() {
                   }
                 }}
                 title="切换 web / forward 模式（forward 模式会自动连接服务）"
-                disabled={!serviceControlReady || serviceStatus !== 'running'}
+                disabled={!serviceControlReady || serviceStatus !== 'running' || (activeTab === 'webclaw' && webclawSending)}
               >
                 <option value="web">web</option>
                 <option value="forward">forward</option>
@@ -689,6 +725,7 @@ export default function App() {
                   value={selectedForwardModel}
                   onChange={(e) => setSelectedForwardModel(e.target.value)}
                   title="forward 模式请求使用的模型"
+                  disabled={activeTab === 'webclaw' && webclawSending}
                 >
                   {(providerModels[currentProvider] ?? []).map((model) => (
                     <option key={model} value={model}>
@@ -763,7 +800,12 @@ export default function App() {
             </div>
           </div>
 
-          <div className="workspace-panel">{panel}</div>
+          <div className="workspace-panel">
+            <div style={{ display: activeTab === 'webclaw' ? 'block' : 'none', height: '100%' }}>
+              {webclawPanel}
+            </div>
+            {activeTab === 'webclaw' ? null : panel}
+          </div>
         </section>
       </div>
 

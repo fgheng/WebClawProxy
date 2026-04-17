@@ -1,10 +1,14 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { promisify } from 'util';
 import { BrowserViewManager } from './browser-view-manager';
 import type { ProviderKey } from './provider-sites';
 import { ServiceManager } from './service-manager';
 import { ShellTerminalManager } from './shell-terminal-manager';
+
+const execFileAsync = promisify(execFile);
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 const APP_DATA_ROOT = path.join(process.cwd(), '.electron-data');
@@ -175,6 +179,48 @@ async function probeServiceHealth(baseUrl: string): Promise<boolean> {
     return false;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function forceKillPortListeners(port: number): Promise<void> {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return;
+  let stdout = '';
+  try {
+    const res = await execFileAsync('lsof', ['-nP', '-i', `TCP:${port}`, '-sTCP:LISTEN', '-t'], { timeout: 1500 });
+    stdout = String(res.stdout ?? '');
+  } catch {
+    return;
+  }
+
+  const pids = Array.from(
+    new Set(
+      stdout
+        .split(/\r?\n/)
+        .map((line) => Number(line.trim()))
+        .filter((n) => Number.isInteger(n) && n > 0)
+    )
+  );
+  if (pids.length === 0) return;
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // ignore
+    }
+  }
+  await new Promise((r) => setTimeout(r, 600));
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      continue;
+    }
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -400,7 +446,15 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.handle('browser:navigate', async (_event, url: string) => {
-    await browserViewManager?.navigateTo(url);
+    try {
+      await browserViewManager?.navigateTo(url);
+    } catch (error) {
+      const code = (error as any)?.code;
+      if (code === 'ERR_ABORTED') {
+        return;
+      }
+      throw error;
+    }
   });
   ipcMain.handle('desktop:getState', async () => {
     const managerStatus = serviceManager?.getStatus() ?? 'stopped';
@@ -563,7 +617,16 @@ app.whenReady().then(() => {
     }
     return { status };
   });
-  ipcMain.handle('service:stop', async () => ({ status: await serviceManager?.stop() ?? 'stopped' }));
+  ipcMain.handle('service:stop', async () => {
+    const status = await serviceManager?.stop() ?? 'stopped';
+    const healthyBefore = await probeServiceHealth(getApiBaseUrl());
+    if (healthyBefore) {
+      await forceKillPortListeners(runtimeServicePort);
+    }
+    await new Promise((r) => setTimeout(r, 350));
+    const healthyAfter = await probeServiceHealth(getApiBaseUrl());
+    return { status: healthyAfter ? status : 'stopped' };
+  });
   ipcMain.handle('service:restart', async () => {
     const status = await serviceManager?.restart() ?? 'stopped';
     if (status === 'running') {

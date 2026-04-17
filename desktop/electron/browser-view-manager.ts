@@ -23,13 +23,13 @@ function buildLoadingUrl(targetUrl?: string): string {
   if (!targetUrl) {
     return `file://${loadingPath}`;
   }
-  const encodedTarget = encodeURIComponent(targetUrl);
-  return `file://${loadingPath}?target=${encodedTarget}`;
+  return targetUrl;
 }
 
 export class BrowserViewManager {
   private window: BrowserWindow | null = null;
   private views = new Map<ProviderKey, BrowserView>();
+  private failedProviders = new Set<ProviderKey>();
   private waitingView: BrowserView | null = null;
   private activeView: BrowserView | null = null;
   private currentProvider: ProviderKey | null = null;
@@ -76,8 +76,15 @@ export class BrowserViewManager {
           sandbox: false,
         },
       });
-      await view.webContents.loadURL(buildLoadingUrl(siteUrl));
       this.views.set(provider, view);
+      void view.webContents
+        .loadURL(buildLoadingUrl(siteUrl))
+        .then(() => {
+          this.failedProviders.delete(provider);
+        })
+        .catch(() => {
+          this.failedProviders.add(provider);
+        });
     }
     if (this.currentProvider && !nextProviderSites[this.currentProvider]) {
       this.currentProvider = null;
@@ -97,15 +104,18 @@ export class BrowserViewManager {
     this.currentProvider = provider;
     this.activeView = nextView;
     this.window.addBrowserView(nextView);
-    
-    // 仅在初始 loading 页面时才自动跳转到 provider 站点。
-    // 避免在 forward 模式下把 monitor 页面强制切回 web 站点。
-    const currentUrl = nextView.webContents.getURL();
     const expectedUrl = this.options.providerSites[provider];
-    if (expectedUrl && (currentUrl.startsWith('file://') || !currentUrl)) {
-      void nextView.webContents.loadURL(buildLoadingUrl(expectedUrl));
+    const currentUrl = nextView.webContents.getURL();
+    if (expectedUrl && (!currentUrl || currentUrl === 'about:blank')) {
+      void nextView.webContents
+        .loadURL(buildLoadingUrl(expectedUrl))
+        .then(() => {
+          this.failedProviders.delete(provider);
+        })
+        .catch(() => {
+          this.failedProviders.add(provider);
+        });
     }
-    
     this.updateBounds();
   }
 

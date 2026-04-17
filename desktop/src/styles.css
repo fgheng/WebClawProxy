@@ -22,6 +22,48 @@ body {
   overflow: hidden;
 }
 
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+html.is-scrolling * {
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+html.is-scrolling *::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+}
+
+html.is-scrolling *::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+  background-clip: padding-box;
+}
+
+.is-scrolling .terminal-view .xterm-viewport {
+  scrollbar-width: thin;
+}
+
 button,
 input,
 select {
@@ -329,16 +371,6 @@ select {
   gap: 12px;
 }
 
-.config-shell .config-scroll-all {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.config-shell .config-scroll-all::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
 .config-shell .table-wrap {
   overflow: visible;
 }
@@ -452,25 +484,6 @@ select {
 .terminal-view .xterm-viewport {
   overflow-y: auto !important;
   overflow-x: hidden !important;
-  scrollbar-width: none;
-}
-
-.terminal-view .xterm-viewport::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-.terminal-view.show-scrollbar .xterm-viewport::-webkit-scrollbar {
-  width: 6px;
-}
-
-.terminal-view.show-scrollbar .xterm-viewport::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.35);
-  border-radius: 999px;
-}
-
-.terminal-view.show-scrollbar .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.55);
 }
 
 .terminal-split {
@@ -789,10 +802,30 @@ th {
   color: #fecaca;
 }
 
+.chat-bubble.webclaw.error {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  color: rgba(248, 113, 113, 0.7);
+  font-size: 11px;
+  max-width: 100%;
+}
+
 .chat-bubble.muted {
   background: rgba(30, 41, 59, 0.8);
   border: 1px solid rgba(71, 85, 105, 0.3);
   color: #cbd5e1;
+}
+
+.chat-bubble.webclaw.muted {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  color: #94a3b8;
+  font-size: 11px;
+  max-width: 100%;
 }
 
 .chat-content {
@@ -831,6 +864,11 @@ th {
 .webclaw-send-button {
   height: 36px;
   padding: 0 14px;
+}
+
+.webclaw-send-button.danger {
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 .checkbox-inline {

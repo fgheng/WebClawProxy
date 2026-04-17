@@ -12,6 +12,7 @@ export class WebClawBrowserTransport implements ClientTransport {
   private messages: ChatMessage[] = [];
   private requestSeq = 0;
   private routeMode: 'web' | 'forward';
+  private inFlight: AbortController | null = null;
 
   constructor(config: ClientConfig & { routeMode?: 'web' | 'forward' }) {
     this.config = {
@@ -36,7 +37,6 @@ export class WebClawBrowserTransport implements ClientTransport {
 
   setModel(model: string): void {
     this.config.model = model;
-    this.clearHistory();
   }
 
   setStream(enabled: boolean): void {
@@ -72,6 +72,10 @@ export class WebClawBrowserTransport implements ClientTransport {
     return { ...this.config };
   }
 
+  abortInFlight(): void {
+    this.inFlight?.abort();
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${this.config.baseUrl}/health`);
@@ -100,7 +104,12 @@ export class WebClawBrowserTransport implements ClientTransport {
     };
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.config.timeoutMs);
+    this.inFlight = controller;
 
     try {
       const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
@@ -135,7 +144,10 @@ export class WebClawBrowserTransport implements ClientTransport {
     } catch (error) {
       this.messages.pop();
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error(`请求超时（${this.config.timeoutMs}ms）`);
+        if (timedOut) {
+          throw new Error(`请求超时（${this.config.timeoutMs}ms）`);
+        }
+        throw new Error('已终止');
       }
       if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
         throw new Error(`无法连接到服务 ${this.config.baseUrl}，请确认服务已启动且允许 GUI 请求`);
@@ -143,6 +155,9 @@ export class WebClawBrowserTransport implements ClientTransport {
       throw error instanceof Error ? error : new Error(String(error));
     } finally {
       clearTimeout(timeout);
+      if (this.inFlight === controller) {
+        this.inFlight = null;
+      }
     }
   }
 

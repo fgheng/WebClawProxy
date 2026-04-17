@@ -373,7 +373,8 @@ export class WebDriverManager {
   }
 
   private resolveDefaultInitPrompt(): string {
-    const configured = config.defaults?.init_prompt;
+    const promptConfig = (config.prompt ?? config.defaults) as { init_prompt?: unknown } | undefined;
+    const configured = promptConfig?.init_prompt;
     if (typeof configured === 'string' && configured.trim() !== '') {
       return this.renderInitPromptTemplate(configured);
     }
@@ -381,7 +382,8 @@ export class WebDriverManager {
   }
 
   private renderInitPromptTemplate(template: string): string {
-    const responseSchemaTemplate = config.defaults?.response_schema_template ?? '';
+    const promptConfig = (config.prompt ?? config.defaults) as { response_schema_template?: unknown } | undefined;
+    const responseSchemaTemplate = (typeof promptConfig?.response_schema_template === 'string' ? promptConfig.response_schema_template : '') ?? '';
     return template.split('{{response_schema_template}}').join(responseSchemaTemplate);
   }
 
@@ -601,7 +603,7 @@ export class WebDriverManager {
     if (!page) return;
 
     const inputSelectorBySite: Record<SiteKey, string> = {
-      gpt: '#prompt-textarea',
+      gpt: '#prompt-textarea, textarea[data-testid="prompt-textarea"], form textarea, [contenteditable="true"][role="textbox"]',
       qwen: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
       deepseek: 'textarea, [contenteditable="true"]',
       kimi: 'textarea, [contenteditable="true"][class*="input"]',
