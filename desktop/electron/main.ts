@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import * as fs from 'fs';
 import * as path from 'path';
 import { BrowserViewManager } from './browser-view-manager';
 import { readProviderSites, readProviderDefaultModes, type ProviderKey } from './provider-sites';
@@ -19,6 +20,11 @@ let providerSites: Record<ProviderKey, string> = {} as Record<ProviderKey, strin
 let providerModels: Record<ProviderKey, string[]> = {} as Record<ProviderKey, string[]>;
 let providerDefaultModes: Record<ProviderKey, 'web' | 'forward'> = {} as Record<ProviderKey, 'web' | 'forward'>;
 let isAppShuttingDown = false;
+
+fs.mkdirSync(APP_DATA_ROOT, { recursive: true });
+fs.mkdirSync(path.join(APP_DATA_ROOT, 'user-data'), { recursive: true });
+fs.mkdirSync(path.join(APP_DATA_ROOT, 'session-data'), { recursive: true });
+fs.mkdirSync(path.join(APP_DATA_ROOT, 'cache'), { recursive: true });
 
 app.setPath('userData', path.join(APP_DATA_ROOT, 'user-data'));
 app.setPath('sessionData', path.join(APP_DATA_ROOT, 'session-data'));
