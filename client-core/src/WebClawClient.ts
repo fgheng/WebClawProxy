@@ -68,7 +68,7 @@ export class WebClawClient {
   }
 
   importHistory(messages: ChatMessage[]): void {
-    this.messages = [...messages];
+    this.messages = messages.map((message) => this.sanitizeMessage(message));
     this.logTrace('history_imported', { count: this.messages.length });
   }
 
@@ -103,7 +103,7 @@ export class WebClawClient {
     if (this.config.system) {
       requestMessages.push({ role: 'system', content: this.config.system });
     }
-    requestMessages.push(...this.messages);
+    requestMessages.push(...this.messages.map((message) => this.sanitizeMessage(message)));
 
     const body: OpenAIRequestBody = {
       model: this.config.model,
@@ -448,6 +448,17 @@ export class WebClawClient {
     return normalized.length > this.config.tracePreviewChars
       ? normalized.slice(0, this.config.tracePreviewChars) + '...'
       : normalized;
+  }
+
+  private sanitizeMessage(message: ChatMessage): ChatMessage {
+    const next: ChatMessage = {
+      role: message.role,
+      content: message.content,
+    };
+    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+      next.tool_calls = message.tool_calls;
+    }
+    return next;
   }
 
   private logTrace(stage: string, payload: Record<string, unknown>): void {

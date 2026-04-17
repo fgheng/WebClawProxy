@@ -322,13 +322,24 @@ export class WebClawClientCore {
     if (sessions && sessions.length > 0) {
       const latest = await this.sessionStore?.loadSession(sessions[0].id);
       if (latest) {
+        const preferredModel = this.client.getConfig().model;
+        const preferredProvider = inferProviderFromModel(preferredModel, this.catalog);
+        const preferredMode = this.client.getRouteMode?.() ?? this.mode;
+
         this.currentSession = latest;
-        this.provider = latest.provider;
-        this.mode = latest.mode;
-        this.client.setModel(latest.model);
-        this.client.setRouteMode?.(latest.mode);
+        this.provider = preferredProvider;
+        this.mode = preferredMode;
+        this.client.setModel(preferredModel);
+        this.client.setRouteMode?.(preferredMode);
+
+        // Host (GUI/TUI) selected provider/model/mode should take precedence on first init.
+        this.currentSession.provider = preferredProvider;
+        this.currentSession.model = preferredModel;
+        this.currentSession.mode = preferredMode;
+        this.currentSession.updatedAt = Date.now();
         this.client.clearHistory();
         this.client.importHistory(this.toTransportHistory(latest.messages));
+        await this.persistCurrentSession();
         return;
       }
     }
@@ -380,11 +391,16 @@ export class WebClawClientCore {
   private toTransportHistory(messages: ClientSessionMessage[]): ChatMessage[] {
     return messages
       .filter((message) => message.role === 'user' || message.role === 'assistant')
-      .map((message) => ({
-        role: message.role as 'user' | 'assistant',
-        content: message.content,
-        tool_calls: message.toolCalls,
-      }));
+      .map((message) => {
+        const next: ChatMessage = {
+          role: message.role as 'user' | 'assistant',
+          content: message.content,
+        };
+        if (Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+          next.tool_calls = message.toolCalls;
+        }
+        return next;
+      });
   }
 
   private buildSessionId(): string {

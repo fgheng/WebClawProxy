@@ -2,9 +2,8 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { BrowserViewManager } from './browser-view-manager';
-import { readProviderSites, readProviderDefaultModes, type ProviderKey } from './provider-sites';
+import type { ProviderKey } from './provider-sites';
 import { ServiceManager } from './service-manager';
-import { readProviderModels } from './provider-models';
 import { ShellTerminalManager } from './shell-terminal-manager';
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
@@ -20,6 +19,7 @@ let providerSites: Record<ProviderKey, string> = {} as Record<ProviderKey, strin
 let providerModels: Record<ProviderKey, string[]> = {} as Record<ProviderKey, string[]>;
 let providerDefaultModes: Record<ProviderKey, 'web' | 'forward'> = {} as Record<ProviderKey, 'web' | 'forward'>;
 let isAppShuttingDown = false;
+let mainWindowRef: BrowserWindow | null = null;
 
 fs.mkdirSync(APP_DATA_ROOT, { recursive: true });
 fs.mkdirSync(path.join(APP_DATA_ROOT, 'user-data'), { recursive: true });
@@ -32,6 +32,68 @@ app.setPath('cache', path.join(APP_DATA_ROOT, 'cache'));
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT);
+
+function getApiBaseUrl(): string {
+  return 'http://127.0.0.1:3000';
+}
+
+type ProviderCatalogPayload = {
+  providers?: Record<string, { models?: string[]; default_mode?: 'web' | 'forward'; site?: string }>;
+};
+
+async function refreshProviderCatalogFromService(): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/v1/providers`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (!response.ok) return false;
+    const payload = (await response.json()) as ProviderCatalogPayload;
+    const map = payload.providers ?? {};
+    const nextSites = {} as Record<ProviderKey, string>;
+    const nextModels = {} as Record<ProviderKey, string[]>;
+    const nextModes = {} as Record<ProviderKey, 'web' | 'forward'>;
+    for (const key of ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'] as ProviderKey[]) {
+      const item = map[key];
+      nextSites[key] = typeof item?.site === 'string' ? item.site : '';
+      nextModels[key] = Array.isArray(item?.models) ? item!.models! : [];
+      nextModes[key] = item?.default_mode === 'forward' ? 'forward' : 'web';
+    }
+    providerSites = nextSites;
+    providerModels = nextModels;
+    providerDefaultModes = nextModes;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function ensureBrowserViewManager(window: BrowserWindow): Promise<void> {
+  const siteEntries = Object.entries(providerSites).filter(([, site]) => typeof site === 'string' && site.trim().length > 0) as [ProviderKey, string][];
+  const compactSites = Object.fromEntries(siteEntries) as Record<ProviderKey, string>;
+  if (!browserViewManager) {
+    browserViewManager = new BrowserViewManager({ providerSites: compactSites });
+    const initialProvider = siteEntries[0]?.[0] ?? null;
+    await browserViewManager.attach(window, initialProvider);
+    return;
+  }
+  await browserViewManager.syncProviderSites(compactSites);
+  const currentProvider = browserViewManager.getCurrentProvider();
+  if (currentProvider && browserViewManager.hasProviderView(currentProvider)) {
+    browserViewManager.showProvider(currentProvider);
+    return;
+  }
+  const initialProvider = siteEntries[0]?.[0];
+  if (initialProvider) {
+    browserViewManager.showProvider(initialProvider);
+  } else {
+    browserViewManager.showWaiting();
+  }
+}
 
 async function createMainWindow(): Promise<BrowserWindow> {
   const window = new BrowserWindow({
@@ -55,12 +117,9 @@ async function createMainWindow(): Promise<BrowserWindow> {
     void window.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'));
   }
 
-  providerSites = readProviderSites(PROJECT_ROOT);
-  providerModels = readProviderModels(PROJECT_ROOT);
-  providerDefaultModes = readProviderDefaultModes(PROJECT_ROOT);
-  browserViewManager = new BrowserViewManager({ providerSites });
-  const initialProvider = (Object.keys(providerSites)[0] ?? 'gpt') as ProviderKey;
-  await browserViewManager.attach(window, initialProvider);
+  mainWindowRef = window;
+  await refreshProviderCatalogFromService();
+  await ensureBrowserViewManager(window);
 
   serviceManager = new ServiceManager(PROJECT_ROOT, 'electron-cdp', CDP_URL, window);
   shellTerminalManager = new ShellTerminalManager(PROJECT_ROOT, window);
@@ -79,6 +138,10 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.handle('browser:selectProvider', async (_event, provider: ProviderKey) => {
+    if (!browserViewManager && mainWindowRef) {
+      await refreshProviderCatalogFromService();
+      await ensureBrowserViewManager(mainWindowRef);
+    }
     browserViewManager?.showProvider(provider);
     return {
       provider,
@@ -105,6 +168,10 @@ app.whenReady().then(() => {
     await browserViewManager?.navigateTo(url);
   });
   ipcMain.handle('desktop:getState', async () => {
+    if (serviceManager?.getStatus() === 'running') {
+      await refreshProviderCatalogFromService();
+      if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef);
+    }
     return {
       currentProvider: browserViewManager?.getCurrentProvider() ?? null,
       providerSites,
@@ -112,13 +179,27 @@ app.whenReady().then(() => {
       providerDefaultModes,
       currentUrl: browserViewManager?.getCurrentUrl() ?? '',
       serviceStatus: serviceManager?.getStatus() ?? 'stopped',
-      apiBaseUrl: 'http://127.0.0.1:3000',
+      apiBaseUrl: getApiBaseUrl(),
       cdpUrl: CDP_URL,
     };
   });
-  ipcMain.handle('service:start', async () => ({ status: await serviceManager?.start() ?? 'stopped' }));
+  ipcMain.handle('service:start', async () => {
+    const status = await serviceManager?.start() ?? 'stopped';
+    if (status === 'running') {
+      await refreshProviderCatalogFromService();
+      if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef);
+    }
+    return { status };
+  });
   ipcMain.handle('service:stop', async () => ({ status: await serviceManager?.stop() ?? 'stopped' }));
-  ipcMain.handle('service:restart', async () => ({ status: await serviceManager?.restart() ?? 'stopped' }));
+  ipcMain.handle('service:restart', async () => {
+    const status = await serviceManager?.restart() ?? 'stopped';
+    if (status === 'running') {
+      await refreshProviderCatalogFromService();
+      if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef);
+    }
+    return { status };
+  });
   ipcMain.handle('terminal:init', async () => await shellTerminalManager?.ensureDefaultStarted());
   ipcMain.handle('terminal:list', async () => ({ terminals: shellTerminalManager?.list() ?? [] }));
   ipcMain.handle('terminal:create', async (_event, options?: { shell?: string; cwd?: string }) => {

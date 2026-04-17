@@ -40,6 +40,8 @@ html,body {
 .text {
   font-size: 13px;
   color: #9ca3af;
+  text-align: center;
+  max-width: 420px;
 }
 @keyframes spin {
   from { transform: rotate(0deg); }
@@ -51,13 +53,17 @@ html,body {
 <div class="root">
   <div class="logo">WebClaw</div>
   <div class="spinner"></div>
-  <div class="text">正在启动浏览器会话…</div>
+  <div class="text" id="message">请先启动 WebClaw 服务</div>
 </div>
 <script>
   try {
     var params = new URLSearchParams(window.location.search || "");
     var target = params.get("target");
+    var message = document.getElementById("message");
     if (target) {
+      if (message) {
+        message.textContent = "正在启动浏览器会话…";
+      }
       setTimeout(function () {
         window.location.href = target;
       }, 300);
@@ -67,4 +73,3 @@ html,body {
 </script>
 </body>
 </html>
-

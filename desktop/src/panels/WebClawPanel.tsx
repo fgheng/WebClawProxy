@@ -49,7 +49,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
     {
       id: 'welcome',
       role: 'webclaw',
-      content: '已进入 WebClaw 面板。支持 /model /provider /clear /new /help 命令。',
+      content: '已进入 WebClaw 面板。支持 /model /clear /new /help 命令（provider/mode 请使用上方选择器）。',
       tone: 'muted',
     },
   ]);
@@ -124,6 +124,55 @@ export function WebClawPanel(props: WebClawPanelProps) {
   }, [currentProvider, displayMode]);
 
   useEffect(() => {
+    const core = coreRef.current;
+    if (!core) return;
+
+    let syncing = false;
+    const runSync = async () => {
+      if (syncing) return;
+      syncing = true;
+      try {
+        const state = core.getState();
+        const desiredMode = displayMode;
+        const desiredProvider = currentProvider as ProviderKey;
+
+        const adjusted: string[] = [];
+        if (state.provider !== desiredProvider) {
+          await core.executeInput(`/provider ${desiredProvider}`);
+          adjusted.push(`provider=${desiredProvider}`);
+        }
+        if (state.mode !== desiredMode) {
+          await core.executeInput(`/mode ${desiredMode}`);
+          adjusted.push(`mode=${desiredMode}`);
+        }
+
+        if (adjusted.length > 0) {
+          setFeed((prev) => [
+            ...prev,
+            {
+              id: `sync-${Date.now()}`,
+              role: 'webclaw',
+              content: `已同步当前会话设置：${adjusted.join(', ')}`,
+              tone: 'muted',
+            },
+          ]);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onError(message);
+      } finally {
+        syncing = false;
+      }
+    };
+
+    void runSync();
+    const timer = window.setInterval(() => {
+      void runSync();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [currentProvider, displayMode, onError]);
+
+  useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });
   }, [feed]);
 
@@ -131,6 +180,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
     const core = coreRef.current;
     if (!core || !draft.trim() || isSending) return;
     const input = draft.trim();
+    const blockedCommand = input.match(/^\/(provider|mode)\b/i)?.[1]?.toLowerCase();
     setDraft('');
     setIsSending(true);
 
@@ -139,6 +189,18 @@ export function WebClawPanel(props: WebClawPanelProps) {
     const isCommand = input.startsWith('/');
 
     try {
+      if (blockedCommand) {
+        setFeed((prev) => [
+          ...prev,
+          {
+            id: `blocked-${Date.now()}`,
+            role: 'webclaw',
+            content: `命令 /${blockedCommand} 已禁用，请使用顶部选择器切换 provider 和 web/forward 模式。`,
+            tone: 'muted',
+          },
+        ]);
+        return;
+      }
       const nextModel = providerModels[currentProvider]?.[0];
       if (nextModel && core.getTransport().getConfig().model !== nextModel) {
         core.getTransport().setModel(nextModel);

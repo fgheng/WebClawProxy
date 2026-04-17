@@ -5,6 +5,7 @@ import { chatCompletionsHandler, listModelsHandler } from './routes/openai';
 import { logDebug, formatRequestBodyPreview } from './logger';
 import { forwardMonitorBus } from './forward-monitor-bus';
 import { sessionRegistry } from './session-registry';
+import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-config';
 
 /**
  * 创建并配置 Express 应用
@@ -59,6 +60,22 @@ export function createApp() {
 
   // 模型列表
   app.get('/v1/models', listModelsHandler);
+
+  // Provider 配置元信息（供 desktop/tui/gui 拉取）
+  app.get('/v1/providers', (_req: Request, res: Response) => {
+    const normalized = getNormalizedProviderConfigMap();
+    const providers = Object.fromEntries(
+      Object.entries(normalized).map(([providerKey, provider]) => [
+        providerKey,
+        {
+          models: provider.models ?? [],
+          default_mode: provider.default_mode ?? 'web',
+          site: isSiteKey(providerKey) ? (provider.web?.site ?? '') : '',
+        },
+      ])
+    );
+    res.json({ providers });
+  });
 
   // 健康检查
   app.get('/health', (_req: Request, res: Response) => {

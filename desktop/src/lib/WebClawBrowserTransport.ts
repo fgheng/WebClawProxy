@@ -61,7 +61,7 @@ export class WebClawBrowserTransport implements ClientTransport {
   }
 
   importHistory(messages: ChatMessage[]): void {
-    this.messages = [...messages];
+    this.messages = messages.map((message) => this.sanitizeMessage(message));
   }
 
   getHistory(): ChatMessage[] {
@@ -90,7 +90,7 @@ export class WebClawBrowserTransport implements ClientTransport {
     if (this.config.system) {
       requestMessages.push({ role: 'system', content: this.config.system });
     }
-    requestMessages.push(...this.messages);
+    requestMessages.push(...this.messages.map((message) => this.sanitizeMessage(message)));
 
     const body: OpenAIRequestBody = {
       model: this.config.model,
@@ -260,5 +260,16 @@ export class WebClawBrowserTransport implements ClientTransport {
   private buildTraceId(): string {
     this.requestSeq += 1;
     return `${this.config.sessionId}-r${String(this.requestSeq).padStart(4, '0')}`;
+  }
+
+  private sanitizeMessage(message: ChatMessage): ChatMessage {
+    const next: ChatMessage = {
+      role: message.role,
+      content: message.content,
+    };
+    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+      next.tool_calls = message.tool_calls;
+    }
+    return next;
   }
 }

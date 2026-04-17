@@ -94,20 +94,23 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
-    void window.webclawDesktop?.getDesktopState?.().then((state) => {
+    const refreshDesktopState = async () => {
+      const state = await window.webclawDesktop?.getDesktopState?.();
       if (!mounted || !state) return;
       setCurrentProvider((state.currentProvider as string | null) ?? 'gpt');
       setProviderSites(state.providerSites);
       setProviderModels(state.providerModels);
       setServiceStatus(state.serviceStatus);
       setApiBaseUrl(state.apiBaseUrl);
-      
-      // ✅ 延迟设置 ready 状态，等待 BrowserView 初始化完成
-      // 避免用户在初始化期间点击按钮导致冲突
-      setTimeout(() => {
-        if (mounted) setServiceControlReady(true);
-      }, 500);
-    });
+    };
+
+    void refreshDesktopState();
+
+    // ✅ 延迟设置 ready 状态，等待 BrowserView 初始化完成
+    // 避免用户在初始化期间点击按钮导致冲突
+    setTimeout(() => {
+      if (mounted) setServiceControlReady(true);
+    }, 500);
 
     const disposeLog = window.webclawDesktop?.onServiceLog?.((event) => {
       setServiceLogs((prev) => {
@@ -125,6 +128,9 @@ export default function App() {
         ...prev,
         `${new Date(event.timestamp).toLocaleTimeString()} [STAT] service -> ${event.status}`,
       ].slice(-300));
+      if (event.status === 'running') {
+        void refreshDesktopState();
+      }
     });
     const disposeError = window.webclawDesktop?.onServiceError?.((event) => {
       const line = `${new Date(event.timestamp).toLocaleTimeString()} [FAIL] ${event.message}`;

@@ -18,8 +18,11 @@ type ViewBounds = {
   height: number;
 };
 
-function buildLoadingUrl(targetUrl: string): string {
+function buildLoadingUrl(targetUrl?: string): string {
   const loadingPath = path.join(process.cwd(), 'electron', 'loading.html');
+  if (!targetUrl) {
+    return `file://${loadingPath}`;
+  }
   const encodedTarget = encodeURIComponent(targetUrl);
   return `file://${loadingPath}?target=${encodedTarget}`;
 }
@@ -27,27 +30,29 @@ function buildLoadingUrl(targetUrl: string): string {
 export class BrowserViewManager {
   private window: BrowserWindow | null = null;
   private views = new Map<ProviderKey, BrowserView>();
+  private waitingView: BrowserView | null = null;
+  private activeView: BrowserView | null = null;
   private currentProvider: ProviderKey | null = null;
   private splitRatio = 0.56;
   private explicitBounds: ViewBounds | null = null;
 
   constructor(private readonly options: BrowserViewManagerOptions) {}
 
-  async attach(window: BrowserWindow, initialProvider: ProviderKey): Promise<void> {
+  async attach(window: BrowserWindow, initialProvider: ProviderKey | null): Promise<void> {
     this.window = window;
-    for (const [provider, siteUrl] of Object.entries(this.options.providerSites) as [ProviderKey, string][]) {
-      const view = new BrowserView({
-        webPreferences: {
-          partition: `persist:webclaw-${provider}`,
-          sandbox: false,
-        },
-      });
-      const loadingUrl = buildLoadingUrl(siteUrl);
-      await view.webContents.loadURL(loadingUrl);
-      this.views.set(provider, view);
+    this.waitingView = new BrowserView({
+      webPreferences: {
+        partition: 'persist:webclaw-waiting',
+        sandbox: false,
+      },
+    });
+    await this.waitingView.webContents.loadURL(buildLoadingUrl());
+    await this.syncProviderSites(this.options.providerSites);
+    if (initialProvider && this.views.has(initialProvider)) {
+      this.showProvider(initialProvider);
+    } else {
+      this.showWaiting();
     }
-
-    this.showProvider(initialProvider);
     window.on('resize', () => this.updateBounds());
     window.on('resized', () => this.updateBounds());
   }
@@ -60,19 +65,37 @@ export class BrowserViewManager {
     return this.options.providerSites;
   }
 
+  async syncProviderSites(nextProviderSites: Record<ProviderKey, string>): Promise<void> {
+    this.options.providerSites = nextProviderSites;
+    for (const [provider, siteUrl] of Object.entries(nextProviderSites) as [ProviderKey, string][]) {
+      if (!siteUrl || !siteUrl.trim()) continue;
+      if (this.views.has(provider)) continue;
+      const view = new BrowserView({
+        webPreferences: {
+          partition: `persist:webclaw-${provider}`,
+          sandbox: false,
+        },
+      });
+      await view.webContents.loadURL(buildLoadingUrl(siteUrl));
+      this.views.set(provider, view);
+    }
+    if (this.currentProvider && !nextProviderSites[this.currentProvider]) {
+      this.currentProvider = null;
+      this.showWaiting();
+    }
+  }
+
   showProvider(provider: ProviderKey): void {
     if (!this.window) return;
     const nextView = this.views.get(provider);
-    if (!nextView) return;
-
-    if (this.currentProvider) {
-      const currentView = this.views.get(this.currentProvider);
-      if (currentView) {
-        this.window.removeBrowserView(currentView);
-      }
+    if (!nextView) {
+      this.currentProvider = null;
+      this.showWaiting();
+      return;
     }
-
+    this.detachActiveView();
     this.currentProvider = provider;
+    this.activeView = nextView;
     this.window.addBrowserView(nextView);
     
     // ✅ 检查并恢复 provider 的原始 URL
@@ -80,27 +103,38 @@ export class BrowserViewManager {
     const currentUrl = nextView.webContents.getURL();
     const expectedUrl = this.options.providerSites[provider];
     if (expectedUrl && !currentUrl.startsWith(expectedUrl)) {
-      void nextView.webContents.loadURL(expectedUrl);
+      void nextView.webContents.loadURL(buildLoadingUrl(expectedUrl));
     }
     
     this.updateBounds();
   }
 
+  showWaiting(): void {
+    if (!this.window || !this.waitingView) return;
+    this.detachActiveView();
+    this.activeView = this.waitingView;
+    this.window.addBrowserView(this.waitingView);
+    this.updateBounds();
+  }
+
   async reloadCurrentProvider(): Promise<void> {
-    if (!this.currentProvider) return;
-    const view = this.views.get(this.currentProvider);
-    await view?.webContents.reload();
+    if (this.currentProvider) {
+      const view = this.views.get(this.currentProvider);
+      await view?.webContents.reload();
+      return;
+    }
+    await this.activeView?.webContents.reload();
   }
 
   async openDevTools(): Promise<void> {
-    if (!this.currentProvider) return;
-    const view = this.views.get(this.currentProvider);
+    const view = this.currentProvider
+      ? this.views.get(this.currentProvider)
+      : this.activeView;
     view?.webContents.openDevTools({ mode: 'detach' });
   }
 
   getCurrentUrl(): string {
-    if (!this.currentProvider) return '';
-    return this.views.get(this.currentProvider)?.webContents.getURL() ?? '';
+    return this.activeView?.webContents.getURL() ?? '';
   }
 
   setSplitRatio(ratio: number): void {
@@ -114,15 +148,27 @@ export class BrowserViewManager {
   }
 
   navigateTo(url: string): Promise<void> {
-    if (!this.window || !this.currentProvider) return Promise.resolve();
-    const view = this.views.get(this.currentProvider);
+    if (!this.window) return Promise.resolve();
+    const view = this.currentProvider
+      ? this.views.get(this.currentProvider)
+      : this.activeView;
     if (!view) return Promise.resolve();
     return view.webContents.loadURL(url);
   }
 
+  hasProviderView(provider: ProviderKey): boolean {
+    return this.views.has(provider);
+  }
+
+  private detachActiveView(): void {
+    if (!this.window || !this.activeView) return;
+    this.window.removeBrowserView(this.activeView);
+    this.activeView = null;
+  }
+
   private updateBounds(): void {
-    if (!this.window || !this.currentProvider) return;
-    const view = this.views.get(this.currentProvider);
+    if (!this.window) return;
+    const view = this.activeView;
     if (!view) return;
 
     if (this.explicitBounds) {
