@@ -14,6 +14,10 @@ html,body {
   color: #e5e7eb;
   font-family: system-ui,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
 }
+html.theme-light, html.theme-light body {
+  background: #f8fafc;
+  color: #0f172a;
+}
 .root {
   display: flex;
   flex-direction: column;
@@ -29,6 +33,9 @@ html,body {
   text-transform: uppercase;
   color: #38bdf8;
 }
+html.theme-light .logo {
+  color: #2563eb;
+}
 .spinner {
   width: 40px;
   height: 40px;
@@ -37,11 +44,18 @@ html,body {
   border-top-color: #38bdf8;
   animation: spin 0.9s linear infinite;
 }
+html.theme-light .spinner {
+  border-color: rgba(100,116,139,0.28);
+  border-top-color: #2563eb;
+}
 .text {
   font-size: 13px;
   color: #9ca3af;
   text-align: center;
   max-width: 420px;
+}
+html.theme-light .text {
+  color: #64748b;
 }
 @keyframes spin {
   from { transform: rotate(0deg); }
@@ -53,17 +67,25 @@ html,body {
 <div class="root">
   <div class="logo">WebClaw</div>
   <div class="spinner"></div>
-  <div class="text" id="message">请先启动 WebClaw 服务</div>
+  <div class="text" id="message">请先启动 WebClawProxy 服务</div>
 </div>
 <script>
   try {
     var params = new URLSearchParams(window.location.search || "");
     var target = params.get("target");
+    var theme = params.get("theme");
+    if (theme === "light") {
+      document.documentElement.classList.add("theme-light");
+    }
     var message = document.getElementById("message");
     if (target) {
       if (message) {
-        message.textContent = "正在启动浏览器会话…";
+        message.textContent = "正在加载网页…";
       }
+      var slowTimer = setTimeout(function () {
+        if (!message) return;
+        message.textContent = "网络请求较慢，请检查网络连接/代理/VPN 是否正常";
+      }, 3000);
       setTimeout(function () {
         window.location.href = target;
       }, 300);

@@ -3,25 +3,11 @@
     "root_dir": ".data"
   },
   "providers": {
-    "gpt": {
-      "default_mode": "web",
-      "models": ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "o1", "o1-mini", "o3", "o3-mini"],
-      "web": {
-        "site": "https://chatgpt.com/",
-        "input_max_chars": 60000
-      }
-    },
-    "qwen": {
-      "default_mode": "web",
-      "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-long", "qwen2.5-72b", "qwen2.5-32b"],
-      "web": {
-        "site": "https://chat.qwen.ai/",
-        "input_max_chars": 120000
-      }
-    },
     "deepseek": {
       "default_mode": "forward",
-      "models": ["deepseek-chat", "deepseek-r1", "deepseek-v3", "deepseek-coder"],
+      "models": [
+        "deepseek-chat"
+      ],
       "web": {
         "site": "https://chat.deepseek.com/",
         "input_max_chars": 120000
@@ -37,20 +23,46 @@
         }
       }
     },
-    "kimi": {
+    "qwen": {
       "default_mode": "web",
-      "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi"],
+      "models": [
+        "qwen-turbo",
+        "qwen-plus",
+        "qwen-max",
+        "qwen-long",
+        "qwen2.5-72b",
+        "qwen2.5-32b"
+      ],
       "web": {
-        "site": "https://www.kimi.com/",
+        "site": "https://chat.qwen.ai/",
         "input_max_chars": 120000
+      },
+      "forward": {
+        "base_url": ""
       }
     },
-    "glm": {
+    "gpt": {
       "default_mode": "web",
-      "models": ["glm", "glm-4", "glm-4-air", "glm-4-plus", "glm-4-flash", "glm-4.5", "glm-5", "glm-5.1"],
+      "models": [
+        "gpt-3.5-turbo",
+        "gpt-4",
+        "gpt-4o",
+        "gpt-4-turbo",
+        "gpt-4o-mini",
+        "gpt-5",
+        "gpt-5.1",
+        "gpt-5.2",
+        "o1",
+        "o1-mini",
+        "o3",
+        "o3-mini"
+      ],
       "web": {
-        "site": "https://chatglm.cn/",
-        "input_max_chars": 15000
+        "site": "https://chatgpt.com/",
+        "input_max_chars": 60000
+      },
+      "forward": {
+        "base_url": ""
       }
     },
     "claude": {
@@ -71,6 +83,39 @@
         "input_max_chars": 120000
       }
     },
+    "kimi": {
+      "default_mode": "web",
+      "models": [
+        "moonshot-v1-8k",
+        "moonshot-v1-32k",
+        "moonshot-v1-128k",
+        "kimi"
+      ],
+      "web": {
+        "site": "https://www.kimi.com/",
+        "input_max_chars": 120000
+      }
+    },
+    "glm": {
+      "default_mode": "web",
+      "models": [
+        "glm",
+        "glm-4",
+        "glm-4-air",
+        "glm-4-plus",
+        "glm-4-flash",
+        "glm-4.5",
+        "glm-5",
+        "glm-5.1"
+      ],
+      "web": {
+        "site": "https://chatglm.cn/",
+        "input_max_chars": 15000
+      },
+      "forward": {
+        "base_url": ""
+      }
+    },
     "doubao": {
       "default_mode": "web",
       "models": [
@@ -84,7 +129,7 @@
       }
     }
   },
-  "defaults": {
+  "prompt": {
     "init_prompt": "All subsequent replies should strictly follow JSON formatting. The agreed rules are as follows:\n\n[[output_rules.md]]\n\n[[output_template.json]]\n",
     "init_prompt_template": "{{init_prompt}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nOnly reply “Received” in the required JSON format for this message.",
     "user_message_template": "{{content}}\n\nPlease respond in the required JSON format.",
@@ -102,7 +147,7 @@
   },
   "web_input": {
     "_comment": "当首轮返回非 JSON 且需要重试时：若原始输入长度超过该阈值，则使用仅格式提醒模板；否则使用格式+用户内容模板。",
-    "retry_format_only_threshold_chars":  500
+    "retry_format_only_threshold_chars": 500
   },
   "webdriver": {
     "response_timeout_ms": 120000,

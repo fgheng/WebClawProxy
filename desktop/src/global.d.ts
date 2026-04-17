@@ -12,6 +12,7 @@ declare global {
       setBrowserBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
       setBrowserSplitRatio: (ratio: number) => Promise<void>;
       navigateBrowser: (url: string) => Promise<void>;
+      setTheme: (theme: 'dark' | 'light') => Promise<{ ok: boolean; theme: 'dark' | 'light' }>;
       getDesktopState: () => Promise<{
         currentProvider: string | null;
         providerSites: Record<string, string>;

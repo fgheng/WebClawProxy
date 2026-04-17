@@ -4,6 +4,7 @@ import type { ProviderKey } from './provider-sites';
 
 type BrowserViewManagerOptions = {
   providerSites: Record<ProviderKey, string>;
+  theme?: 'dark' | 'light';
 };
 
 const TOP_STATUS_BAR_HEIGHT = 0;
@@ -18,12 +19,16 @@ type ViewBounds = {
   height: number;
 };
 
+let browserViewTheme: 'dark' | 'light' = 'dark';
+
 function buildLoadingUrl(targetUrl?: string): string {
   const loadingPath = path.join(process.cwd(), 'electron', 'loading.html');
+  const theme = browserViewTheme;
   if (!targetUrl) {
-    return `file://${loadingPath}`;
+    return `file://${loadingPath}?theme=${theme}`;
   }
-  return targetUrl;
+  const encodedTarget = encodeURIComponent(targetUrl);
+  return `file://${loadingPath}?theme=${theme}&target=${encodedTarget}`;
 }
 
 export class BrowserViewManager {
@@ -40,6 +45,7 @@ export class BrowserViewManager {
 
   async attach(window: BrowserWindow, initialProvider: ProviderKey | null): Promise<void> {
     this.window = window;
+    browserViewTheme = this.options.theme === 'light' ? 'light' : 'dark';
     this.waitingView = new BrowserView({
       webPreferences: {
         partition: 'persist:webclaw-waiting',
@@ -150,6 +156,14 @@ export class BrowserViewManager {
   setSplitRatio(ratio: number): void {
     this.splitRatio = Math.min(0.75, Math.max(0.38, ratio));
     this.updateBounds();
+  }
+
+  setTheme(theme: 'dark' | 'light'): void {
+    browserViewTheme = theme === 'light' ? 'light' : 'dark';
+    if (!this.waitingView) return;
+    if (this.activeView === this.waitingView) {
+      void this.waitingView.webContents.loadURL(buildLoadingUrl());
+    }
   }
 
   setBounds(bounds: ViewBounds): void {

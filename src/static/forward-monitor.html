@@ -940,7 +940,7 @@ function createSessItem(sess) {
 
   const meta = document.createElement('span');
   meta.className = 'sess-meta';
-  meta.textContent = `${sess.rounds ?? 0}轮`;
+  meta.textContent = `${sess.rounds ?? 0}轮 · ${formatTime(sess.createdAt)}`;
 
   item.append(dot, idEl, meta);
   item.addEventListener('click', () => selectSession(sess.sessionId));
@@ -949,6 +949,7 @@ function createSessItem(sess) {
   timeEl.className = 'sess-time';
   timeEl.textContent = formatTime(sess.lastActiveAt);
   item.appendChild(timeEl);
+  item.title = `${sess.sessionId}\n创建: ${formatTime(sess.createdAt)}\n更新: ${formatTime(sess.lastActiveAt)}`;
 
   insertSessItemSorted(item, pvdObj.listEl, sess.lastActiveAt);
 
@@ -960,11 +961,14 @@ function createSessItem(sess) {
 }
 
 function updateSessItemMeta(sess) {
-  if (sess.metaEl) sess.metaEl.textContent = `${sess.rounds ?? 0}轮`;
+  if (sess.metaEl) sess.metaEl.textContent = `${sess.rounds ?? 0}轮 · ${formatTime(sess.createdAt)}`;
 }
 
 function updateSessItemTime(sess) {
   if (sess.timeEl) sess.timeEl.textContent = formatTime(sess.lastActiveAt);
+  if (sess.el) {
+    sess.el.title = `${sess.sessionId}\n创建: ${formatTime(sess.createdAt)}\n更新: ${formatTime(sess.lastActiveAt)}`;
+  }
 }
 
 function reorderSessItem(sess) {
@@ -983,7 +987,11 @@ function flashSessItem(sess) {
 }
 
 async function selectSession(sid) {
-  if (activeId === sid) return;
+  if (activeId === sid) {
+    const current = sessions.get(sid);
+    if (current) await loadSessionMessages(current);
+    return;
+  }
 
   if (activeId) {
     const prev = sessions.get(activeId);
@@ -1006,11 +1014,7 @@ async function selectSession(sid) {
   chRounds.textContent = `${sess.rounds ?? 0} 轮`;
   syncContentControlsForSession(sess);
 
-  if (!sess.loaded) {
-    await loadSessionMessages(sess);
-  } else {
-    renderMessages(sess);
-  }
+  await loadSessionMessages(sess);
 }
 
 async function loadSessionMessages(sess) {
@@ -1097,7 +1101,7 @@ function onSessionNew(evt) {
     const sess = {
       sessionId: evt.sessionId, providerKey: evt.providerKey, model: evt.model,
       tools: evt.tools, rounds: 0, createdAt: evt.timestamp, lastActiveAt: evt.timestamp,
-      messageCount: 0, messages: [], loaded: true, waitingResp: false,
+      messageCount: 0, messages: [], loaded: false, waitingResp: false,
       el: null, dotEl: null, metaEl: null,
     };
     sessions.set(evt.sessionId, sess);

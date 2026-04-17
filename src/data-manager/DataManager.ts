@@ -100,22 +100,27 @@ export class DataManager {
       models: customConfig?.models ?? getModelMapFromConfig(),
       initPrompt:
         customConfig?.initPrompt ??
+        config.prompt?.init_prompt ??
         config.defaults?.init_prompt ??
         '',
       responseSchemaTemplate:
         customConfig?.responseSchemaTemplate ??
+        config.prompt?.response_schema_template ??
         config.defaults?.response_schema_template ??
         '',
       initPromptTemplate:
         customConfig?.initPromptTemplate ??
+        config.prompt?.init_prompt_template ??
         config.defaults?.init_prompt_template ??
         'Note: Output JSON only, no extra explanation, and do not execute any actions.\n\nAll subsequent responses in this conversation must strictly follow the JSON template below:\n{{response_schema_template}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nReply only with: Received',
       userMessageTemplate:
         customConfig?.userMessageTemplate ??
+        config.prompt?.user_message_template ??
         config.defaults?.user_message_template ??
         '',
       formatOnlyRetryTemplate:
         customConfig?.formatOnlyRetryTemplate ??
+        config.prompt?.format_only_retry_template ??
         config.defaults?.format_only_retry_template ??
         '你上一条回复不是合法 JSON。请仅按以下 JSON 模板重新输出，不要重复用户问题或额外解释：\n{{response_schema_template}}',
     };

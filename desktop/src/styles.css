@@ -5,6 +5,150 @@
   color: #e2e8f0;
 }
 
+html.theme-light {
+  color-scheme: light;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+html.theme-light body {
+  background: #f8fafc;
+}
+
+html.theme-light button,
+html.theme-light input,
+html.theme-light select {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html.theme-light textarea {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html.theme-light button.primary:disabled {
+  background: #e2e8f0;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+html.theme-light .console-shell {
+  background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+}
+
+html.theme-light .browser-pane {
+  border-color: #e2e8f0;
+  background: #ffffff;
+}
+
+html.theme-light .browser-workspace {
+  background: #f8fafc;
+}
+
+html.theme-light .bottom-workspace {
+  background: rgba(255, 255, 255, 0.75);
+}
+
+html.theme-light .workspace-tabs {
+  border-bottom-color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+html.theme-light .tab {
+  color: #475569;
+}
+
+html.theme-light .tab.active {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+html.theme-light .panel-box,
+html.theme-light .log-list,
+html.theme-light .terminal-view,
+html.theme-light .table-wrap,
+html.theme-light .webclaw-feed {
+  border-color: #e2e8f0;
+  background: #ffffff;
+}
+
+html.theme-light .log-line {
+  color: #334155;
+}
+
+html.theme-light .badge {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+html.theme-light .service-toggle-ring {
+  border-color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+html.theme-light .service-toggle-ring.disabled {
+  border-color: rgba(100, 116, 139, 0.35);
+  background: rgba(226, 232, 240, 0.9);
+}
+
+html.theme-light .split-divider-handle {
+  background: rgba(15, 23, 42, 0.18);
+}
+
+html.theme-light .chat-bubble {
+  color: #0f172a;
+}
+
+html.theme-light .chat-bubble.user {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.18);
+}
+
+html.theme-light .chat-bubble.webclaw {
+  background: rgba(148, 163, 184, 0.28);
+  border-color: rgba(100, 116, 139, 0.2);
+}
+
+html.theme-light .chat-bubble.muted {
+  background: rgba(226, 232, 240, 0.9);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #475569;
+}
+
+html.theme-light .chat-bubble.webclaw.muted {
+  color: #64748b;
+}
+
+html.theme-light .chat-bubble.webclaw.error {
+  color: rgba(220, 38, 38, 0.7);
+}
+
+html.theme-light .webclaw-inputbar {
+  border-color: #e2e8f0;
+  background: #ffffff;
+}
+
+html.theme-light .webclaw-inputbar textarea {
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+html.theme-light.is-scrolling * {
+  scrollbar-color: rgba(15, 23, 42, 0.32) transparent;
+}
+
+html.theme-light.is-scrolling *::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.26);
+}
+
+html.theme-light.is-scrolling *::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.38);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -225,6 +369,16 @@ select {
   padding: 0 8px;
   font-size: 11px;
   border-radius: 6px;
+}
+
+.control-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: 6px;
+}
+
+html.theme-light .control-label {
+  color: #475569;
 }
 
 .service-toggle {

@@ -387,6 +387,7 @@ export class SessionRegistry {
     providerKey: string,
     model: string,
     requestBody: Record<string, unknown>,
+    sessionHeader?: string,
   ): IngestResult {
     const now = Date.now();
     const rawMessages = Array.isArray(requestBody.messages)
@@ -395,7 +396,10 @@ export class SessionRegistry {
     const tools = Array.isArray(requestBody.tools) ? requestBody.tools : [];
 
     const { history, newMessages } = splitMessages(rawMessages, now);
-    const sessionId = computeSessionId(tools, rawMessages);
+    const headerSessionId = typeof sessionHeader === 'string' ? sessionHeader.trim() : '';
+    const sessionId = headerSessionId
+      ? `hdr:${headerSessionId}`
+      : computeSessionId(tools, rawMessages);
 
     const existing = this.sessions.get(sessionId);
 

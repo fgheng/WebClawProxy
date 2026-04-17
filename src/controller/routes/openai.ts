@@ -99,6 +99,7 @@ async function sendForwardRequest(
     providerKey: string;
     providerConfig: NormalizedProviderConfig;
     requestBody: Record<string, unknown>;
+    sessionHeader?: string;
   }
 ): Promise<void> {
   const { traceId, providerKey, providerConfig } = options;
@@ -125,7 +126,12 @@ async function sendForwardRequest(
   }
 
   // ── Session 注册 & 监控事件推送 ──────────────────────────────
-  const ingestResult = sessionRegistry.ingest(providerKey, originalModel, options.requestBody);
+  const ingestResult = sessionRegistry.ingest(
+    providerKey,
+    originalModel,
+    options.requestBody,
+    options.sessionHeader ?? ''
+  );
   if (ingestResult.action === 'new') {
     forwardMonitorBus.publish({
       type: 'session-new',
@@ -1234,6 +1240,7 @@ export async function chatCompletionsHandler(
         providerKey,
         providerConfig: providerConfig ?? normalizeProviderConfig(undefined),
         requestBody,
+        sessionHeader: (req.headers['x-session-id'] as string | undefined) ?? '',
       });
       return;
     }

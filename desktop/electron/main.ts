@@ -35,6 +35,7 @@ let configuredServicePort = 3000;
 let runtimeServicePort = 3000;
 let lastBrowserBounds: { x: number; y: number; width: number; height: number } | null = null;
 let lastSplitRatio = DEFAULT_SPLIT_RATIO;
+let desktopTheme: 'dark' | 'light' = 'dark';
 let promptConfig: {
   init_prompt: string;
   init_prompt_template: string;
@@ -303,7 +304,7 @@ async function ensureBrowserViewManager(
     ? (Object.fromEntries(siteEntries) as Record<ProviderKey, string>)
     : ({} as Record<ProviderKey, string>);
   if (!browserViewManager) {
-    browserViewManager = new BrowserViewManager({ providerSites: compactSites });
+    browserViewManager = new BrowserViewManager({ providerSites: compactSites, theme: desktopTheme });
     const initialProvider = (options?.allowProviderViews ?? true) ? (siteEntries[0]?.[0] ?? null) : null;
     await browserViewManager.attach(window, initialProvider);
     if (lastBrowserBounds) {
@@ -455,6 +456,14 @@ app.whenReady().then(() => {
       }
       throw error;
     }
+  });
+  ipcMain.handle('desktop:setTheme', async (_event, theme: 'dark' | 'light') => {
+    desktopTheme = theme === 'light' ? 'light' : 'dark';
+    browserViewManager?.setTheme(desktopTheme);
+    if (mainWindowRef) {
+      mainWindowRef.setBackgroundColor(desktopTheme === 'light' ? '#f8fafc' : '#0f172a');
+    }
+    return { ok: true, theme: desktopTheme };
   });
   ipcMain.handle('desktop:getState', async () => {
     const managerStatus = serviceManager?.getStatus() ?? 'stopped';

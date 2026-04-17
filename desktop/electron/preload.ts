@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
     ipcRenderer.invoke('browser:setBounds', bounds),
   setBrowserSplitRatio: (ratio: number) => ipcRenderer.invoke('browser:setSplitRatio', ratio),
   navigateBrowser: (url: string) => ipcRenderer.invoke('browser:navigate', url),
+  setTheme: (theme: 'dark' | 'light') => ipcRenderer.invoke('desktop:setTheme', theme),
   getDesktopState: () => ipcRenderer.invoke('desktop:getState'),
   updateProviderConfig: (payload: { provider: string; models?: string[]; defaultMode?: 'web' | 'forward'; inputMaxChars?: number | null; forwardBaseUrl?: string; apiKey?: string }) =>
     ipcRenderer.invoke('provider:updateConfig', payload),

@@ -26,6 +26,9 @@ export default function App() {
   const [displayMode, setDisplayMode] = useState<'web' | 'forward'>('web');
   const [selectedForwardModel, setSelectedForwardModel] = useState('');
   const [webclawSending, setWebclawSending] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (
+    window.localStorage.getItem('webclaw:theme') === 'light' ? 'light' : 'dark'
+  ));
   const [providerSites, setProviderSites] = useState<Record<string, string>>({});
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
   const [providerDefaultModes, setProviderDefaultModes] = useState<Record<string, 'web' | 'forward'>>({});
@@ -121,6 +124,17 @@ export default function App() {
       root.classList.remove('is-scrolling');
     };
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'light') {
+      root.classList.add('theme-light');
+    } else {
+      root.classList.remove('theme-light');
+    }
+    window.localStorage.setItem('webclaw:theme', theme);
+    void window.webclawDesktop?.setTheme?.(theme);
+  }, [theme]);
 
   useEffect(() => {
     serviceStatusRef.current = serviceStatus;
@@ -577,6 +591,7 @@ export default function App() {
           <TerminalPanel
             terminals={Object.values(terminalsById)}
             activeTerminalId={activeTerminalId}
+            theme={theme}
             onSelectTerminal={(terminalId) => {
               setActiveTerminalId(terminalId);
             }}
@@ -797,6 +812,16 @@ export default function App() {
               <button className="tab" type="button" title="自我进化">
                 自我进化
               </button>
+              <span className="control-label mono">主题</span>
+              <select
+                className="control-provider-select control-theme-select"
+                value={theme}
+                onChange={(e) => setTheme(e.target.value as 'dark' | 'light')}
+                title="主题（黑/白）"
+              >
+                <option value="dark">黑</option>
+                <option value="light">白</option>
+              </select>
             </div>
           </div>
 
@@ -823,6 +848,7 @@ function TerminalPanel({
   activeTerminalId,
   onSelectTerminal,
   onCloseTerminal,
+  theme,
 }: {
   terminals: Array<{
     terminalId: string;
@@ -836,6 +862,7 @@ function TerminalPanel({
   activeTerminalId: string | null;
   onSelectTerminal: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => Promise<void>;
+  theme: 'dark' | 'light';
 }) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const terminalRootRef = useRef<HTMLDivElement | null>(null);
@@ -863,8 +890,8 @@ function TerminalPanel({
       lineHeight: 1.15,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       theme: {
-        background: '#0b1220',
-        foreground: '#e2e8f0',
+        background: theme === 'light' ? '#ffffff' : '#0b1220',
+        foreground: theme === 'light' ? '#0f172a' : '#e2e8f0',
       },
     });
 
@@ -920,6 +947,16 @@ function TerminalPanel({
       fitAddonRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const terminal = terminalInstanceRef.current;
+    if (!terminal) return;
+    terminal.options.theme = {
+      background: theme === 'light' ? '#ffffff' : '#0b1220',
+      foreground: theme === 'light' ? '#0f172a' : '#e2e8f0',
+    };
+    terminal.refresh(0, Math.max(0, terminal.rows - 1));
+  }, [theme]);
 
   useEffect(() => {
     activeIdRef.current = activeTerminalId;
