@@ -14,6 +14,8 @@ const tabs: { key: WorkspaceTabKey; label: string }[] = [
   { key: 'errors', label: '错误' },
 ];
 
+const PROVIDER_KEYS = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'] as const;
+
 const MIN_BROWSER_HEIGHT = 360;
 const MIN_PANEL_HEIGHT = 280;
 const SPLIT_DIVIDER_HEIGHT = 8;
@@ -22,8 +24,28 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTabKey>('webclaw');
   const [currentProvider, setCurrentProvider] = useState('gpt');
   const [displayMode, setDisplayMode] = useState<'web' | 'forward'>('web');
+  const [selectedForwardModel, setSelectedForwardModel] = useState('');
   const [providerSites, setProviderSites] = useState<Record<string, string>>({});
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
+  const [providerDefaultModes, setProviderDefaultModes] = useState<Record<string, 'web' | 'forward'>>({});
+  const [providerInputMaxChars, setProviderInputMaxChars] = useState<Record<string, number | null>>({});
+  const [providerForwardBaseUrls, setProviderForwardBaseUrls] = useState<Record<string, string>>({});
+  const [providerApiKeys, setProviderApiKeys] = useState<Record<string, string>>({});
+  const [providerApiKeyMasked, setProviderApiKeyMasked] = useState<Record<string, string>>({});
+  const [servicePort, setServicePort] = useState(3000);
+  const [promptConfig, setPromptConfig] = useState<{
+    init_prompt: string;
+    init_prompt_template: string;
+    user_message_template: string;
+    response_schema_template: string;
+    format_only_retry_template: string;
+  }>({
+    init_prompt: '',
+    init_prompt_template: '',
+    user_message_template: '',
+    response_schema_template: '',
+    format_only_retry_template: '',
+  });
   const [serviceStatus, setServiceStatus] = useState('stopped');
   const [serviceControlReady, setServiceControlReady] = useState(false);
   const [apiBaseUrl, setApiBaseUrl] = useState('http://127.0.0.1:3000');
@@ -47,6 +69,8 @@ export default function App() {
   const [errors, setErrors] = useState<string[]>([]);
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [terminalInited, setTerminalInited] = useState(false);
+  const serviceStatusRef = useRef(serviceStatus);
+  const handledStoppedResetRef = useRef(false);
   const [splitRatio, setSplitRatio] = useState(() => {
     const saved = window.localStorage.getItem('webclaw:split-ratio');
     const parsed = saved ? Number(saved) : 0.56;
@@ -59,6 +83,26 @@ export default function App() {
     setErrors((prev) => [`${new Date().toLocaleTimeString()} ${message}`, ...prev].slice(0, 100));
     setActiveTab('errors');
   }, []);
+
+  const resetDesktopToInitialState = useCallback(() => {
+    setActiveTab('webclaw');
+    setDisplayMode('web');
+    setSelectedForwardModel('');
+    setCurrentProvider('gpt');
+    setServiceLogs(['等待服务日志...']);
+    setErrors([]);
+    setLogTypeFilter('all');
+    setLogProviderFilter('all');
+    setLogSearch('');
+    setTerminalsById({});
+    setActiveTerminalId(null);
+    setTerminalInited(false);
+    void window.webclawDesktop?.showBrowserWaiting?.();
+  }, []);
+
+  useEffect(() => {
+    serviceStatusRef.current = serviceStatus;
+  }, [serviceStatus]);
 
   const createTerminalAndFocus = useCallback(async () => {
     const created = await window.webclawDesktop?.createTerminal?.();
@@ -89,8 +133,8 @@ export default function App() {
   useEffect(() => {
     if (displayMode !== 'forward') return;
     if (serviceStatus !== 'running') return;
-    void window.webclawDesktop?.navigateBrowser?.('http://127.0.0.1:3000/monitor');
-  }, [displayMode, serviceStatus]);
+    void window.webclawDesktop?.navigateBrowser?.(`${apiBaseUrl}/monitor`);
+  }, [apiBaseUrl, displayMode, serviceStatus]);
 
   useEffect(() => {
     let mounted = true;
@@ -100,6 +144,20 @@ export default function App() {
       setCurrentProvider((state.currentProvider as string | null) ?? 'gpt');
       setProviderSites(state.providerSites);
       setProviderModels(state.providerModels);
+      setProviderDefaultModes(state.providerDefaultModes ?? {});
+      setProviderInputMaxChars(state.providerInputMaxChars ?? {});
+      setProviderForwardBaseUrls(state.providerForwardBaseUrls ?? {});
+      setProviderApiKeys(state.providerApiKeys ?? {});
+      setProviderApiKeyMasked(state.providerApiKeyMasked ?? {});
+      setServicePort(Number.isInteger(state.servicePort) ? state.servicePort : 3000);
+      if (state.serviceStatus === 'running' && state.promptConfig) {
+        setPromptConfig(state.promptConfig);
+      }
+      const initialProvider = (state.currentProvider as string | null) ?? 'gpt';
+      const initialModels = (state.providerModels?.[initialProvider] as string[] | undefined) ?? [];
+      if (initialModels.length > 0) {
+        setSelectedForwardModel((prev) => (prev && initialModels.includes(prev) ? prev : initialModels[0]));
+      }
       setServiceStatus(state.serviceStatus);
       setApiBaseUrl(state.apiBaseUrl);
     };
@@ -131,6 +189,7 @@ export default function App() {
       if (event.status === 'running') {
         void refreshDesktopState();
       }
+      requestSyncBrowserBounds();
     });
     const disposeError = window.webclawDesktop?.onServiceError?.((event) => {
       const line = `${new Date(event.timestamp).toLocaleTimeString()} [FAIL] ${event.message}`;
@@ -189,6 +248,47 @@ export default function App() {
     };
   }, [pushError]);
 
+  useEffect(() => {
+    let mounted = true;
+    const timer = window.setInterval(async () => {
+      const state = await window.webclawDesktop?.getDesktopState?.();
+      if (!mounted || !state) return;
+      const nextStatus = state.serviceStatus;
+      const prevStatus = serviceStatusRef.current;
+      if (nextStatus !== prevStatus) {
+        setServiceStatus(nextStatus);
+        setServiceLogs((prev) => [
+          ...prev,
+          `${new Date().toLocaleTimeString()} [HEALTH] service -> ${nextStatus}`,
+        ].slice(-300));
+      }
+      if (nextStatus === 'running') {
+        handledStoppedResetRef.current = false;
+      }
+      if (nextStatus === 'stopped' && prevStatus !== 'stopped' && !handledStoppedResetRef.current) {
+        handledStoppedResetRef.current = true;
+        await window.webclawDesktop?.resetBrowser?.();
+        resetDesktopToInitialState();
+        requestSyncBrowserBounds();
+      }
+    }, 2500);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [resetDesktopToInitialState]);
+
+  useEffect(() => {
+    const models = providerModels[currentProvider] ?? [];
+    if (models.length === 0) {
+      if (selectedForwardModel) setSelectedForwardModel('');
+      return;
+    }
+    if (!selectedForwardModel || !models.includes(selectedForwardModel)) {
+      setSelectedForwardModel(models[0]);
+    }
+  }, [currentProvider, providerModels, selectedForwardModel]);
+
   const ensureTerminalReady = useCallback(async () => {
     if (terminalInited) return;
     const state = await window.webclawDesktop?.initTerminal?.();
@@ -218,23 +318,35 @@ export default function App() {
     setTerminalInited(true);
   }, [terminalInited]);
 
-  const syncBrowserBounds = useCallback(() => {
+  const syncBrowserBounds = useCallback((): boolean => {
     const pane = browserPaneRef.current;
-    if (!pane) return;
+    if (!pane) return false;
     const rect = pane.getBoundingClientRect();
+    if (rect.width < 4 || rect.height < 4) return false;
     void window.webclawDesktop?.setBrowserBounds?.({
       x: Math.round(rect.left),
       y: Math.round(rect.top),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
     });
+    return true;
   }, []);
+
+  const requestSyncBrowserBounds = useCallback(() => {
+    let attempt = 0;
+    const tick = () => {
+      if (syncBrowserBounds()) return;
+      attempt += 1;
+      if (attempt < 10) window.requestAnimationFrame(tick);
+    };
+    window.requestAnimationFrame(tick);
+  }, [syncBrowserBounds]);
 
   useEffect(() => {
     window.localStorage.setItem('webclaw:split-ratio', String(splitRatio));
-    const raf = window.requestAnimationFrame(syncBrowserBounds);
-    return () => window.cancelAnimationFrame(raf);
-  }, [splitRatio, syncBrowserBounds]);
+    void window.webclawDesktop?.setBrowserSplitRatio?.(splitRatio);
+    requestSyncBrowserBounds();
+  }, [requestSyncBrowserBounds, splitRatio]);
 
   useEffect(() => {
     const container = splitPaneRef.current;
@@ -248,7 +360,7 @@ export default function App() {
   }, [splitRatio]);
 
   useEffect(() => {
-    const onResize = () => syncBrowserBounds();
+    const onResize = () => requestSyncBrowserBounds();
     window.addEventListener('resize', onResize);
     const observer = new ResizeObserver(() => {
       const container = splitPaneRef.current;
@@ -258,17 +370,16 @@ export default function App() {
         const maxRatio = Math.max(minRatio, Math.min(0.72, 1 - MIN_PANEL_HEIGHT / rect.height));
         setSplitRatio((prev) => Math.min(maxRatio, Math.max(minRatio, prev)));
       }
-      syncBrowserBounds();
+      requestSyncBrowserBounds();
     });
     if (browserPaneRef.current) observer.observe(browserPaneRef.current);
     if (splitPaneRef.current) observer.observe(splitPaneRef.current);
-    const raf = window.requestAnimationFrame(syncBrowserBounds);
+    requestSyncBrowserBounds();
     return () => {
+      observer.disconnect();
       window.removeEventListener('resize', onResize);
-      observer?.disconnect();
-      window.cancelAnimationFrame(raf);
     };
-  }, [syncBrowserBounds]);
+  }, [requestSyncBrowserBounds]);
 
   const handleProviderChange = useCallback(async (provider: string) => {
     setCurrentProvider(provider);
@@ -279,13 +390,60 @@ export default function App() {
     }
   }, [displayMode]);
 
+  const handleProviderConfigSave = useCallback(
+    async (payload: { provider: string; models: string[]; defaultMode: 'web' | 'forward'; inputMaxChars: number | null; forwardBaseUrl: string; apiKey?: string }) => {
+      const result = await window.webclawDesktop?.updateProviderConfig?.(payload);
+      if (!result?.ok) {
+        throw new Error('更新配置失败');
+      }
+      setProviderSites(result.providerSites);
+      setProviderModels(result.providerModels);
+      setProviderDefaultModes(result.providerDefaultModes ?? {});
+      setProviderInputMaxChars(result.providerInputMaxChars ?? {});
+      setProviderForwardBaseUrls(result.providerForwardBaseUrls ?? {});
+      setProviderApiKeys(result.providerApiKeys ?? {});
+      setProviderApiKeyMasked(result.providerApiKeyMasked ?? {});
+    },
+    []
+  );
+
+  const handleServiceSettingsSave = useCallback(
+    async (payload: { servicePort: number }) => {
+      const result = await window.webclawDesktop?.updateSettings?.(payload);
+      if (!result?.ok) {
+        throw new Error('更新服务端口失败');
+      }
+      setServicePort(result.servicePort);
+    },
+    []
+  );
+
+  const handlePromptConfigSave = useCallback(
+    async (payload: {
+      init_prompt: string;
+      init_prompt_template: string;
+      user_message_template: string;
+      response_schema_template: string;
+      format_only_retry_template: string;
+    }) => {
+      const result = await window.webclawDesktop?.updatePromptConfig?.(payload);
+      if (!result?.ok) {
+        throw new Error('更新提示词配置失败');
+      }
+      setPromptConfig(result.promptConfig);
+    },
+    []
+  );
+
   const handleStartService = useCallback(async () => {
     await window.webclawDesktop?.startService?.();
-  }, []);
+    requestSyncBrowserBounds();
+  }, [requestSyncBrowserBounds]);
 
   const handleStopService = useCallback(async () => {
     await window.webclawDesktop?.stopService?.();
-  }, []);
+    requestSyncBrowserBounds();
+  }, [requestSyncBrowserBounds]);
 
   const handleToggleService = useCallback(async () => {
     if (!serviceControlReady) return;
@@ -352,6 +510,7 @@ export default function App() {
             apiBaseUrl={apiBaseUrl}
             currentProvider={currentProvider}
             displayMode={displayMode}
+            selectedModel={displayMode === 'forward' ? selectedForwardModel : undefined}
             providerModels={providerModels}
             serviceStatus={serviceStatus}
             onProviderChange={handleProviderChange}
@@ -359,7 +518,24 @@ export default function App() {
           />
         );
       case 'config':
-        return <ConfigPanel apiBaseUrl={apiBaseUrl} providerModels={providerModels} providerSites={providerSites} />;
+        return (
+          <ConfigPanel
+            providerModels={providerModels}
+            providerSites={providerSites}
+            providerDefaultModes={providerDefaultModes}
+            providerInputMaxChars={providerInputMaxChars}
+            providerForwardBaseUrls={providerForwardBaseUrls}
+            providerApiKeys={providerApiKeys}
+            providerApiKeyMasked={providerApiKeyMasked}
+            onSave={handleProviderConfigSave}
+            servicePort={servicePort}
+            serviceStatus={serviceStatus}
+            onSaveServiceSettings={handleServiceSettingsSave}
+            promptConfig={promptConfig}
+            onSavePromptConfig={handlePromptConfigSave}
+            onError={pushError}
+          />
+        );
       case 'terminal':
         return (
           <TerminalPanel
@@ -405,7 +581,7 @@ export default function App() {
       default:
         return null;
     }
-  }, [activeTab, apiBaseUrl, currentProvider, displayMode, errors, handleProviderChange, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, pushError, serviceLogs, serviceStatus, terminalsById, activeTerminalId, createTerminalAndFocus]);
+  }, [activeTab, apiBaseUrl, currentProvider, displayMode, selectedForwardModel, errors, handleProviderChange, handleProviderConfigSave, handleServiceSettingsSave, handlePromptConfigSave, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, providerModels, providerSites, providerDefaultModes, providerInputMaxChars, providerForwardBaseUrls, providerApiKeys, providerApiKeyMasked, servicePort, promptConfig, pushError, serviceLogs, serviceStatus, terminalsById, activeTerminalId, createTerminalAndFocus]);
 
   return (
     <div className="console-shell">
@@ -477,9 +653,9 @@ export default function App() {
                 className="control-provider-select"
                 value={currentProvider}
                 onChange={(e) => void handleProviderChange(e.target.value)}
-                disabled={!serviceControlReady}
+                disabled={!serviceControlReady || serviceStatus !== 'running' || Object.keys(providerSites).length === 0}
               >
-                {Object.keys(providerSites).map((provider) => (
+                {(Object.keys(providerSites).length > 0 ? Object.keys(providerSites) : [currentProvider]).map((provider) => (
                   <option key={provider} value={provider}>
                     {provider}
                   </option>
@@ -493,19 +669,34 @@ export default function App() {
                   setDisplayMode(mode);
                   if (mode === 'forward') {
                     if (serviceStatus === 'running') {
-                      void window.webclawDesktop?.navigateBrowser?.('http://127.0.0.1:3000/monitor');
+                      void window.webclawDesktop?.navigateBrowser?.(`${apiBaseUrl}/monitor`);
                     } else {
-                      pushError('WebClaw 服务未启动，无法加载 Forward Monitor（需要 3000 端口服务运行）');
+                      pushError('WebClaw 服务未启动，无法加载 Forward Monitor');
                     }
                   } else {
                     void window.webclawDesktop?.selectProvider?.(currentProvider);
                   }
                 }}
                 title="切换 web / forward 模式（forward 模式会自动连接服务）"
+                disabled={!serviceControlReady || serviceStatus !== 'running'}
               >
                 <option value="web">web</option>
                 <option value="forward">forward</option>
               </select>
+              {displayMode === 'forward' ? (
+                <select
+                  className="control-provider-select control-mode-select"
+                  value={selectedForwardModel}
+                  onChange={(e) => setSelectedForwardModel(e.target.value)}
+                  title="forward 模式请求使用的模型"
+                >
+                  {(providerModels[currentProvider] ?? []).map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               {tabs.map((tab) => {
                 if (tab.key !== 'terminal') {
                   return (
@@ -566,6 +757,9 @@ export default function App() {
                   </div>
                 );
               })}
+              <button className="tab" type="button" title="自我进化">
+                自我进化
+              </button>
             </div>
           </div>
 
@@ -575,7 +769,7 @@ export default function App() {
 
       <footer className="bottom-action-bar">
         <div className="footer-status mono">
-          Service: {serviceStatus} | API: 3000 | CDP: 9222 | Provider: {currentProvider} | Queue: --
+          Service: {serviceStatus} | URL: {apiBaseUrl} | CDP: 9222 | Provider: {currentProvider} | Queue: --
         </div>
       </footer>
     </div>
@@ -840,43 +1034,744 @@ function ServiceLogsPanel({
 }
 
 function ConfigPanel({
-  apiBaseUrl,
   providerModels,
   providerSites,
+  providerDefaultModes,
+  providerInputMaxChars,
+  providerForwardBaseUrls,
+  providerApiKeys,
+  providerApiKeyMasked,
+  onSave,
+  servicePort,
+  serviceStatus,
+  onSaveServiceSettings,
+  promptConfig,
+  onSavePromptConfig,
+  onError,
 }: {
-  apiBaseUrl: string;
   providerModels: Record<string, string[]>;
   providerSites: Record<string, string>;
+  providerDefaultModes: Record<string, 'web' | 'forward'>;
+  providerInputMaxChars: Record<string, number | null>;
+  providerForwardBaseUrls: Record<string, string>;
+  providerApiKeys: Record<string, string>;
+  providerApiKeyMasked: Record<string, string>;
+  onSave: (payload: { provider: string; models: string[]; defaultMode: 'web' | 'forward'; inputMaxChars: number | null; forwardBaseUrl: string; apiKey?: string }) => Promise<void>;
+  servicePort: number;
+  serviceStatus: string;
+  onSaveServiceSettings: (payload: { servicePort: number }) => Promise<void>;
+  promptConfig: {
+    init_prompt: string;
+    init_prompt_template: string;
+    user_message_template: string;
+    response_schema_template: string;
+    format_only_retry_template: string;
+  };
+  onSavePromptConfig: (payload: {
+    init_prompt: string;
+    init_prompt_template: string;
+    user_message_template: string;
+    response_schema_template: string;
+    format_only_retry_template: string;
+  }) => Promise<void>;
+  onError: (message: string) => void;
 }) {
-  return (
-    <div className="panel-shell">
-      <div className="panel-box">
-        <div className="panel-title">当前配置</div>
-        <div className="detail-list mono">
-          <div>API Base URL: {apiBaseUrl}</div>
-          <div>Provider Count: {Object.keys(providerSites).length}</div>
-        </div>
-      </div>
+  const normalizeModels = (text: string): string[] =>
+    text
+      .split(/[\n,]/g)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Site</th>
-              <th>Models</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.keys(providerSites).map((provider) => (
-              <tr key={provider}>
-                <td>{provider}</td>
-                <td className="mono">{providerSites[provider]}</td>
-                <td className="mono">{(providerModels[provider] ?? []).join(', ')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+  const [rows, setRows] = useState<Record<string, {
+    modelsText: string;
+    defaultMode: 'web' | 'forward';
+    inputMaxCharsDraft: string;
+    forwardBaseUrl: string;
+    apiKeyValue: string;
+    apiKeyDraft: string;
+    apiKeyReveal: boolean;
+    saving: boolean;
+    message: string;
+  }>>({});
+  const [servicePortDraft, setServicePortDraft] = useState(String(servicePort));
+  const [servicePortSaving, setServicePortSaving] = useState(false);
+  const [servicePortMessage, setServicePortMessage] = useState('');
+  const servicePortSaveIntentRef = useRef(false);
+  const servicePortBlurPendingRef = useRef(false);
+  const servicePortBlurTimerRef = useRef<number | null>(null);
+  const servicePortInputRef = useRef<HTMLInputElement | null>(null);
+  const configScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const [promptDraft, setPromptDraft] = useState(promptConfig);
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptMessage, setPromptMessage] = useState('');
+
+  useEffect(() => {
+    setPromptDraft(promptConfig);
+  }, [promptConfig]);
+
+  useEffect(() => {
+    setServicePortDraft(String(servicePort));
+  }, [servicePort]);
+
+  useEffect(() => {
+    if (serviceStatus !== 'running') return;
+    configScrollRef.current?.scrollTo({ top: 0 });
+  }, [serviceStatus]);
+
+  const promptChanged =
+    promptDraft.init_prompt !== promptConfig.init_prompt ||
+    promptDraft.init_prompt_template !== promptConfig.init_prompt_template ||
+    promptDraft.user_message_template !== promptConfig.user_message_template ||
+    promptDraft.response_schema_template !== promptConfig.response_schema_template ||
+    promptDraft.format_only_retry_template !== promptConfig.format_only_retry_template;
+
+  const handlePromptSave = async () => {
+    if (!promptChanged) return;
+    setPromptSaving(true);
+    setPromptMessage('');
+    try {
+      await onSavePromptConfig(promptDraft);
+      setPromptMessage('已保存');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onError(message);
+      setPromptMessage(`保存失败: ${message}`);
+    } finally {
+      setPromptSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const providers = [...PROVIDER_KEYS];
+    setRows((prev) => {
+      const next: Record<string, {
+        modelsText: string;
+        defaultMode: 'web' | 'forward';
+        inputMaxCharsDraft: string;
+        forwardBaseUrl: string;
+        apiKeyValue: string;
+        apiKeyDraft: string;
+        apiKeyReveal: boolean;
+        saving: boolean;
+        message: string;
+      }> = {};
+      for (const provider of providers) {
+        const current = prev[provider];
+        const baseApiKey = providerApiKeys[provider] ?? '';
+        const baseMode = providerDefaultModes[provider] ?? 'web';
+        const baseMaxChars = providerInputMaxChars[provider];
+        const baseMaxCharsText = typeof baseMaxChars === 'number' ? String(baseMaxChars) : '';
+        next[provider] = {
+          modelsText: current?.modelsText ?? (providerModels[provider] ?? []).join(', '),
+          defaultMode: current?.defaultMode ?? baseMode,
+          inputMaxCharsDraft: current?.inputMaxCharsDraft ?? baseMaxCharsText,
+          forwardBaseUrl: current?.forwardBaseUrl ?? (providerForwardBaseUrls[provider] ?? ''),
+          apiKeyValue: current?.apiKeyValue ?? baseApiKey,
+          apiKeyDraft: current?.apiKeyDraft ?? baseApiKey,
+          apiKeyReveal: current?.apiKeyReveal ?? false,
+          saving: false,
+          message: current?.message ?? '',
+        };
+      }
+      return next;
+    });
+  }, [providerSites, providerModels, providerDefaultModes, providerInputMaxChars, providerForwardBaseUrls, providerApiKeys, providerApiKeyMasked]);
+
+  const updateRow = (provider: string, patch: Partial<{
+    modelsText: string;
+    defaultMode: 'web' | 'forward';
+    inputMaxCharsDraft: string;
+    forwardBaseUrl: string;
+    apiKeyValue: string;
+    apiKeyDraft: string;
+    apiKeyReveal: boolean;
+    saving: boolean;
+    message: string;
+  }>) => {
+    setRows((prev) => ({
+      ...prev,
+      [provider]: {
+        ...(prev[provider] ?? {
+          modelsText: '',
+          defaultMode: 'web',
+          inputMaxCharsDraft: '',
+          forwardBaseUrl: '',
+          apiKeyValue: '',
+          apiKeyDraft: '',
+          apiKeyReveal: false,
+          saving: false,
+          message: '',
+        }),
+        ...patch,
+      },
+    }));
+  };
+
+  const getModelsParseResult = (provider: string): { list: string[]; error: string } => {
+    const row = rows[provider];
+    if (!row) return { list: [], error: '' };
+    const list = normalizeModels(row.modelsText);
+    if (row.modelsText.trim().length === 0) {
+      return { list, error: 'models 不能为空' };
+    }
+    if (list.length === 0) {
+      return { list, error: 'models 解析失败，请用逗号或换行分隔' };
+    }
+    return { list, error: '' };
+  };
+
+  const getBaseUrlError = (provider: string): string => {
+    const row = rows[provider];
+    if (!row) return '';
+    const baseRaw = (providerForwardBaseUrls[provider] ?? '').trim();
+    const raw = row.forwardBaseUrl.trim();
+    const changed = raw !== baseRaw;
+    if (!changed) return '';
+    if (!raw) return '';
+    try {
+      const u = new URL(raw);
+      if (!/^https?:$/.test(u.protocol)) return 'base_url 必须是 http/https';
+      return '';
+    } catch {
+      return 'base_url 不是合法 URL';
+    }
+  };
+
+  const getInputMaxCharsError = (provider: string): string => {
+    const row = rows[provider];
+    if (!row) return '';
+    const base = providerInputMaxChars[provider];
+    const baseText = typeof base === 'number' ? String(base) : '';
+    const raw = row.inputMaxCharsDraft.trim();
+    if (raw === baseText) return '';
+    if (raw === '') return '';
+    if (!/^\d+$/.test(raw)) return '最大字符数必须是整数';
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0) return '最大字符数必须 > 0';
+    return '';
+  };
+
+  const parseInputMaxChars = (provider: string): number | null => {
+    const row = rows[provider];
+    if (!row) return null;
+    const raw = row.inputMaxCharsDraft.trim();
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isInteger(value) && value > 0 ? value : null;
+  };
+
+  const handleSave = async (provider: string) => {
+    const row = rows[provider];
+    if (!row) return;
+    if (!hasChanges(provider)) return;
+    const modelsParsed = getModelsParseResult(provider);
+    const baseUrlError = getBaseUrlError(provider);
+    const maxCharsError = getInputMaxCharsError(provider);
+    if (modelsParsed.error || baseUrlError || maxCharsError) {
+      updateRow(provider, { message: modelsParsed.error || baseUrlError || maxCharsError });
+      return;
+    }
+    updateRow(provider, { saving: true, message: '' });
+    try {
+      const models = modelsParsed.list;
+      const apiKeyChanged = row.apiKeyDraft.trim() !== row.apiKeyValue.trim();
+      await onSave({
+        provider,
+        models,
+        defaultMode: row.defaultMode,
+        inputMaxChars: parseInputMaxChars(provider),
+        forwardBaseUrl: row.forwardBaseUrl.trim(),
+        apiKey: apiKeyChanged ? row.apiKeyDraft.trim() : undefined,
+      });
+      updateRow(provider, {
+        saving: false,
+        message: '已保存',
+        modelsText: models.join(', '),
+        inputMaxCharsDraft: parseInputMaxChars(provider) == null ? '' : String(parseInputMaxChars(provider)),
+        forwardBaseUrl: row.forwardBaseUrl.trim(),
+        apiKeyValue: row.apiKeyDraft.trim(),
+        apiKeyDraft: row.apiKeyDraft.trim(),
+        apiKeyReveal: false,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onError(message);
+      updateRow(provider, { saving: false, message: `保存失败: ${message}` });
+    }
+  };
+
+  const hasChanges = (provider: string): boolean => {
+    const row = rows[provider];
+    if (!row) return false;
+    const nextModels = normalizeModels(row.modelsText).join('\n');
+    const baseModels = (providerModels[provider] ?? []).map((item) => item.trim()).filter(Boolean).join('\n');
+    const nextMode = row.defaultMode;
+    const baseMode = providerDefaultModes[provider] ?? 'web';
+    const nextMaxChars = row.inputMaxCharsDraft.trim();
+    const baseMaxChars = providerInputMaxChars[provider];
+    const baseMaxCharsText = typeof baseMaxChars === 'number' ? String(baseMaxChars) : '';
+    const nextBaseUrl = row.forwardBaseUrl.trim();
+    const baseBaseUrl = (providerForwardBaseUrls[provider] ?? '').trim();
+    const apiKeyChanged = row.apiKeyDraft.trim() !== row.apiKeyValue.trim();
+    return nextModels !== baseModels || nextMode !== baseMode || nextMaxChars !== baseMaxCharsText || nextBaseUrl !== baseBaseUrl || apiKeyChanged;
+  };
+
+  const servicePortChanged = servicePortDraft.trim() !== String(servicePort);
+  const servicePortError = (() => {
+    if (!servicePortChanged) return '';
+    if (!/^\d+$/.test(servicePortDraft.trim())) return '端口必须是整数';
+    const value = Number(servicePortDraft.trim());
+    if (!Number.isInteger(value) || value < 1 || value > 65535) return '端口范围必须在 1-65535';
+    return '';
+  })();
+
+  const handleServicePortSave = async () => {
+    if (!servicePortChanged || servicePortError) return;
+    servicePortSaveIntentRef.current = false;
+    servicePortBlurPendingRef.current = false;
+    if (servicePortBlurTimerRef.current != null) {
+      window.clearTimeout(servicePortBlurTimerRef.current);
+      servicePortBlurTimerRef.current = null;
+    }
+    const raw = (servicePortInputRef.current?.value ?? servicePortDraft).trim();
+    const value = Number(raw);
+    const confirmed = window.confirm(`确认修改 WebClawProxy 端口为 ${value} 吗？将会自动重启服务。`);
+    if (!confirmed) {
+      setServicePortDraft(String(servicePort));
+      return;
+    }
+    setServicePortSaving(true);
+    setServicePortMessage('');
+    try {
+      await onSaveServiceSettings({ servicePort: value });
+      setServicePortDraft(String(value));
+      if (serviceStatus === 'running' || serviceStatus === 'starting' || serviceStatus === 'stopping') {
+        await window.webclawDesktop?.stopService?.();
+      }
+      await window.webclawDesktop?.resetBrowser?.();
+      await window.webclawDesktop?.startService?.();
+      setServicePortMessage('已保存并重启服务');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onError(message);
+      setServicePortMessage(`保存失败: ${message}`);
+    } finally {
+      setServicePortSaving(false);
+    }
+  };
+
+  return (
+    <div className="panel-shell config-shell">
+      <div className="config-scroll-all" ref={configScrollRef}>
+        <div className="panel-box">
+          <div className="detail-list mono">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+              <span>WebClawProxy 端口:</span>
+              <input
+                ref={servicePortInputRef}
+                className={`mono ${servicePortError ? 'input-invalid' : ''}`}
+                style={{ width: 110 }}
+                value={servicePortDraft}
+                onChange={(e) => {
+                  setServicePortDraft(e.target.value);
+                  setServicePortMessage('');
+                  servicePortBlurPendingRef.current = false;
+                  if (servicePortBlurTimerRef.current != null) {
+                    window.clearTimeout(servicePortBlurTimerRef.current);
+                    servicePortBlurTimerRef.current = null;
+                  }
+                }}
+                onFocus={() => {
+                  servicePortBlurPendingRef.current = false;
+                  if (servicePortBlurTimerRef.current != null) {
+                    window.clearTimeout(servicePortBlurTimerRef.current);
+                    servicePortBlurTimerRef.current = null;
+                  }
+                }}
+                onBlur={(event) => {
+                  if (servicePortSaving) return;
+                  if (servicePortSaveIntentRef.current) return;
+                  const next = event.relatedTarget as HTMLElement | null;
+                  if (next?.dataset?.action === 'save-port') return;
+                  servicePortBlurPendingRef.current = true;
+                  const capturedDraft = servicePortDraft;
+                  if (servicePortBlurTimerRef.current != null) {
+                    window.clearTimeout(servicePortBlurTimerRef.current);
+                  }
+                  servicePortBlurTimerRef.current = window.setTimeout(() => {
+                    servicePortBlurTimerRef.current = null;
+                    if (!servicePortBlurPendingRef.current) return;
+                    if (servicePortSaving) return;
+                    if (capturedDraft !== servicePortDraft) return;
+                    if (servicePortDraft.trim() !== String(servicePort)) {
+                      setServicePortDraft(String(servicePort));
+                      setServicePortMessage('');
+                    }
+                  }, 0);
+                }}
+                placeholder="3000"
+              />
+              <button
+                className="primary"
+                type="button"
+                data-action="save-port"
+                onMouseDownCapture={(event) => {
+                  event.preventDefault();
+                  servicePortSaveIntentRef.current = true;
+                  servicePortBlurPendingRef.current = false;
+                  if (servicePortBlurTimerRef.current != null) {
+                    window.clearTimeout(servicePortBlurTimerRef.current);
+                    servicePortBlurTimerRef.current = null;
+                  }
+                }}
+                onClick={() => void handleServicePortSave()}
+                disabled={servicePortSaving || !servicePortChanged || Boolean(servicePortError)}
+              >
+                {servicePortSaving ? '保存中...' : '保存端口'}
+              </button>
+            </div>
+            {servicePortError ? <div className="config-error mono">{servicePortError}</div> : null}
+            {servicePortMessage ? <div className="mono" style={{ marginTop: 4, opacity: 0.8 }}>{servicePortMessage}</div> : null}
+          </div>
+        </div>
+
+        {serviceStatus === 'running' ? (
+          <>
+            <div className="table-wrap">
+              <table className="config-table">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Site</th>
+                  <th>Models</th>
+                  <th>Default Mode</th>
+                  <th>Max Chars</th>
+                  <th>Forward Base URL</th>
+                  <th>API Key</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {PROVIDER_KEYS.map((provider) => (
+                  <tr key={provider}>
+                    <td>{provider}</td>
+                    <td className="mono">{providerSites[provider] ?? ''}</td>
+                    <td>
+                      {(() => {
+                        const modelsError = getModelsParseResult(provider).error;
+                        return (
+                      <input
+                        className={`mono ${modelsError ? 'input-invalid' : ''}`}
+                        value={rows[provider]?.modelsText ?? (providerModels[provider] ?? []).join(', ')}
+                        onChange={(e) => updateRow(provider, { modelsText: e.target.value })}
+                        onBlur={(event) => {
+                          if (rows[provider]?.saving) return;
+                          const next = event.relatedTarget as HTMLElement | null;
+                          if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
+                          const base = (providerModels[provider] ?? []).join(', ');
+                          if ((rows[provider]?.modelsText ?? '') !== base) {
+                            updateRow(provider, { modelsText: base, message: '' });
+                          }
+                        }}
+                        placeholder="逗号分隔模型"
+                      />
+                        );
+                      })()}
+                      {getModelsParseResult(provider).error ? (
+                        <div className="config-error mono">{getModelsParseResult(provider).error}</div>
+                      ) : null}
+                    </td>
+                    <td>
+                      <select
+                        className="mono"
+                        value={rows[provider]?.defaultMode ?? (providerDefaultModes[provider] ?? 'web')}
+                        onChange={(e) => updateRow(provider, { defaultMode: e.target.value as 'web' | 'forward' })}
+                        onBlur={(event) => {
+                          if (rows[provider]?.saving) return;
+                          const next = event.relatedTarget as HTMLElement | null;
+                          if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
+                          const base = providerDefaultModes[provider] ?? 'web';
+                          if ((rows[provider]?.defaultMode ?? base) !== base) {
+                            updateRow(provider, { defaultMode: base, message: '' });
+                          }
+                        }}
+                      >
+                        <option value="web">web</option>
+                        <option value="forward">forward</option>
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        className={`mono ${getInputMaxCharsError(provider) ? 'input-invalid' : ''}`}
+                        value={rows[provider]?.inputMaxCharsDraft ?? (typeof providerInputMaxChars[provider] === 'number' ? String(providerInputMaxChars[provider]) : '')}
+                        onChange={(e) => updateRow(provider, { inputMaxCharsDraft: e.target.value })}
+                        onBlur={(event) => {
+                          if (rows[provider]?.saving) return;
+                          const next = event.relatedTarget as HTMLElement | null;
+                          if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
+                          const base = typeof providerInputMaxChars[provider] === 'number' ? String(providerInputMaxChars[provider]) : '';
+                          if ((rows[provider]?.inputMaxCharsDraft ?? '') !== base) {
+                            updateRow(provider, { inputMaxCharsDraft: base, message: '' });
+                          }
+                        }}
+                        placeholder="(empty)"
+                      />
+                      {getInputMaxCharsError(provider) ? (
+                        <div className="config-error mono">{getInputMaxCharsError(provider)}</div>
+                      ) : null}
+                    </td>
+                    <td>
+                      <input
+                        className={`mono ${getBaseUrlError(provider) ? 'input-invalid' : ''}`}
+                        value={rows[provider]?.forwardBaseUrl ?? providerForwardBaseUrls[provider] ?? ''}
+                        onChange={(e) => updateRow(provider, { forwardBaseUrl: e.target.value })}
+                        onBlur={(event) => {
+                          if (rows[provider]?.saving) return;
+                          const next = event.relatedTarget as HTMLElement | null;
+                          if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
+                          const base = providerForwardBaseUrls[provider] ?? '';
+                          if ((rows[provider]?.forwardBaseUrl ?? '') !== base) {
+                            updateRow(provider, { forwardBaseUrl: base, message: '' });
+                          }
+                        }}
+                        placeholder="https://api.example.com"
+                      />
+                      {getBaseUrlError(provider) ? (
+                        <div className="config-error mono">{getBaseUrlError(provider)}</div>
+                      ) : null}
+                    </td>
+                    <td>
+                      <input
+                        className="mono"
+                        value={
+                          rows[provider]?.apiKeyReveal
+                            ? (rows[provider]?.apiKeyDraft ?? '')
+                            : ((rows[provider]?.apiKeyDraft?.trim() || providerApiKeyMasked[provider]) ? '****' : '')
+                        }
+                        placeholder="粘贴后自动掩码"
+                        onMouseEnter={() => updateRow(provider, { apiKeyReveal: true })}
+                        onMouseLeave={() => updateRow(provider, { apiKeyReveal: false })}
+                        onFocus={() => updateRow(provider, { apiKeyReveal: true })}
+                        onPaste={(e) => {
+                          e.preventDefault();
+                          const text = e.clipboardData.getData('text');
+                          updateRow(provider, { apiKeyDraft: text, apiKeyReveal: false });
+                        }}
+                        onChange={(e) => {
+                          updateRow(provider, { apiKeyDraft: e.target.value });
+                        }}
+                        onBlur={(event) => {
+                          if (rows[provider]?.saving) return;
+                          const next = event.relatedTarget as HTMLElement | null;
+                          if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
+                          const base = rows[provider]?.apiKeyValue ?? '';
+                          if ((rows[provider]?.apiKeyDraft ?? '') !== base) {
+                            updateRow(provider, { apiKeyDraft: base, apiKeyReveal: false, message: '' });
+                            return;
+                          }
+                          updateRow(provider, { apiKeyReveal: false });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <button
+                        className="primary"
+                        type="button"
+                        data-action="save-provider"
+                        data-provider={provider}
+                        onClick={() => void handleSave(provider)}
+                        disabled={
+                          rows[provider]?.saving ||
+                          !hasChanges(provider) ||
+                          Boolean(getModelsParseResult(provider).error) ||
+                          Boolean(getInputMaxCharsError(provider)) ||
+                          Boolean(getBaseUrlError(provider))
+                        }
+                      >
+                        {rows[provider]?.saving ? '保存中...' : '保存'}
+                      </button>
+                      <div className="mono" style={{ marginTop: 4, opacity: 0.8 }}>
+                        {rows[provider]?.message ?? ''}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              </table>
+            </div>
+
+            <div className="prompt-grid">
+              <div className="panel-box prompt-card">
+                <div className="prompt-card-head mono">
+                  <div className="prompt-card-title">init_prompt</div>
+                  <div className="prompt-card-actions">
+                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    <button
+                      className="primary"
+                      type="button"
+                      data-action="save-prompt"
+                      onClick={() => void handlePromptSave()}
+                      disabled={promptSaving || !promptChanged}
+                    >
+                      {promptSaving ? '保存中...' : '保存'}
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="mono"
+                  rows={8}
+                  value={promptDraft.init_prompt}
+                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, init_prompt: e.target.value }))}
+                  onBlur={(event) => {
+                    const next = event.relatedTarget as HTMLElement | null;
+                    if (next?.dataset?.action === 'save-prompt') return;
+                    if (promptDraft.init_prompt !== promptConfig.init_prompt) {
+                      setPromptDraft((prev) => ({ ...prev, init_prompt: promptConfig.init_prompt }));
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="panel-box prompt-card">
+                <div className="prompt-card-head mono">
+                  <div className="prompt-card-title">init_prompt_template</div>
+                  <div className="prompt-card-actions">
+                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    <button
+                      className="primary"
+                      type="button"
+                      data-action="save-prompt"
+                      onClick={() => void handlePromptSave()}
+                      disabled={promptSaving || !promptChanged}
+                    >
+                      {promptSaving ? '保存中...' : '保存'}
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="mono"
+                  rows={8}
+                  value={promptDraft.init_prompt_template}
+                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, init_prompt_template: e.target.value }))}
+                  onBlur={(event) => {
+                    const next = event.relatedTarget as HTMLElement | null;
+                    if (next?.dataset?.action === 'save-prompt') return;
+                    if (promptDraft.init_prompt_template !== promptConfig.init_prompt_template) {
+                      setPromptDraft((prev) => ({ ...prev, init_prompt_template: promptConfig.init_prompt_template }));
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="panel-box prompt-card">
+                <div className="prompt-card-head mono">
+                  <div className="prompt-card-title">user_message_template</div>
+                  <div className="prompt-card-actions">
+                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    <button
+                      className="primary"
+                      type="button"
+                      data-action="save-prompt"
+                      onClick={() => void handlePromptSave()}
+                      disabled={promptSaving || !promptChanged}
+                    >
+                      {promptSaving ? '保存中...' : '保存'}
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="mono"
+                  rows={6}
+                  value={promptDraft.user_message_template}
+                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, user_message_template: e.target.value }))}
+                  onBlur={(event) => {
+                    const next = event.relatedTarget as HTMLElement | null;
+                    if (next?.dataset?.action === 'save-prompt') return;
+                    if (promptDraft.user_message_template !== promptConfig.user_message_template) {
+                      setPromptDraft((prev) => ({ ...prev, user_message_template: promptConfig.user_message_template }));
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="panel-box prompt-card">
+                <div className="prompt-card-head mono">
+                  <div className="prompt-card-title">response_schema_template</div>
+                  <div className="prompt-card-actions">
+                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    <button
+                      className="primary"
+                      type="button"
+                      data-action="save-prompt"
+                      onClick={() => void handlePromptSave()}
+                      disabled={promptSaving || !promptChanged}
+                    >
+                      {promptSaving ? '保存中...' : '保存'}
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="mono"
+                  rows={4}
+                  value={promptDraft.response_schema_template}
+                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, response_schema_template: e.target.value }))}
+                  onBlur={(event) => {
+                    const next = event.relatedTarget as HTMLElement | null;
+                    if (next?.dataset?.action === 'save-prompt') return;
+                    if (promptDraft.response_schema_template !== promptConfig.response_schema_template) {
+                      setPromptDraft((prev) => ({ ...prev, response_schema_template: promptConfig.response_schema_template }));
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="panel-box prompt-card">
+                <div className="prompt-card-head mono">
+                  <div className="prompt-card-title">format_only_retry_template</div>
+                  <div className="prompt-card-actions">
+                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    <button
+                      className="primary"
+                      type="button"
+                      data-action="save-prompt"
+                      onClick={() => void handlePromptSave()}
+                      disabled={promptSaving || !promptChanged}
+                    >
+                      {promptSaving ? '保存中...' : '保存'}
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="mono"
+                  rows={6}
+                  value={promptDraft.format_only_retry_template}
+                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, format_only_retry_template: e.target.value }))}
+                  onBlur={(event) => {
+                    const next = event.relatedTarget as HTMLElement | null;
+                    if (next?.dataset?.action === 'save-prompt') return;
+                    if (promptDraft.format_only_retry_template !== promptConfig.format_only_retry_template) {
+                      setPromptDraft((prev) => ({ ...prev, format_only_retry_template: promptConfig.format_only_retry_template }));
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="panel-box">
+              <div className="detail-list mono">
+                <div>Provider 配置：启动 WebClawProxy 服务后可查看和编辑</div>
+              </div>
+            </div>
+            <div className="panel-box">
+              <div className="detail-list mono">
+                <div>提示词配置：启动 WebClawProxy 服务后可查看和编辑</div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

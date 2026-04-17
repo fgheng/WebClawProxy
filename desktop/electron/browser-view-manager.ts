@@ -98,11 +98,11 @@ export class BrowserViewManager {
     this.activeView = nextView;
     this.window.addBrowserView(nextView);
     
-    // ✅ 检查并恢复 provider 的原始 URL
-    // 如果当前 URL 不是该 provider 的预期 URL（可能被 navigateTo forward-monitor 覆盖），则重新加载
+    // 仅在初始 loading 页面时才自动跳转到 provider 站点。
+    // 避免在 forward 模式下把 monitor 页面强制切回 web 站点。
     const currentUrl = nextView.webContents.getURL();
     const expectedUrl = this.options.providerSites[provider];
-    if (expectedUrl && !currentUrl.startsWith(expectedUrl)) {
+    if (expectedUrl && (currentUrl.startsWith('file://') || !currentUrl)) {
       void nextView.webContents.loadURL(buildLoadingUrl(expectedUrl));
     }
     
@@ -160,6 +160,55 @@ export class BrowserViewManager {
     return this.views.has(provider);
   }
 
+  destroy(): void {
+    if (this.window) {
+      try {
+        if (this.activeView) this.window.removeBrowserView(this.activeView);
+      } catch {
+        // ignore
+      }
+      for (const view of this.views.values()) {
+        try {
+          this.window.removeBrowserView(view);
+        } catch {
+          // ignore
+        }
+      }
+      if (this.waitingView) {
+        try {
+          this.window.removeBrowserView(this.waitingView);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    for (const view of this.views.values()) {
+      try {
+        const wc = view.webContents as unknown as { destroy?: () => void; close?: () => void };
+        if (typeof wc.destroy === 'function') wc.destroy();
+        else if (typeof wc.close === 'function') wc.close();
+      } catch {
+        // ignore
+      }
+    }
+    if (this.waitingView) {
+      try {
+        const wc = this.waitingView.webContents as unknown as { destroy?: () => void; close?: () => void };
+        if (typeof wc.destroy === 'function') wc.destroy();
+        else if (typeof wc.close === 'function') wc.close();
+      } catch {
+        // ignore
+      }
+    }
+
+    this.views.clear();
+    this.waitingView = null;
+    this.activeView = null;
+    this.currentProvider = null;
+    this.window = null;
+  }
+
   private detachActiveView(): void {
     if (!this.window || !this.activeView) return;
     this.window.removeBrowserView(this.activeView);
@@ -175,8 +224,8 @@ export class BrowserViewManager {
       view.setBounds({
         x: this.explicitBounds.x,
         y: this.explicitBounds.y,
-        width: Math.max(320, this.explicitBounds.width),
-        height: Math.max(200, this.explicitBounds.height),
+        width: Math.max(1, this.explicitBounds.width),
+        height: Math.max(1, this.explicitBounds.height),
       });
     } else {
       const [windowWidth, windowHeight] = this.window.getContentSize();
@@ -192,6 +241,6 @@ export class BrowserViewManager {
         height,
       });
     }
-    view.setAutoResize({ width: true, height: true });
+    view.setAutoResize({ width: false, height: false });
   }
 }

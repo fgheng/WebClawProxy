@@ -5,11 +5,19 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
   selectProvider: (provider: string) => ipcRenderer.invoke('browser:selectProvider', provider),
   reloadCurrentProvider: () => ipcRenderer.invoke('browser:reloadCurrent'),
   openBrowserDevTools: () => ipcRenderer.invoke('browser:openDevTools'),
+  showBrowserWaiting: () => ipcRenderer.invoke('browser:showWaiting'),
+  resetBrowser: () => ipcRenderer.invoke('browser:reset'),
   setBrowserBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.invoke('browser:setBounds', bounds),
   setBrowserSplitRatio: (ratio: number) => ipcRenderer.invoke('browser:setSplitRatio', ratio),
   navigateBrowser: (url: string) => ipcRenderer.invoke('browser:navigate', url),
   getDesktopState: () => ipcRenderer.invoke('desktop:getState'),
+  updateProviderConfig: (payload: { provider: string; models?: string[]; defaultMode?: 'web' | 'forward'; inputMaxChars?: number | null; forwardBaseUrl?: string; apiKey?: string }) =>
+    ipcRenderer.invoke('provider:updateConfig', payload),
+  updateSettings: (payload: { servicePort: number }) =>
+    ipcRenderer.invoke('settings:update', payload),
+  updatePromptConfig: (payload: { init_prompt: string; init_prompt_template: string; user_message_template: string; response_schema_template: string; format_only_retry_template: string }) =>
+    ipcRenderer.invoke('prompt:update', payload),
   startService: () => ipcRenderer.invoke('service:start'),
   stopService: () => ipcRenderer.invoke('service:stop'),
   restartService: () => ipcRenderer.invoke('service:restart'),

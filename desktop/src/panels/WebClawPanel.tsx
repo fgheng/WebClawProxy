@@ -16,6 +16,7 @@ type WebClawPanelProps = {
   apiBaseUrl: string;
   currentProvider: string;
   displayMode: 'web' | 'forward';
+  selectedModel?: string;
   providerModels: Record<string, string[]>;
   serviceStatus: string;
   onProviderChange: (provider: string) => Promise<void> | void;
@@ -39,7 +40,7 @@ function buildCatalog(providerModels: Record<string, string[]>): ProviderModelCa
 }
 
 export function WebClawPanel(props: WebClawPanelProps) {
-  const { apiBaseUrl, currentProvider, displayMode, providerModels, serviceStatus, onProviderChange, onError } = props;
+  const { apiBaseUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError } = props;
   const feedRef = useRef<HTMLDivElement | null>(null);
   const coreRef = useRef<WebClawClientCore | null>(null);
   const onProviderChangeRef = useRef(onProviderChange);
@@ -63,7 +64,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
     if (!apiBaseUrl || coreRef.current) return;
     const transport = new WebClawBrowserTransport({
       baseUrl: apiBaseUrl,
-      model: providerModels[currentProvider]?.[0] ?? 'gpt-4o',
+      model: selectedModel || providerModels[currentProvider]?.[0] || 'gpt-4o',
       routeMode: displayMode,
       stream: false,
       traceEnabled: true,
@@ -83,12 +84,12 @@ export function WebClawPanel(props: WebClawPanelProps) {
     });
 
     coreRef.current = nextCore;
-  }, [apiBaseUrl, catalog, currentProvider, displayMode, onProviderChange, providerModels]);
+  }, [apiBaseUrl, catalog, currentProvider, displayMode, selectedModel, onProviderChange, providerModels]);
 
   useEffect(() => {
     const core = coreRef.current;
     if (!core) return;
-    const nextModel = providerModels[currentProvider]?.[0];
+    const nextModel = selectedModel || providerModels[currentProvider]?.[0];
     if (!nextModel) return;
     const transport = core.getTransport();
     if (transport.getConfig().model === nextModel) return;
@@ -101,7 +102,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
         tone: 'muted',
       },
     ]);
-  }, [currentProvider, providerModels]);
+  }, [currentProvider, providerModels, selectedModel]);
 
   useEffect(() => {
     const core = coreRef.current;
@@ -201,14 +202,14 @@ export function WebClawPanel(props: WebClawPanelProps) {
         ]);
         return;
       }
-      const nextModel = providerModels[currentProvider]?.[0];
+      const nextModel = selectedModel || providerModels[currentProvider]?.[0];
       if (nextModel && core.getTransport().getConfig().model !== nextModel) {
         core.getTransport().setModel(nextModel);
         setFeed([
           {
             id: `provider-${Date.now()}`,
             role: 'webclaw',
-            content: `已切换到 ${currentProvider}，默认模型为 ${nextModel}`,
+            content: `已切换到 ${currentProvider}，当前模型为 ${nextModel}`,
             tone: 'muted',
           },
         ]);
