@@ -50,64 +50,6 @@ let promptConfig: {
   format_only_retry_template: '',
 };
 
-function readProviderCatalogFromFile(): {
-  providerSites: Record<ProviderKey, string>;
-  providerModels: Record<ProviderKey, string[]>;
-  providerDefaultModes: Record<ProviderKey, 'web' | 'forward'>;
-  providerInputMaxChars: Record<ProviderKey, number | null>;
-  providerForwardBaseUrls: Record<ProviderKey, string>;
-  providerApiKeys: Record<ProviderKey, string>;
-  providerApiKeyMasked: Record<ProviderKey, string>;
-} {
-  const empty: {
-    providerSites: Record<ProviderKey, string>;
-    providerModels: Record<ProviderKey, string[]>;
-    providerDefaultModes: Record<ProviderKey, 'web' | 'forward'>;
-    providerInputMaxChars: Record<ProviderKey, number | null>;
-    providerForwardBaseUrls: Record<ProviderKey, string>;
-    providerApiKeys: Record<ProviderKey, string>;
-    providerApiKeyMasked: Record<ProviderKey, string>;
-  } = {
-    providerSites: {} as Record<ProviderKey, string>,
-    providerModels: {} as Record<ProviderKey, string[]>,
-    providerDefaultModes: {} as Record<ProviderKey, 'web' | 'forward'>,
-    providerInputMaxChars: {} as Record<ProviderKey, number | null>,
-    providerForwardBaseUrls: {} as Record<ProviderKey, string>,
-    providerApiKeys: {} as Record<ProviderKey, string>,
-    providerApiKeyMasked: {} as Record<ProviderKey, string>,
-  };
-  try {
-    const configPath = path.join(PROJECT_ROOT, 'config', 'default.json');
-    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
-    const providers = (raw.providers ?? {}) as Record<string, any>;
-    for (const key of ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'] as ProviderKey[]) {
-      const item = providers[key] ?? {};
-      empty.providerSites[key] = typeof item?.web?.site === 'string' ? item.web.site : '';
-      empty.providerModels[key] = Array.isArray(item?.models) ? item.models.map((m: any) => String(m)) : [];
-      empty.providerDefaultModes[key] = item?.default_mode === 'forward' ? 'forward' : 'web';
-      const maxChars = item?.web?.input_max_chars ?? item?.input_max_chars;
-      empty.providerInputMaxChars[key] = typeof maxChars === 'number' ? maxChars : null;
-      empty.providerForwardBaseUrls[key] = typeof item?.forward?.base_url === 'string' ? item.forward.base_url : '';
-      empty.providerApiKeys[key] = typeof item?.forward?.api_key === 'string' ? item.forward.api_key : '';
-      empty.providerApiKeyMasked[key] = empty.providerApiKeys[key] ? '****' : '';
-    }
-    return empty;
-  } catch {
-    return empty;
-  }
-}
-
-function hydrateProviderCatalogFromFile(): void {
-  const parsed = readProviderCatalogFromFile();
-  providerSites = parsed.providerSites;
-  providerModels = parsed.providerModels;
-  providerDefaultModes = parsed.providerDefaultModes;
-  providerInputMaxChars = parsed.providerInputMaxChars;
-  providerForwardBaseUrls = parsed.providerForwardBaseUrls;
-  providerApiKeys = parsed.providerApiKeys;
-  providerApiKeyMasked = parsed.providerApiKeyMasked;
-}
-
 fs.mkdirSync(APP_DATA_ROOT, { recursive: true });
 fs.mkdirSync(path.join(APP_DATA_ROOT, 'user-data'), { recursive: true });
 fs.mkdirSync(path.join(APP_DATA_ROOT, 'session-data'), { recursive: true });
@@ -365,7 +307,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
   configuredServicePort = readConfiguredServicePortFromFile();
   runtimeServicePort = configuredServicePort;
   promptConfig = readPromptConfigFromFile();
-  hydrateProviderCatalogFromFile();
+  clearProviderCatalog();
   await refreshProviderCatalogFromService();
   await ensureBrowserViewManager(window, { allowProviderViews: true });
 
@@ -387,8 +329,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('browser:selectProvider', async (_event, provider: ProviderKey) => {
     if (!browserViewManager && mainWindowRef) {
-      const ok = await refreshProviderCatalogFromService();
-      if (!ok) hydrateProviderCatalogFromFile();
+      await refreshProviderCatalogFromService();
       await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
     browserViewManager?.showProvider(provider);
@@ -412,7 +353,6 @@ app.whenReady().then(() => {
     browserViewManager?.destroy();
     browserViewManager = null;
     clearProviderCatalog();
-    hydrateProviderCatalogFromFile();
     await refreshProviderCatalogFromService();
     if (mainWindowRef) {
       await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
@@ -460,18 +400,14 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('desktop:getState', async () => {
     const managerStatus = serviceManager?.getStatus() ?? 'stopped';
-    const healthy = await probeServiceHealth(getApiBaseUrl());
     const effectiveStatus = managerStatus;
 
     if (effectiveStatus === 'running') {
-      const ok = await refreshProviderCatalogFromService();
-      if (!ok) {
-        hydrateProviderCatalogFromFile();
-      }
+      await refreshProviderCatalogFromService();
       if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
     if (effectiveStatus === 'stopped') {
-      hydrateProviderCatalogFromFile();
+      clearProviderCatalog();
       promptConfig = readPromptConfigFromFile();
       if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
@@ -516,35 +452,7 @@ app.whenReady().then(() => {
         await refreshProviderCatalogFromService();
         if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef);
       } else {
-        const configPath = path.join(PROJECT_ROOT, 'config', 'default.json');
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
-        raw.providers = raw.providers ?? {};
-        raw.providers[payload.provider] = raw.providers[payload.provider] ?? {};
-        const target = raw.providers[payload.provider] as Record<string, any>;
-        if (Array.isArray(payload.models)) {
-          target.models = payload.models.map((m) => String(m ?? '').trim()).filter((m) => m.length > 0);
-        }
-        if (payload.defaultMode === 'web' || payload.defaultMode === 'forward') {
-          target.default_mode = payload.defaultMode;
-        }
-        if (payload.inputMaxChars === null) {
-          if (target.web && typeof target.web === 'object') delete target.web.input_max_chars;
-          delete target.input_max_chars;
-        } else if (typeof payload.inputMaxChars === 'number' && Number.isInteger(payload.inputMaxChars) && payload.inputMaxChars > 0) {
-          target.web = target.web ?? {};
-          target.web.input_max_chars = payload.inputMaxChars;
-          delete target.input_max_chars;
-        }
-        if (typeof payload.forwardBaseUrl === 'string') {
-          target.forward = target.forward ?? {};
-          target.forward.base_url = payload.forwardBaseUrl.trim();
-        }
-        if (typeof payload.apiKey === 'string') {
-          target.forward = target.forward ?? {};
-          target.forward.api_key = payload.apiKey.trim();
-        }
-        fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf-8');
-        hydrateProviderCatalogFromFile();
+        throw new Error('WebClawProxy 服务未启动或不可用，无法更新 Provider 配置');
       }
       return {
         ok: true,
@@ -606,10 +514,7 @@ app.whenReady().then(() => {
     const status = await serviceManager?.start() ?? 'stopped';
     if (status === 'running') {
       runtimeServicePort = configuredServicePort;
-      const ok = await refreshProviderCatalogFromService();
-      if (!ok) {
-        hydrateProviderCatalogFromFile();
-      }
+      await refreshProviderCatalogFromService();
       if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
     return { status };
@@ -628,10 +533,7 @@ app.whenReady().then(() => {
     const status = await serviceManager?.restart() ?? 'stopped';
     if (status === 'running') {
       runtimeServicePort = configuredServicePort;
-      const ok = await refreshProviderCatalogFromService();
-      if (!ok) {
-        hydrateProviderCatalogFromFile();
-      }
+      await refreshProviderCatalogFromService();
       if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
     return { status };
