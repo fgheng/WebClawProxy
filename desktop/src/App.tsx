@@ -83,6 +83,7 @@ export default function App() {
   });
   const splitPaneRef = useRef<HTMLDivElement | null>(null);
   const browserPaneRef = useRef<HTMLDivElement | null>(null);
+  const lastBrowserBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   const pushError = useCallback((message: string) => {
     setErrors((prev) => [`${new Date().toLocaleTimeString()} ${message}`, ...prev].slice(0, 100));
@@ -363,12 +364,17 @@ export default function App() {
     if (!pane) return false;
     const rect = pane.getBoundingClientRect();
     if (rect.width < 4 || rect.height < 4) return false;
-    void window.webclawDesktop?.setBrowserBounds?.({
+    const next = {
       x: Math.round(rect.left),
       y: Math.round(rect.top),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
-    });
+    };
+    const prev = lastBrowserBoundsRef.current;
+    if (!prev || prev.x !== next.x || prev.y !== next.y || prev.width !== next.width || prev.height !== next.height) {
+      lastBrowserBoundsRef.current = next;
+      void window.webclawDesktop?.setBrowserBounds?.(next);
+    }
     return true;
   }, []);
 

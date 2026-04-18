@@ -46,6 +46,8 @@ export class BrowserViewManager {
   private currentProvider: ProviderKey | null = null;
   private splitRatio = 0.56;
   private explicitBounds: ViewBounds | null = null;
+  private readonly onWindowResize = () => this.updateBounds();
+  private readonly onWindowResized = () => this.updateBounds();
 
   constructor(private readonly options: BrowserViewManagerOptions) {}
 
@@ -92,8 +94,8 @@ export class BrowserViewManager {
     } else {
       this.showWaiting();
     }
-    window.on('resize', () => this.updateBounds());
-    window.on('resized', () => this.updateBounds());
+    window.on('resize', this.onWindowResize);
+    window.on('resized', this.onWindowResized);
   }
 
   getCurrentProvider(): ProviderKey | null {
@@ -154,6 +156,10 @@ export class BrowserViewManager {
       this.showWaiting();
       return;
     }
+    if (this.currentProvider === provider && this.activeView === nextView) {
+      this.updateBounds();
+      return;
+    }
     this.detachActiveView();
     this.currentProvider = provider;
     this.activeView = nextView;
@@ -177,6 +183,10 @@ export class BrowserViewManager {
 
   showWaiting(): void {
     if (!this.window || !this.waitingView) return;
+    if (this.activeView === this.waitingView) {
+      this.updateBounds();
+      return;
+    }
     this.detachActiveView();
     this.activeView = this.waitingView;
     this.window.addBrowserView(this.waitingView);
@@ -233,6 +243,15 @@ export class BrowserViewManager {
   }
 
   setBounds(bounds: ViewBounds): void {
+    if (
+      this.explicitBounds &&
+      this.explicitBounds.x === bounds.x &&
+      this.explicitBounds.y === bounds.y &&
+      this.explicitBounds.width === bounds.width &&
+      this.explicitBounds.height === bounds.height
+    ) {
+      return;
+    }
     this.explicitBounds = bounds;
     this.updateBounds();
   }
@@ -252,6 +271,12 @@ export class BrowserViewManager {
 
   destroy(): void {
     if (this.window) {
+      try {
+        this.window.removeListener('resize', this.onWindowResize);
+        this.window.removeListener('resized', this.onWindowResized);
+      } catch {
+        // ignore
+      }
       try {
         if (this.activeView) this.window.removeBrowserView(this.activeView);
       } catch {
@@ -291,6 +316,11 @@ export class BrowserViewManager {
         // ignore
       }
     }
+
+    for (const timer of this.timeoutTimerByProvider.values()) {
+      clearTimeout(timer);
+    }
+    this.timeoutTimerByProvider.clear();
 
     this.views.clear();
     this.waitingView = null;
