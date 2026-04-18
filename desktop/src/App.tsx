@@ -817,8 +817,8 @@ export default function App() {
                   </div>
                 );
               })}
-              <button className="tab" type="button" title="自我进化">
-                自我进化
+              <button className="tab" type="button" title="自修复">
+                自修复
               </button>
               <span className="control-label mono">主题</span>
               <select
@@ -1191,11 +1191,36 @@ function ConfigPanel({
 
   const [promptDraft, setPromptDraft] = useState(promptConfig);
   const [promptSaving, setPromptSaving] = useState(false);
-  const [promptMessage, setPromptMessage] = useState('');
+  const [promptMessageByKey, setPromptMessageByKey] = useState<Partial<Record<
+  'init_prompt' | 'init_prompt_template' | 'user_message_template' | 'response_schema_template' | 'format_only_retry_template',
+  string
+  >>>({});
+  const promptMessageTimersRef = useRef<Partial<Record<
+  'init_prompt' | 'init_prompt_template' | 'user_message_template' | 'response_schema_template' | 'format_only_retry_template',
+  number | null
+  >>>({});
+  const lastPromptConfigRef = useRef(promptConfig);
 
   useEffect(() => {
-    setPromptDraft(promptConfig);
+    setPromptDraft((prev) => {
+      const last = lastPromptConfigRef.current;
+      return {
+        init_prompt: prev.init_prompt === last.init_prompt ? promptConfig.init_prompt : prev.init_prompt,
+        init_prompt_template: prev.init_prompt_template === last.init_prompt_template ? promptConfig.init_prompt_template : prev.init_prompt_template,
+        user_message_template: prev.user_message_template === last.user_message_template ? promptConfig.user_message_template : prev.user_message_template,
+        response_schema_template: prev.response_schema_template === last.response_schema_template ? promptConfig.response_schema_template : prev.response_schema_template,
+        format_only_retry_template: prev.format_only_retry_template === last.format_only_retry_template ? promptConfig.format_only_retry_template : prev.format_only_retry_template,
+      };
+    });
+    lastPromptConfigRef.current = promptConfig;
   }, [promptConfig]);
+
+  useEffect(() => () => {
+    for (const timer of Object.values(promptMessageTimersRef.current)) {
+      if (timer != null) window.clearTimeout(timer);
+    }
+    promptMessageTimersRef.current = {};
+  }, []);
 
   useEffect(() => {
     setServicePortDraft(String(servicePort));
@@ -1206,24 +1231,39 @@ function ConfigPanel({
     configScrollRef.current?.scrollTo({ top: 0 });
   }, [serviceStatus]);
 
-  const promptChanged =
-    promptDraft.init_prompt !== promptConfig.init_prompt ||
-    promptDraft.init_prompt_template !== promptConfig.init_prompt_template ||
-    promptDraft.user_message_template !== promptConfig.user_message_template ||
-    promptDraft.response_schema_template !== promptConfig.response_schema_template ||
-    promptDraft.format_only_retry_template !== promptConfig.format_only_retry_template;
+  const promptChangedByKey = {
+    init_prompt: promptDraft.init_prompt !== promptConfig.init_prompt,
+    init_prompt_template: promptDraft.init_prompt_template !== promptConfig.init_prompt_template,
+    user_message_template: promptDraft.user_message_template !== promptConfig.user_message_template,
+    response_schema_template: promptDraft.response_schema_template !== promptConfig.response_schema_template,
+    format_only_retry_template: promptDraft.format_only_retry_template !== promptConfig.format_only_retry_template,
+  };
 
-  const handlePromptSave = async () => {
-    if (!promptChanged) return;
+  const handlePromptSave = async (key: keyof typeof promptChangedByKey) => {
+    if (!promptChangedByKey[key]) return;
     setPromptSaving(true);
-    setPromptMessage('');
+    setPromptMessageByKey((prev) => ({ ...prev, [key]: '' }));
+    const existingTimer = promptMessageTimersRef.current[key];
+    if (existingTimer != null) window.clearTimeout(existingTimer);
     try {
-      await onSavePromptConfig(promptDraft);
-      setPromptMessage('已保存');
+      await onSavePromptConfig({
+        ...promptConfig,
+        [key]: promptDraft[key],
+      });
+      setPromptMessageByKey((prev) => ({ ...prev, [key]: '已保存' }));
+      promptMessageTimersRef.current[key] = window.setTimeout(() => {
+        setPromptMessageByKey((prev) => {
+          if (!prev[key]) return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        promptMessageTimersRef.current[key] = null;
+      }, 1500);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       onError(message);
-      setPromptMessage(`保存失败: ${message}`);
+      setPromptMessageByKey((prev) => ({ ...prev, [key]: `保存失败: ${message}` }));
     } finally {
       setPromptSaving(false);
     }
@@ -1693,13 +1733,13 @@ function ConfigPanel({
                 <div className="prompt-card-head mono">
                   <div className="prompt-card-title">init_prompt</div>
                   <div className="prompt-card-actions">
-                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    {promptMessageByKey.init_prompt ? <div className="prompt-card-message">{promptMessageByKey.init_prompt}</div> : null}
                     <button
                       className="primary"
                       type="button"
                       data-action="save-prompt"
-                      onClick={() => void handlePromptSave()}
-                      disabled={promptSaving || !promptChanged}
+                      onClick={() => void handlePromptSave('init_prompt')}
+                      disabled={promptSaving || !promptChangedByKey.init_prompt}
                     >
                       {promptSaving ? '保存中...' : '保存'}
                     </button>
@@ -1709,7 +1749,18 @@ function ConfigPanel({
                   className="mono"
                   rows={8}
                   value={promptDraft.init_prompt}
-                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, init_prompt: e.target.value }))}
+                  onChange={(e) => {
+                    setPromptDraft((prev) => ({ ...prev, init_prompt: e.target.value }));
+                    const timer = promptMessageTimersRef.current.init_prompt;
+                    if (timer != null) window.clearTimeout(timer);
+                    promptMessageTimersRef.current.init_prompt = null;
+                    setPromptMessageByKey((prev) => {
+                      if (!prev.init_prompt) return prev;
+                      const next = { ...prev };
+                      delete next.init_prompt;
+                      return next;
+                    });
+                  }}
                   onBlur={(event) => {
                     const next = event.relatedTarget as HTMLElement | null;
                     if (next?.dataset?.action === 'save-prompt') return;
@@ -1724,13 +1775,13 @@ function ConfigPanel({
                 <div className="prompt-card-head mono">
                   <div className="prompt-card-title">init_prompt_template</div>
                   <div className="prompt-card-actions">
-                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    {promptMessageByKey.init_prompt_template ? <div className="prompt-card-message">{promptMessageByKey.init_prompt_template}</div> : null}
                     <button
                       className="primary"
                       type="button"
                       data-action="save-prompt"
-                      onClick={() => void handlePromptSave()}
-                      disabled={promptSaving || !promptChanged}
+                      onClick={() => void handlePromptSave('init_prompt_template')}
+                      disabled={promptSaving || !promptChangedByKey.init_prompt_template}
                     >
                       {promptSaving ? '保存中...' : '保存'}
                     </button>
@@ -1740,7 +1791,18 @@ function ConfigPanel({
                   className="mono"
                   rows={8}
                   value={promptDraft.init_prompt_template}
-                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, init_prompt_template: e.target.value }))}
+                  onChange={(e) => {
+                    setPromptDraft((prev) => ({ ...prev, init_prompt_template: e.target.value }));
+                    const timer = promptMessageTimersRef.current.init_prompt_template;
+                    if (timer != null) window.clearTimeout(timer);
+                    promptMessageTimersRef.current.init_prompt_template = null;
+                    setPromptMessageByKey((prev) => {
+                      if (!prev.init_prompt_template) return prev;
+                      const next = { ...prev };
+                      delete next.init_prompt_template;
+                      return next;
+                    });
+                  }}
                   onBlur={(event) => {
                     const next = event.relatedTarget as HTMLElement | null;
                     if (next?.dataset?.action === 'save-prompt') return;
@@ -1755,13 +1817,13 @@ function ConfigPanel({
                 <div className="prompt-card-head mono">
                   <div className="prompt-card-title">user_message_template</div>
                   <div className="prompt-card-actions">
-                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    {promptMessageByKey.user_message_template ? <div className="prompt-card-message">{promptMessageByKey.user_message_template}</div> : null}
                     <button
                       className="primary"
                       type="button"
                       data-action="save-prompt"
-                      onClick={() => void handlePromptSave()}
-                      disabled={promptSaving || !promptChanged}
+                      onClick={() => void handlePromptSave('user_message_template')}
+                      disabled={promptSaving || !promptChangedByKey.user_message_template}
                     >
                       {promptSaving ? '保存中...' : '保存'}
                     </button>
@@ -1771,7 +1833,18 @@ function ConfigPanel({
                   className="mono"
                   rows={6}
                   value={promptDraft.user_message_template}
-                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, user_message_template: e.target.value }))}
+                  onChange={(e) => {
+                    setPromptDraft((prev) => ({ ...prev, user_message_template: e.target.value }));
+                    const timer = promptMessageTimersRef.current.user_message_template;
+                    if (timer != null) window.clearTimeout(timer);
+                    promptMessageTimersRef.current.user_message_template = null;
+                    setPromptMessageByKey((prev) => {
+                      if (!prev.user_message_template) return prev;
+                      const next = { ...prev };
+                      delete next.user_message_template;
+                      return next;
+                    });
+                  }}
                   onBlur={(event) => {
                     const next = event.relatedTarget as HTMLElement | null;
                     if (next?.dataset?.action === 'save-prompt') return;
@@ -1786,13 +1859,13 @@ function ConfigPanel({
                 <div className="prompt-card-head mono">
                   <div className="prompt-card-title">response_schema_template</div>
                   <div className="prompt-card-actions">
-                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    {promptMessageByKey.response_schema_template ? <div className="prompt-card-message">{promptMessageByKey.response_schema_template}</div> : null}
                     <button
                       className="primary"
                       type="button"
                       data-action="save-prompt"
-                      onClick={() => void handlePromptSave()}
-                      disabled={promptSaving || !promptChanged}
+                      onClick={() => void handlePromptSave('response_schema_template')}
+                      disabled={promptSaving || !promptChangedByKey.response_schema_template}
                     >
                       {promptSaving ? '保存中...' : '保存'}
                     </button>
@@ -1802,7 +1875,18 @@ function ConfigPanel({
                   className="mono"
                   rows={4}
                   value={promptDraft.response_schema_template}
-                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, response_schema_template: e.target.value }))}
+                  onChange={(e) => {
+                    setPromptDraft((prev) => ({ ...prev, response_schema_template: e.target.value }));
+                    const timer = promptMessageTimersRef.current.response_schema_template;
+                    if (timer != null) window.clearTimeout(timer);
+                    promptMessageTimersRef.current.response_schema_template = null;
+                    setPromptMessageByKey((prev) => {
+                      if (!prev.response_schema_template) return prev;
+                      const next = { ...prev };
+                      delete next.response_schema_template;
+                      return next;
+                    });
+                  }}
                   onBlur={(event) => {
                     const next = event.relatedTarget as HTMLElement | null;
                     if (next?.dataset?.action === 'save-prompt') return;
@@ -1817,13 +1901,13 @@ function ConfigPanel({
                 <div className="prompt-card-head mono">
                   <div className="prompt-card-title">format_only_retry_template</div>
                   <div className="prompt-card-actions">
-                    {promptMessage ? <div className="prompt-card-message">{promptMessage}</div> : null}
+                    {promptMessageByKey.format_only_retry_template ? <div className="prompt-card-message">{promptMessageByKey.format_only_retry_template}</div> : null}
                     <button
                       className="primary"
                       type="button"
                       data-action="save-prompt"
-                      onClick={() => void handlePromptSave()}
-                      disabled={promptSaving || !promptChanged}
+                      onClick={() => void handlePromptSave('format_only_retry_template')}
+                      disabled={promptSaving || !promptChangedByKey.format_only_retry_template}
                     >
                       {promptSaving ? '保存中...' : '保存'}
                     </button>
@@ -1833,7 +1917,18 @@ function ConfigPanel({
                   className="mono"
                   rows={6}
                   value={promptDraft.format_only_retry_template}
-                  onChange={(e) => setPromptDraft((prev) => ({ ...prev, format_only_retry_template: e.target.value }))}
+                  onChange={(e) => {
+                    setPromptDraft((prev) => ({ ...prev, format_only_retry_template: e.target.value }));
+                    const timer = promptMessageTimersRef.current.format_only_retry_template;
+                    if (timer != null) window.clearTimeout(timer);
+                    promptMessageTimersRef.current.format_only_retry_template = null;
+                    setPromptMessageByKey((prev) => {
+                      if (!prev.format_only_retry_template) return prev;
+                      const next = { ...prev };
+                      delete next.format_only_retry_template;
+                      return next;
+                    });
+                  }}
                   onBlur={(event) => {
                     const next = event.relatedTarget as HTMLElement | null;
                     if (next?.dataset?.action === 'save-prompt') return;
