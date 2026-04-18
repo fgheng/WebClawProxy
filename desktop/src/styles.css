@@ -119,6 +119,10 @@ html.theme-light .chat-bubble.muted {
 }
 
 html.theme-light .chat-bubble.webclaw.muted {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
   color: #64748b;
 }
 
@@ -810,6 +814,20 @@ html.theme-light .control-label {
 .tab-menu-item:hover {
   border-color: #1d4ed8;
   background: rgba(29, 78, 216, 0.12);
+}
+
+html.theme-light .tab-menu {
+  background: #ffffff;
+  border-color: #e2e8f0;
+}
+
+html.theme-light .tab-menu-item {
+  color: #0f172a;
+}
+
+html.theme-light .tab-menu-item:hover {
+  border-color: #2563eb;
+  background: rgba(37, 99, 235, 0.1);
 }
 
 .trace-list,

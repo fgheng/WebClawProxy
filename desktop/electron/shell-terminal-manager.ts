@@ -80,6 +80,7 @@ export class ShellTerminalManager {
   async close(terminalId: string): Promise<{ closed: boolean }> {
     const sess = this.sessions.get(terminalId);
     if (!sess) return { closed: false };
+    const pid = sess.pid;
     this.sessions.delete(terminalId);
 
     if (sess.proc) {
@@ -91,6 +92,17 @@ export class ShellTerminalManager {
     if (sess.rawProc) {
       try {
         sess.rawProc.kill('SIGTERM');
+      } catch {
+      }
+    }
+    if (pid) {
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        process.kill(pid, 0);
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+        }
       } catch {
       }
     }
@@ -201,8 +213,8 @@ export class ShellTerminalManager {
         this.emitOutput(sess.id, `\r\n[SYS ] Shell started: ${sess.shell}\r\n`, 'system');
         this.emitOutput(sess.id, `[SYS ] Working directory: ${sess.cwd}\r\n`, 'system');
 
-        sess.proc.onData((data) => this.emitOutput(sess.id, data, 'stdout'));
-        sess.proc.onExit(({ exitCode, signal }) => {
+        sess.proc.onData((data: string) => this.emitOutput(sess.id, data, 'stdout'));
+        sess.proc.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
           if (!this.sessions.has(sess.id)) return;
           this.emitOutput(sess.id, `\r\n[SYS ] Shell exited (code=${exitCode ?? 'null'}, signal=${signal ?? 'null'})\r\n`, 'system');
           sess.proc = null;

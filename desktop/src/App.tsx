@@ -66,6 +66,7 @@ export default function App() {
     chunks: string[];
   }>>({});
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
+  const closedTerminalIdsRef = useRef<Set<string>>(new Set());
   const [logTypeFilter, setLogTypeFilter] = useState('all');
   const [logProviderFilter, setLogProviderFilter] = useState('all');
   const [logSearch, setLogSearch] = useState('');
@@ -235,6 +236,7 @@ export default function App() {
     });
     const disposeTerminalOutput = window.webclawDesktop?.onTerminalOutput?.((event) => {
       setTerminalsById((prev) => {
+        if (closedTerminalIdsRef.current.has(event.terminalId)) return prev;
         const existing = prev[event.terminalId];
         if (!existing) {
           return {
@@ -261,6 +263,7 @@ export default function App() {
     });
     const disposeTerminalStatus = window.webclawDesktop?.onTerminalStatus?.((event) => {
       setTerminalsById((prev) => {
+        if (closedTerminalIdsRef.current.has(event.terminalId)) return prev;
         const existing = prev[event.terminalId];
         const next = {
           terminalId: event.terminalId,
@@ -348,6 +351,7 @@ export default function App() {
         pid: t.pid,
         chunks: [],
       };
+      closedTerminalIdsRef.current.delete(t.terminalId);
     }
     setTerminalsById(nextById);
     setActiveTerminalId(state?.activeTerminalId ?? terminals[0]?.terminalId ?? null);
@@ -593,13 +597,17 @@ export default function App() {
             activeTerminalId={activeTerminalId}
             theme={theme}
             onSelectTerminal={(terminalId) => {
-              setActiveTerminalId(terminalId);
+              setActiveTerminalId((prev) => (terminalsById[terminalId] ? terminalId : prev));
             }}
             onCloseTerminal={async (terminalId) => {
               const confirmed = window.confirm(`确认关闭终端 ${terminalId} 吗？`);
               if (!confirmed) return;
+              closedTerminalIdsRef.current.add(terminalId);
               const res = await window.webclawDesktop?.closeTerminal?.(terminalId);
-              if (!res?.closed) return;
+              if (!res?.closed) {
+                closedTerminalIdsRef.current.delete(terminalId);
+                return;
+              }
               setTerminalsById((prev) => {
                 const next = { ...prev };
                 delete next[terminalId];
