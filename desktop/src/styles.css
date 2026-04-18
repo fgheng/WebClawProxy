@@ -127,7 +127,13 @@ html.theme-light .chat-bubble.webclaw.muted {
 }
 
 html.theme-light .chat-bubble.webclaw.error {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
   color: rgba(220, 38, 38, 0.7);
+  font-size: 11px;
+  max-width: 100%;
 }
 
 html.theme-light .webclaw-inputbar {
