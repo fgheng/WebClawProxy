@@ -8,6 +8,7 @@ declare global {
       reloadCurrentProvider: () => Promise<{ url: string }>;
       openBrowserDevTools: () => Promise<void>;
       showBrowserWaiting: () => Promise<{ url: string }>;
+      showBrowserMonitor: (url: string) => Promise<{ url: string }>;
       resetBrowser: () => Promise<{ ok: boolean }>;
       setBrowserBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
       setBrowserSplitRatio: (ratio: number) => Promise<void>;

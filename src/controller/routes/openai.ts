@@ -100,6 +100,11 @@ async function sendForwardRequest(
     providerConfig: NormalizedProviderConfig;
     requestBody: Record<string, unknown>;
     sessionHeader?: string;
+    clientFingerprint?: {
+      authorization?: string;
+      userAgent?: string;
+      ip?: string;
+    };
   }
 ): Promise<void> {
   const { traceId, providerKey, providerConfig } = options;
@@ -130,7 +135,10 @@ async function sendForwardRequest(
     providerKey,
     originalModel,
     options.requestBody,
-    options.sessionHeader ?? ''
+    {
+      sessionHeader: options.sessionHeader ?? '',
+      clientFingerprint: options.clientFingerprint,
+    }
   );
   if (ingestResult.action === 'new') {
     forwardMonitorBus.publish({
@@ -1241,6 +1249,11 @@ export async function chatCompletionsHandler(
         providerConfig: providerConfig ?? normalizeProviderConfig(undefined),
         requestBody,
         sessionHeader: (req.headers['x-session-id'] as string | undefined) ?? '',
+        clientFingerprint: {
+          authorization: typeof req.headers.authorization === 'string' ? req.headers.authorization : '',
+          userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '',
+          ip: req.ip,
+        },
       });
       return;
     }

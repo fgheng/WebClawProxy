@@ -39,6 +39,70 @@
       --sidebar-w:     260px;
     }
 
+    html.theme-light {
+      --bg:            #f8fafc;
+      --bg-sidebar:    #f1f5f9;
+      --bg-card:       #ffffff;
+      --bg-hover:      rgba(15, 23, 42, 0.06);
+      --bg-selected:   rgba(37, 99, 235, 0.1);
+      --border:        #e2e8f0;
+      --border-faint:  rgba(226, 232, 240, 0.9);
+      --text:          #0f172a;
+      --text-muted:    #64748b;
+      --text-dim:      #94a3b8;
+      --accent-blue:   #2563eb;
+      --accent-green:  #16a34a;
+      --accent-purple: #7c3aed;
+      --accent-yellow: #b45309;
+      --accent-red:    #dc2626;
+      --role-sys-bg:   rgba(124, 58, 237, 0.08);
+      --role-sys-bdr:  rgba(124, 58, 237, 0.22);
+      --role-sys-clr:  #7c3aed;
+      --role-usr-bg:   rgba(37, 99, 235, 0.08);
+      --role-usr-bdr:  rgba(37, 99, 235, 0.22);
+      --role-usr-clr:  #2563eb;
+      --role-ast-bg:   rgba(22, 163, 74, 0.08);
+      --role-ast-bdr:  rgba(22, 163, 74, 0.22);
+      --role-ast-clr:  #16a34a;
+      --role-tol-bg:   rgba(180, 83, 9, 0.08);
+      --role-tol-bdr:  rgba(180, 83, 9, 0.22);
+      --role-tol-clr:  #b45309;
+      --scrollbar:     rgba(15, 23, 42, 0.24);
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:            #f8fafc;
+        --bg-sidebar:    #f1f5f9;
+        --bg-card:       #ffffff;
+        --bg-hover:      rgba(15, 23, 42, 0.06);
+        --bg-selected:   rgba(37, 99, 235, 0.1);
+        --border:        #e2e8f0;
+        --border-faint:  rgba(226, 232, 240, 0.9);
+        --text:          #0f172a;
+        --text-muted:    #64748b;
+        --text-dim:      #94a3b8;
+        --accent-blue:   #2563eb;
+        --accent-green:  #16a34a;
+        --accent-purple: #7c3aed;
+        --accent-yellow: #b45309;
+        --accent-red:    #dc2626;
+        --role-sys-bg:   rgba(124, 58, 237, 0.08);
+        --role-sys-bdr:  rgba(124, 58, 237, 0.22);
+        --role-sys-clr:  #7c3aed;
+        --role-usr-bg:   rgba(37, 99, 235, 0.08);
+        --role-usr-bdr:  rgba(37, 99, 235, 0.22);
+        --role-usr-clr:  #2563eb;
+        --role-ast-bg:   rgba(22, 163, 74, 0.08);
+        --role-ast-bdr:  rgba(22, 163, 74, 0.22);
+        --role-ast-clr:  #16a34a;
+        --role-tol-bg:   rgba(180, 83, 9, 0.08);
+        --role-tol-bdr:  rgba(180, 83, 9, 0.22);
+        --role-tol-clr:  #b45309;
+        --scrollbar:     rgba(15, 23, 42, 0.24);
+      }
+    }
+
     html, body { height: 100%; background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
       font-size: 13px; line-height: 1.5; overflow: hidden; }
@@ -381,6 +445,14 @@
 <script>
 (function () {
 'use strict';
+
+try {
+  var params = new URLSearchParams(window.location.search || '');
+  var theme = params.get('theme');
+  if (theme === 'light') {
+    document.documentElement.classList.add('theme-light');
+  }
+} catch (e) {}
 
 const sessions  = new Map();
 let   activeId  = null;

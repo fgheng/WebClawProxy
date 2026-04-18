@@ -42,6 +42,9 @@ export class BrowserViewManager {
   private loadStateByProvider = new Map<ProviderKey, { targetUrl: string; state: 'loading' | 'timeout' }>();
   private timeoutTimerByProvider = new Map<ProviderKey, ReturnType<typeof setTimeout>>();
   private waitingView: BrowserView | null = null;
+  private monitorView: BrowserView | null = null;
+  private monitorTargetUrl = '';
+  private monitorTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
   private activeView: BrowserView | null = null;
   private currentProvider: ProviderKey | null = null;
   private splitRatio = 0.56;
@@ -75,6 +78,22 @@ export class BrowserViewManager {
       }
     }, 30000);
     this.timeoutTimerByProvider.set(provider, timer);
+  }
+
+  private armMonitorTimeout(targetUrl: string): void {
+    if (!this.monitorView) return;
+    if (this.monitorTimeoutTimer) clearTimeout(this.monitorTimeoutTimer);
+    this.monitorTimeoutTimer = setTimeout(() => {
+      if (!this.monitorView) return;
+      try {
+        const url = this.monitorView.webContents.getURL();
+        const isLoading = (this.monitorView.webContents as unknown as { isLoading?: () => boolean }).isLoading?.() ?? false;
+        if (!isLoading) return;
+        if (url.startsWith('file://') && url.includes('loading.html')) return;
+        void this.monitorView.webContents.loadURL(buildLoadingUrl(targetUrl, 'timeout'));
+      } catch {
+      }
+    }, 30000);
   }
 
   async attach(window: BrowserWindow, initialProvider: ProviderKey | null): Promise<void> {
@@ -144,7 +163,6 @@ export class BrowserViewManager {
     }
     if (this.currentProvider && !nextProviderSites[this.currentProvider]) {
       this.currentProvider = null;
-      this.showWaiting();
     }
   }
 
@@ -193,6 +211,48 @@ export class BrowserViewManager {
     this.updateBounds();
   }
 
+  showMonitor(targetUrl: string): void {
+    if (!this.window) return;
+    if (!targetUrl || !targetUrl.trim()) return;
+    this.monitorTargetUrl = targetUrl.trim();
+    if (!this.monitorView) {
+      this.monitorView = new BrowserView({
+        webPreferences: {
+          partition: 'persist:webclaw-monitor',
+          sandbox: false,
+        },
+      });
+      this.applyThemeToView(this.monitorView);
+      this.monitorView.webContents.on('did-stop-loading', () => {
+        if (this.monitorTimeoutTimer) clearTimeout(this.monitorTimeoutTimer);
+        this.monitorTimeoutTimer = null;
+      });
+      this.monitorView.webContents.on('did-fail-load', (_event, errorCode, _errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame) return;
+        if (!validatedURL || validatedURL.startsWith('file://')) return;
+        if (!isNetworkLoadError(errorCode)) return;
+        void this.monitorView?.webContents.loadURL(buildLoadingUrl(validatedURL, 'timeout'));
+      });
+    }
+
+    if (this.activeView === this.monitorView) {
+      const currentUrl = this.monitorView.webContents.getURL();
+      if (!currentUrl || currentUrl.startsWith('about:blank') || currentUrl.includes('loading.html') || currentUrl !== targetUrl) {
+        void this.monitorView.webContents.loadURL(buildLoadingUrl(targetUrl, 'loading'));
+        this.armMonitorTimeout(targetUrl);
+      }
+      this.updateBounds();
+      return;
+    }
+
+    this.detachActiveView();
+    this.activeView = this.monitorView;
+    this.window.addBrowserView(this.monitorView);
+    void this.monitorView.webContents.loadURL(buildLoadingUrl(targetUrl, 'loading'));
+    this.armMonitorTimeout(targetUrl);
+    this.updateBounds();
+  }
+
   async reloadCurrentProvider(): Promise<void> {
     if (this.currentProvider) {
       const view = this.views.get(this.currentProvider);
@@ -222,11 +282,19 @@ export class BrowserViewManager {
     browserViewTheme = theme === 'light' ? 'light' : 'dark';
     if (!this.waitingView) return;
     this.applyThemeToView(this.waitingView);
+    if (this.monitorView) {
+      this.applyThemeToView(this.monitorView);
+    }
     for (const view of this.views.values()) {
       this.applyThemeToView(view);
     }
     if (this.activeView === this.waitingView) {
       void this.waitingView.webContents.loadURL(buildLoadingUrl());
+      return;
+    }
+    if (this.activeView === this.monitorView && this.monitorView && this.monitorTargetUrl) {
+      void this.monitorView.webContents.loadURL(buildLoadingUrl(this.monitorTargetUrl, 'loading'));
+      this.armMonitorTimeout(this.monitorTargetUrl);
       return;
     }
     if (this.currentProvider) {
@@ -258,9 +326,7 @@ export class BrowserViewManager {
 
   navigateTo(url: string): Promise<void> {
     if (!this.window) return Promise.resolve();
-    const view = this.currentProvider
-      ? this.views.get(this.currentProvider)
-      : this.activeView;
+    const view = this.activeView ?? (this.currentProvider ? this.views.get(this.currentProvider) : null);
     if (!view) return Promise.resolve();
     return view.webContents.loadURL(url);
   }
@@ -289,6 +355,13 @@ export class BrowserViewManager {
           // ignore
         }
       }
+      if (this.monitorView) {
+        try {
+          this.window.removeBrowserView(this.monitorView);
+        } catch {
+          // ignore
+        }
+      }
       if (this.waitingView) {
         try {
           this.window.removeBrowserView(this.waitingView);
@@ -301,6 +374,15 @@ export class BrowserViewManager {
     for (const view of this.views.values()) {
       try {
         const wc = view.webContents as unknown as { destroy?: () => void; close?: () => void };
+        if (typeof wc.destroy === 'function') wc.destroy();
+        else if (typeof wc.close === 'function') wc.close();
+      } catch {
+        // ignore
+      }
+    }
+    if (this.monitorView) {
+      try {
+        const wc = this.monitorView.webContents as unknown as { destroy?: () => void; close?: () => void };
         if (typeof wc.destroy === 'function') wc.destroy();
         else if (typeof wc.close === 'function') wc.close();
       } catch {
@@ -321,9 +403,15 @@ export class BrowserViewManager {
       clearTimeout(timer);
     }
     this.timeoutTimerByProvider.clear();
+    if (this.monitorTimeoutTimer) {
+      clearTimeout(this.monitorTimeoutTimer);
+      this.monitorTimeoutTimer = null;
+    }
 
     this.views.clear();
     this.waitingView = null;
+    this.monitorView = null;
+    this.monitorTargetUrl = '';
     this.activeView = null;
     this.currentProvider = null;
     this.window = null;

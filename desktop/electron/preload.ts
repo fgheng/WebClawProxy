@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
   reloadCurrentProvider: () => ipcRenderer.invoke('browser:reloadCurrent'),
   openBrowserDevTools: () => ipcRenderer.invoke('browser:openDevTools'),
   showBrowserWaiting: () => ipcRenderer.invoke('browser:showWaiting'),
+  showBrowserMonitor: (url: string) => ipcRenderer.invoke('browser:showMonitor', { url }),
   resetBrowser: () => ipcRenderer.invoke('browser:reset'),
   setBrowserBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.invoke('browser:setBounds', bounds),

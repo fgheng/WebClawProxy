@@ -169,12 +169,6 @@ export default function App() {
   }, [terminalMenuOpen]);
 
   useEffect(() => {
-    if (displayMode !== 'forward') return;
-    if (serviceStatus !== 'running') return;
-    void window.webclawDesktop?.navigateBrowser?.(`${apiBaseUrl}/monitor`);
-  }, [apiBaseUrl, displayMode, serviceStatus]);
-
-  useEffect(() => {
     let mounted = true;
     const refreshDesktopState = async () => {
       const state = await window.webclawDesktop?.getDesktopState?.();
@@ -429,12 +423,18 @@ export default function App() {
 
   const handleProviderChange = useCallback(async (provider: string) => {
     setCurrentProvider(provider);
-    // ✅ 只有在 web 模式下才切换 BrowserView
-    // forward 模式下切换 provider 应该停留在 forward 界面
     if (displayMode === 'web') {
       await window.webclawDesktop?.selectProvider?.(provider);
+    } else if (serviceStatus === 'running') {
+      await window.webclawDesktop?.showBrowserMonitor?.(`${apiBaseUrl}/monitor?theme=${theme}`);
     }
-  }, [displayMode]);
+  }, [apiBaseUrl, displayMode, serviceStatus, theme]);
+
+  useEffect(() => {
+    if (displayMode !== 'forward') return;
+    if (serviceStatus !== 'running') return;
+    void window.webclawDesktop?.showBrowserMonitor?.(`${apiBaseUrl}/monitor?theme=${theme}`);
+  }, [apiBaseUrl, displayMode, serviceStatus, theme]);
 
   const handleProviderConfigSave = useCallback(
     async (payload: { provider: string; models: string[]; defaultMode: 'web' | 'forward'; inputMaxChars: number | null; forwardBaseUrl: string; apiKey?: string }) => {
@@ -731,19 +731,21 @@ export default function App() {
                 value={displayMode}
                 onChange={(e) => {
                   const mode = e.target.value as 'web' | 'forward';
-                  setDisplayMode(mode);
                   if (mode === 'forward') {
-                    if (serviceStatus === 'running') {
-                      void window.webclawDesktop?.navigateBrowser?.(`${apiBaseUrl}/monitor`);
-                    } else {
+                    if (serviceStatus !== 'running') {
                       pushError('WebClaw 服务未启动，无法加载 Forward Monitor');
+                      setDisplayMode('web');
+                      return;
                     }
-                  } else {
-                    void window.webclawDesktop?.selectProvider?.(currentProvider);
+                    setDisplayMode('forward');
+                    void window.webclawDesktop?.showBrowserMonitor?.(`${apiBaseUrl}/monitor?theme=${theme}`);
+                    return;
                   }
+                  setDisplayMode('web');
+                  void window.webclawDesktop?.selectProvider?.(currentProvider);
                 }}
                 title="切换 web / forward 模式（forward 模式会自动连接服务）"
-                disabled={!serviceControlReady || serviceStatus !== 'running' || (activeTab === 'webclaw' && webclawSending)}
+                disabled={!serviceControlReady || (activeTab === 'webclaw' && webclawSending)}
               >
                 <option value="web">web</option>
                 <option value="forward">forward</option>

@@ -9,6 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { FileConversationStore } from '../conversation/FileConversationStore';
 import type { ConversationMessage, ConversationRecord, ConversationSnapshot } from '../conversation/types';
 import { loadAppConfig } from '../config/app-config';
@@ -120,34 +121,78 @@ function splitMessages(
   };
 }
 
-/**
- * 计算三段 session hash。
- *
- * 设计原则：同一个对话的每一轮请求，必须算出相同的 sessionId。
- * 因此我们取**每轮都保持不变的信息**作为 hash 输入：
- *   - tools hash：工具集（每轮都传，内容不变）
- *   - system hash：所有 system 消息内容（每轮都传，内容不变）
- *   - first-user hash：第一条 role=user 消息内容（每轮都会在历史里保留）
- *
- * @param tools      请求体中的 tools 字段
- * @param allMessages 本次请求的全量 messages（切割前）
- */
-function computeSessionId(tools: unknown[], allMessages: RawMessage[]): string {
-  // 1. tools hash
-  const toolsHash = djb2(tools.length > 0 ? JSON.stringify(tools) : '');
+type FingerprintInput = {
+  authorization?: string;
+  userAgent?: string;
+  ip?: string;
+};
 
-  // 2. system hash：所有 system 消息拼接（每轮都完整携带）
+let runtimeSessionSecret = '';
+
+function getSessionSecret(): string {
+  const env = String(
+    process.env.WEBCLAW_SESSION_FINGERPRINT_SECRET ??
+    process.env.WEBCLAW_SERVER_SECRET ??
+    ''
+  ).trim();
+  if (env) return env;
+  if (!runtimeSessionSecret) {
+    runtimeSessionSecret = crypto.randomBytes(32).toString('hex');
+  }
+  return runtimeSessionSecret;
+}
+
+function hmacHex(secret: string, input: string): string {
+  return crypto.createHmac('sha256', secret).update(input).digest('hex');
+}
+
+function getClientFingerprintHex(input?: FingerprintInput): string {
+  const secret = getSessionSecret();
+  const authorization = typeof input?.authorization === 'string' ? input.authorization.trim() : '';
+  if (authorization) {
+    return hmacHex(secret, `auth:${authorization}`);
+  }
+  const ip = typeof input?.ip === 'string' ? input.ip.trim() : '';
+  const ua = typeof input?.userAgent === 'string' ? input.userAgent.trim() : '';
+  if (ip || ua) {
+    return hmacHex(secret, `ipua:${ip}|${ua}`);
+  }
+  return hmacHex(secret, 'anon');
+}
+
+function shortHex(hex: string, length: number): string {
+  const normalized = typeof hex === 'string' ? hex : '';
+  if (!/^[0-9a-f]+$/i.test(normalized)) return '0'.repeat(length);
+  return normalized.slice(0, length).padEnd(length, '0');
+}
+
+function computeStableConversationKey(
+  providerKey: string,
+  model: string,
+  tools: unknown[],
+  allMessages: RawMessage[],
+): { fullKey: string; shortKey: string; hasHistory: boolean; lastUserHash: string } {
+  const toolsHash = djb2(tools.length > 0 ? JSON.stringify(tools) : '');
   const systemContents = allMessages
     .filter((m) => m.role === 'system')
     .map((m) => stringifyContentForHash(m.content))
     .join('\n');
   const systemHash = djb2(systemContents);
-
-  // 3. first-user hash：第一条 user 消息（每轮历史里都有，且不变）
   const firstUser = allMessages.find((m) => m.role === 'user');
   const firstUserHash = djb2(stringifyContentForHash(firstUser?.content));
-
-  return `${toolsHash}:${systemHash}:${firstUserHash}`;
+  const lastUser = [...allMessages].reverse().find((m) => m.role === 'user');
+  const lastUserHash = djb2(stringifyContentForHash(lastUser?.content));
+  const providerHash = djb2(providerKey);
+  const modelHash = djb2(model);
+  const hasHistory =
+    allMessages.some((m) => m.role === 'assistant') ||
+    allMessages.filter((m) => m.role === 'user').length > 1;
+  return {
+    fullKey: `${providerHash}:${modelHash}:${toolsHash}:${systemHash}:${firstUserHash}`,
+    shortKey: `${providerHash}:${modelHash}:${toolsHash}:${systemHash}`,
+    hasHistory,
+    lastUserHash,
+  };
 }
 
 // ── SessionRegistry ───────────────────────────────────────────────────────────
@@ -158,6 +203,7 @@ const PERSIST_INTERVAL_MS = 60 * 1000; // 每 1 分钟自动保存一次
 export class SessionRegistry {
   /** sessionId → Session */
   private sessions = new Map<string, Session>();
+  private recentSessionByKey = new Map<string, string>();
   /** 统一会话仓库（当前阶段仅做双写） */
   private readonly conversationStore: FileConversationStore;
   private readonly persistFilePath: string;
@@ -344,7 +390,6 @@ export class SessionRegistry {
   }
 
   private buildConversationRecord(session: Session): ConversationRecord {
-    const parts = session.sessionId.split(':');
     return {
       conversationId: session.sessionId,
       mode: 'forward',
@@ -352,9 +397,6 @@ export class SessionRegistry {
       model: session.model,
       identity: {
         sessionId: session.sessionId,
-        toolsHash: parts[0],
-        systemHash: parts[1],
-        firstUserHash: parts[2],
       },
       promptState: {
         system: this.extractSystemPrompt(session.messages),
@@ -387,7 +429,7 @@ export class SessionRegistry {
     providerKey: string,
     model: string,
     requestBody: Record<string, unknown>,
-    sessionHeader?: string,
+    options?: { sessionHeader?: string; clientFingerprint?: FingerprintInput },
   ): IngestResult {
     const now = Date.now();
     const rawMessages = Array.isArray(requestBody.messages)
@@ -396,10 +438,27 @@ export class SessionRegistry {
     const tools = Array.isArray(requestBody.tools) ? requestBody.tools : [];
 
     const { history, newMessages } = splitMessages(rawMessages, now);
-    const headerSessionId = typeof sessionHeader === 'string' ? sessionHeader.trim() : '';
-    const sessionId = headerSessionId
-      ? `hdr:${headerSessionId}`
-      : computeSessionId(tools, rawMessages);
+    const headerSessionId = typeof options?.sessionHeader === 'string' ? options.sessionHeader.trim() : '';
+    const clientFpShort = shortHex(getClientFingerprintHex(options?.clientFingerprint), 16);
+    const conv = computeStableConversationKey(providerKey, model, tools, rawMessages);
+    const sessionId = (() => {
+      if (headerSessionId) return `hdr:${headerSessionId}`;
+      if (!conv.hasHistory) {
+        const key = `fp:${clientFpShort}:${conv.shortKey}`;
+        const existing = this.recentSessionByKey.get(key);
+        if (existing) {
+          const sess = this.sessions.get(existing);
+          if (sess && now - sess.lastActiveAt < 2 * 60 * 1000) {
+            return existing;
+          }
+          this.recentSessionByKey.delete(key);
+        }
+        const fresh = `fp:${clientFpShort}:${conv.shortKey}:${conv.lastUserHash}`;
+        this.recentSessionByKey.set(key, fresh);
+        return fresh;
+      }
+      return `fp:${clientFpShort}:${conv.fullKey}`;
+    })();
 
     const existing = this.sessions.get(sessionId);
 
@@ -428,6 +487,10 @@ export class SessionRegistry {
       lastActiveAt: now,
     };
     this.sessions.set(sessionId, session);
+    if (!headerSessionId) {
+      const key = `fp:${clientFpShort}:${conv.shortKey}`;
+      this.recentSessionByKey.set(key, sessionId);
+    }
     // ✅ 立即持久化（防止数据丢失）
     this.save();
     this.syncConversationMirror(session);
@@ -512,6 +575,12 @@ export class SessionRegistry {
       if (now - session.lastActiveAt > SESSION_TTL_MS) {
         this.sessions.delete(id);
         cleaned++;
+      }
+    }
+    for (const [key, sessionId] of this.recentSessionByKey.entries()) {
+      const sess = this.sessions.get(sessionId);
+      if (!sess || now - sess.lastActiveAt > 2 * 60 * 1000) {
+        this.recentSessionByKey.delete(key);
       }
     }
     if (cleaned > 0) {

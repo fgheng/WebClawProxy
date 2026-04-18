@@ -258,17 +258,7 @@ async function ensureBrowserViewManager(
     return;
   }
   await browserViewManager.syncProviderSites(compactSites);
-  const currentProvider = browserViewManager.getCurrentProvider();
-  if (currentProvider && browserViewManager.hasProviderView(currentProvider)) {
-    browserViewManager.showProvider(currentProvider);
-    return;
-  }
-  const initialProvider = siteEntries[0]?.[0];
-  if ((options?.allowProviderViews ?? true) && initialProvider) {
-    browserViewManager.showProvider(initialProvider);
-  } else {
-    browserViewManager.showWaiting();
-  }
+  return;
 }
 
 function clearProviderCatalog(): void {
@@ -347,6 +337,10 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('browser:showWaiting', async () => {
     browserViewManager?.showWaiting();
+    return { url: browserViewManager?.getCurrentUrl() ?? '' };
+  });
+  ipcMain.handle('browser:showMonitor', async (_event, payload: { url: string }) => {
+    browserViewManager?.showMonitor(String(payload?.url ?? ''));
     return { url: browserViewManager?.getCurrentUrl() ?? '' };
   });
   ipcMain.handle('browser:reset', async () => {
