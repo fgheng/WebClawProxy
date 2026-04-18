@@ -712,7 +712,7 @@ export default function App() {
                 className="control-provider-select"
                 value={currentProvider}
                 onChange={(e) => void handleProviderChange(e.target.value)}
-                disabled={!serviceControlReady || serviceStatus !== 'running' || Object.keys(providerSites).length === 0 || (activeTab === 'webclaw' && webclawSending)}
+                disabled={!serviceControlReady || Object.keys(providerSites).length === 0 || (activeTab === 'webclaw' && webclawSending)}
               >
                 {(Object.keys(providerSites).length > 0 ? Object.keys(providerSites) : [currentProvider]).map((provider) => (
                   <option key={provider} value={provider}>

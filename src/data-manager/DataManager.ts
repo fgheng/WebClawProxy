@@ -13,7 +13,7 @@ import { buildSystemPrompt,
 } from './utils/prompt';
 import { stringifyLogPayload } from '../controller/logger';
 import type {} from './utils/prompt';
-import { loadAppConfig } from '../config/app-config';
+import { clearAppConfigCache, loadAppConfig } from '../config/app-config';
 
 interface SessionIndexEntry {
   /** 当前会话最新 hash（每会话仅保留一个可命中 hash） */
@@ -41,9 +41,6 @@ interface LegacySessionIndexFile {
   hashes?: Record<string, LegacySessionIndexEntry>;
 }
 
-// 加载配置
-const config = loadAppConfig();
-
 /**
  * 模型分类查找
  * 给定模型名称（如 "gpt-4o"），返回所属大类（小写，如 "gpt"）
@@ -61,7 +58,7 @@ function findModelCategory(
   return model.toLowerCase().replace(/[^a-z0-9]/g, '_');
 }
 
-function getModelMapFromConfig(): Record<string, string[]> {
+function getModelMapFromConfig(config: Record<string, any>): Record<string, string[]> {
   const providers = (config.providers ?? {}) as Record<string, { models?: string[] }>;
   const mapped: Record<string, string[]> = {};
   for (const [providerKey, provider] of Object.entries(providers)) {
@@ -89,6 +86,8 @@ export class DataManager {
   private traceId: string = 'dm-na';
 
   constructor(request: InternalRequest, customConfig?: Partial<DataManagerConfig>) {
+    clearAppConfigCache();
+    const config = loadAppConfig();
     this.model = request.model;
     this.system = request.system ?? '';
     this.history = [...(request.history ?? [])];
@@ -97,7 +96,7 @@ export class DataManager {
 
     this.config = {
       rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
-      models: customConfig?.models ?? getModelMapFromConfig(),
+      models: customConfig?.models ?? getModelMapFromConfig(config),
       initPrompt:
         customConfig?.initPrompt ??
         config.prompt?.init_prompt ??

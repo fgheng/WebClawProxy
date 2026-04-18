@@ -21,20 +21,26 @@ type ViewBounds = {
 
 let browserViewTheme: 'dark' | 'light' = 'dark';
 
-function buildLoadingUrl(targetUrl?: string): string {
+function buildLoadingUrl(targetUrl?: string, state: 'loading' | 'timeout' = 'loading'): string {
   const loadingPath = path.join(process.cwd(), 'electron', 'loading.html');
   const theme = browserViewTheme;
   if (!targetUrl) {
     return `file://${loadingPath}?theme=${theme}`;
   }
   const encodedTarget = encodeURIComponent(targetUrl);
-  return `file://${loadingPath}?theme=${theme}&target=${encodedTarget}`;
+  return `file://${loadingPath}?theme=${theme}&state=${state}&target=${encodedTarget}`;
+}
+
+function isNetworkLoadError(errorCode: number): boolean {
+  return errorCode === -118 || errorCode === -101 || errorCode === -102 || errorCode === -105 || errorCode === -2;
 }
 
 export class BrowserViewManager {
   private window: BrowserWindow | null = null;
   private views = new Map<ProviderKey, BrowserView>();
   private failedProviders = new Set<ProviderKey>();
+  private loadStateByProvider = new Map<ProviderKey, { targetUrl: string; state: 'loading' | 'timeout' }>();
+  private timeoutTimerByProvider = new Map<ProviderKey, ReturnType<typeof setTimeout>>();
   private waitingView: BrowserView | null = null;
   private activeView: BrowserView | null = null;
   private currentProvider: ProviderKey | null = null;
@@ -42,6 +48,32 @@ export class BrowserViewManager {
   private explicitBounds: ViewBounds | null = null;
 
   constructor(private readonly options: BrowserViewManagerOptions) {}
+
+  private applyThemeToView(view: BrowserView): void {
+    const wc = view.webContents;
+    const color = browserViewTheme === 'light' ? '#ffffff' : '#0b1220';
+    try {
+      (wc as unknown as { setBackgroundColor?: (hexColor: string) => void }).setBackgroundColor?.(color);
+    } catch {
+    }
+  }
+
+  private armTimeout(provider: ProviderKey, view: BrowserView, targetUrl: string): void {
+    const existing = this.timeoutTimerByProvider.get(provider);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      try {
+        const url = view.webContents.getURL();
+        const isLoading = (view.webContents as unknown as { isLoading?: () => boolean }).isLoading?.() ?? false;
+        if (!isLoading) return;
+        if (url.startsWith('file://') && url.includes('loading.html')) return;
+        this.loadStateByProvider.set(provider, { targetUrl, state: 'timeout' });
+        void view.webContents.loadURL(buildLoadingUrl(targetUrl, 'timeout'));
+      } catch {
+      }
+    }, 30000);
+    this.timeoutTimerByProvider.set(provider, timer);
+  }
 
   async attach(window: BrowserWindow, initialProvider: ProviderKey | null): Promise<void> {
     this.window = window;
@@ -52,6 +84,7 @@ export class BrowserViewManager {
         sandbox: false,
       },
     });
+    this.applyThemeToView(this.waitingView);
     await this.waitingView.webContents.loadURL(buildLoadingUrl());
     await this.syncProviderSites(this.options.providerSites);
     if (initialProvider && this.views.has(initialProvider)) {
@@ -82,9 +115,24 @@ export class BrowserViewManager {
           sandbox: false,
         },
       });
+      this.applyThemeToView(view);
+      view.webContents.on('did-stop-loading', () => {
+        const timer = this.timeoutTimerByProvider.get(provider);
+        if (timer) clearTimeout(timer);
+        this.timeoutTimerByProvider.delete(provider);
+      });
+      view.webContents.on('did-fail-load', (_event, errorCode, _errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame) return;
+        if (!validatedURL || validatedURL.startsWith('file://')) return;
+        if (!isNetworkLoadError(errorCode)) return;
+        this.loadStateByProvider.set(provider, { targetUrl: validatedURL, state: 'timeout' });
+        void view.webContents.loadURL(buildLoadingUrl(validatedURL, 'timeout'));
+      });
       this.views.set(provider, view);
+      this.loadStateByProvider.set(provider, { targetUrl: siteUrl, state: 'loading' });
+      this.armTimeout(provider, view, siteUrl);
       void view.webContents
-        .loadURL(buildLoadingUrl(siteUrl))
+        .loadURL(buildLoadingUrl(siteUrl, 'loading'))
         .then(() => {
           this.failedProviders.delete(provider);
         })
@@ -113,8 +161,10 @@ export class BrowserViewManager {
     const expectedUrl = this.options.providerSites[provider];
     const currentUrl = nextView.webContents.getURL();
     if (expectedUrl && (!currentUrl || currentUrl === 'about:blank')) {
+      this.loadStateByProvider.set(provider, { targetUrl: expectedUrl, state: 'loading' });
+      this.armTimeout(provider, nextView, expectedUrl);
       void nextView.webContents
-        .loadURL(buildLoadingUrl(expectedUrl))
+        .loadURL(buildLoadingUrl(expectedUrl, 'loading'))
         .then(() => {
           this.failedProviders.delete(provider);
         })
@@ -161,8 +211,24 @@ export class BrowserViewManager {
   setTheme(theme: 'dark' | 'light'): void {
     browserViewTheme = theme === 'light' ? 'light' : 'dark';
     if (!this.waitingView) return;
+    this.applyThemeToView(this.waitingView);
+    for (const view of this.views.values()) {
+      this.applyThemeToView(view);
+    }
     if (this.activeView === this.waitingView) {
       void this.waitingView.webContents.loadURL(buildLoadingUrl());
+      return;
+    }
+    if (this.currentProvider) {
+      const view = this.views.get(this.currentProvider);
+      if (!view) return;
+      const url = view.webContents.getURL();
+      if (url.startsWith('file://') && url.includes('loading.html')) {
+        const state = this.loadStateByProvider.get(this.currentProvider);
+        if (state) {
+          void view.webContents.loadURL(buildLoadingUrl(state.targetUrl, state.state));
+        }
+      }
     }
   }
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, nativeTheme } from 'electron';
 import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -248,6 +248,7 @@ async function refreshProviderCatalogFromService(): Promise<boolean> {
     if (!response.ok) return false;
     const payload = (await response.json()) as ProviderCatalogPayload;
     const map = payload.providers ?? {};
+    if (Object.keys(map).length === 0) return false;
     const nextSites = {} as Record<ProviderKey, string>;
     const nextModels = {} as Record<ProviderKey, string[]>;
     const nextModes = {} as Record<ProviderKey, 'web' | 'forward'>;
@@ -265,6 +266,8 @@ async function refreshProviderCatalogFromService(): Promise<boolean> {
       nextApiKeys[key] = typeof item?.api_key === 'string' ? item.api_key : '';
       nextApiMasked[key] = typeof item?.api_key_masked === 'string' ? item.api_key_masked : '';
     }
+    const hasAnySite = Object.values(nextSites).some((site) => typeof site === 'string' && site.trim().length > 0);
+    if (!hasAnySite) return false;
     providerSites = nextSites;
     providerModels = nextModels;
     providerDefaultModes = nextModes;
@@ -364,8 +367,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
   promptConfig = readPromptConfigFromFile();
   hydrateProviderCatalogFromFile();
   await refreshProviderCatalogFromService();
-  const healthy = await probeServiceHealth(getApiBaseUrl());
-  await ensureBrowserViewManager(window, { allowProviderViews: healthy });
+  await ensureBrowserViewManager(window, { allowProviderViews: true });
 
   serviceManager = new ServiceManager(PROJECT_ROOT, 'electron-cdp', CDP_URL, window);
   shellTerminalManager = new ShellTerminalManager(PROJECT_ROOT, window);
@@ -385,21 +387,9 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('browser:selectProvider', async (_event, provider: ProviderKey) => {
     if (!browserViewManager && mainWindowRef) {
-      const healthy = await probeServiceHealth(getApiBaseUrl());
-      if (healthy) {
-        await refreshProviderCatalogFromService();
-        await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
-      } else {
-        await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: false });
-      }
-    }
-    const healthy = await probeServiceHealth(getApiBaseUrl());
-    if (!healthy) {
-      browserViewManager?.showWaiting();
-      return {
-        provider,
-        url: browserViewManager?.getCurrentUrl() ?? '',
-      };
+      const ok = await refreshProviderCatalogFromService();
+      if (!ok) hydrateProviderCatalogFromFile();
+      await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
     browserViewManager?.showProvider(provider);
     return {
@@ -422,8 +412,10 @@ app.whenReady().then(() => {
     browserViewManager?.destroy();
     browserViewManager = null;
     clearProviderCatalog();
+    hydrateProviderCatalogFromFile();
+    await refreshProviderCatalogFromService();
     if (mainWindowRef) {
-      await ensureBrowserViewManager(mainWindowRef);
+      await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
     return { ok: true };
   });
@@ -459,6 +451,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('desktop:setTheme', async (_event, theme: 'dark' | 'light') => {
     desktopTheme = theme === 'light' ? 'light' : 'dark';
+    nativeTheme.themeSource = desktopTheme;
     browserViewManager?.setTheme(desktopTheme);
     if (mainWindowRef) {
       mainWindowRef.setBackgroundColor(desktopTheme === 'light' ? '#f8fafc' : '#0f172a');
@@ -468,10 +461,7 @@ app.whenReady().then(() => {
   ipcMain.handle('desktop:getState', async () => {
     const managerStatus = serviceManager?.getStatus() ?? 'stopped';
     const healthy = await probeServiceHealth(getApiBaseUrl());
-    const effectiveStatus =
-      managerStatus === 'starting' || managerStatus === 'stopping'
-        ? managerStatus
-        : (healthy ? 'running' : 'stopped');
+    const effectiveStatus = managerStatus;
 
     if (effectiveStatus === 'running') {
       const ok = await refreshProviderCatalogFromService();
@@ -483,12 +473,10 @@ app.whenReady().then(() => {
     if (effectiveStatus === 'stopped') {
       hydrateProviderCatalogFromFile();
       promptConfig = readPromptConfigFromFile();
-      browserViewManager?.showWaiting();
+      if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
     return {
-      currentProvider: effectiveStatus === 'running'
-        ? (browserViewManager?.getCurrentProvider() ?? null)
-        : null,
+      currentProvider: browserViewManager?.getCurrentProvider() ?? null,
       providerSites,
       providerModels,
       providerDefaultModes,

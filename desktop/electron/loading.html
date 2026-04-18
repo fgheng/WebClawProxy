@@ -74,11 +74,16 @@ html.theme-light .text {
     var params = new URLSearchParams(window.location.search || "");
     var target = params.get("target");
     var theme = params.get("theme");
+    var state = params.get("state");
     if (theme === "light") {
       document.documentElement.classList.add("theme-light");
     }
     var message = document.getElementById("message");
-    if (target) {
+    if (state === "timeout") {
+      if (message) {
+        message.textContent = "网页加载超时，请检查网络连接/代理/VPN 是否正常";
+      }
+    } else if (target) {
       if (message) {
         message.textContent = "正在加载网页…";
       }
