@@ -25,6 +25,120 @@ function djb2(str: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
+function sha256Hex(input: string): string {
+  return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+function shortHash(input: string, length = 16): string {
+  return sha256Hex(input).slice(0, length);
+}
+
+function canonicalizeJsonValue(value: any): any {
+  if (value == null) return value;
+  if (Array.isArray(value)) return value.map((v) => canonicalizeJsonValue(v));
+  if (typeof value !== 'object') return value;
+  const keys = Object.keys(value).sort();
+  const out: Record<string, any> = {};
+  for (const k of keys) {
+    out[k] = canonicalizeJsonValue((value as any)[k]);
+  }
+  return out;
+}
+
+function canonicalJson(value: any): string {
+  return JSON.stringify(canonicalizeJsonValue(value));
+}
+
+function getToolFunctionName(tool: any): string {
+  const name = tool?.function?.name;
+  return typeof name === 'string' ? name : '';
+}
+
+function computeToolsHash(tools: unknown[]): string {
+  if (!Array.isArray(tools) || tools.length === 0) return shortHash('');
+  const sorted = [...tools].sort((a: any, b: any) =>
+    getToolFunctionName(a).localeCompare(getToolFunctionName(b))
+  );
+  return shortHash(canonicalJson(sorted));
+}
+
+function stringifyForHash(c: unknown): string {
+  if (typeof c === 'string') return c;
+  if (c == null) return '';
+  try {
+    return canonicalJson(c);
+  } catch {
+    return String(c);
+  }
+}
+
+function extractUserRollingContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content) && content.length > 0) {
+    const first = content[0] as any;
+    if (first && typeof first === 'object') {
+      if (first.type === 'text' && typeof first.text === 'string') return first.text;
+      if (typeof first.content === 'string') return first.content;
+    }
+    return stringifyForHash(first);
+  }
+  return stringifyForHash(content);
+}
+
+function findLastAssistantIndex(messages: RawMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') return i;
+  }
+  return -1;
+}
+
+function computeUserRollingHash(messages: RawMessage[], seed = ''): string {
+  let rolling = seed || shortHash('');
+  for (const m of messages) {
+    if (m.role !== 'user') continue;
+    const piece = extractUserRollingContent(m.content);
+    rolling = shortHash(`${rolling}\n${piece}`);
+  }
+  return rolling;
+}
+
+function computeSystemHash(messages: RawMessage[]): string {
+  const system = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => stringifyForHash(m.content))
+    .filter(Boolean)
+    .join('\n');
+  return shortHash(system);
+}
+
+function computeSessionHashes(input: { messages: RawMessage[]; tools: unknown[] }): {
+  toolsHash: string;
+  systemHash: string;
+  userRollingHashBefore: string;
+  userRollingHashAfter: string;
+  baseHash: string;
+  updatedHash: string;
+} {
+  const toolsHash = computeToolsHash(input.tools);
+  const systemHash = computeSystemHash(input.messages);
+  const lastAssistantIdx = findLastAssistantIndex(input.messages);
+  const beforeAssistant =
+    lastAssistantIdx === -1 ? input.messages : input.messages.slice(0, lastAssistantIdx);
+  const afterAssistant = lastAssistantIdx === -1 ? [] : input.messages.slice(lastAssistantIdx + 1);
+  const userRollingHashBefore = computeUserRollingHash(beforeAssistant);
+  const userRollingHashAfter = computeUserRollingHash(afterAssistant, userRollingHashBefore);
+  const baseHash = `${systemHash}_${userRollingHashBefore}_${toolsHash}`;
+  const updatedHash = `${systemHash}_${userRollingHashAfter}_${toolsHash}`;
+  return {
+    toolsHash,
+    systemHash,
+    userRollingHashBefore,
+    userRollingHashAfter,
+    baseHash,
+    updatedHash,
+  };
+}
+
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
 
 export type SessionMessage = {
@@ -37,10 +151,14 @@ export type SessionMessage = {
 };
 
 export type Session = {
+  conversationId: string;
   sessionId: string;
   providerKey: string;
   model: string;
   tools: unknown[];
+  toolsHash?: string;
+  systemHash?: string;
+  userRollingHash?: string;
   messages: SessionMessage[];
   rounds: number;
   createdAt: number;
@@ -49,7 +167,7 @@ export type Session = {
 
 export type IngestResult =
   | { action: 'new';    session: Session; newMessages: SessionMessage[] }
-  | { action: 'append'; session: Session; newMessages: SessionMessage[] };
+  | { action: 'append'; session: Session; newMessages: SessionMessage[]; previousSessionId?: string };
 
 // ── 内部辅助 ──────────────────────────────────────────────────────────────────
 
@@ -203,7 +321,6 @@ const PERSIST_INTERVAL_MS = 60 * 1000; // 每 1 分钟自动保存一次
 export class SessionRegistry {
   /** sessionId → Session */
   private sessions = new Map<string, Session>();
-  private recentSessionByKey = new Map<string, string>();
   /** 统一会话仓库（当前阶段仅做双写） */
   private readonly conversationStore: FileConversationStore;
   private readonly persistFilePath: string;
@@ -260,7 +377,17 @@ export class SessionRegistry {
       for (const sess of data.sessions ?? []) {
         // 过滤掉已过期的 session
         if (now - sess.lastActiveAt > SESSION_TTL_MS) continue;
-        this.sessions.set(sess.sessionId, sess);
+        const conversationId =
+          typeof (sess as any).conversationId === 'string' && (sess as any).conversationId.trim()
+            ? (sess as any).conversationId.trim()
+            : sess.sessionId;
+        const normalized: Session = {
+          ...sess,
+          conversationId,
+          tools: Array.isArray(sess.tools) ? sess.tools : [],
+          sessionId: typeof sess.sessionId === 'string' ? sess.sessionId : String(sess.sessionId ?? ''),
+        };
+        this.sessions.set(conversationId, normalized);
         loaded++;
       }
 
@@ -303,10 +430,21 @@ export class SessionRegistry {
 
   private buildSessionFromConversationRecord(record: ConversationRecord): Session {
     return {
+      conversationId: record.conversationId,
       sessionId: record.identity.sessionId ?? record.conversationId,
       providerKey: record.providerKey,
       model: record.model,
       tools: record.promptState.tools,
+      toolsHash: record.identity.toolsHash,
+      systemHash: record.identity.systemHash,
+      userRollingHash: (() => {
+        const latest = record.identity.latestHash;
+        if (typeof latest === 'string' && latest.includes('_')) {
+          const parts = latest.split('_');
+          return parts.length >= 3 ? parts[1] : undefined;
+        }
+        return undefined;
+      })(),
       messages: this.toSessionMessages(record.messages),
       rounds: record.stats.rounds,
       createdAt: record.stats.createdAt,
@@ -319,10 +457,21 @@ export class SessionRegistry {
   ): Omit<Session, 'messages'> & { lastMessage: SessionMessage | null; messageCount: number } {
     const record = this.conversationStore.findByConversationId(snapshot.conversationId);
     return {
-      sessionId: snapshot.conversationId,
+      conversationId: snapshot.conversationId,
+      sessionId: record?.identity.sessionId ?? snapshot.conversationId,
       providerKey: snapshot.providerKey,
       model: snapshot.model,
       tools: record?.promptState.tools ?? [],
+      toolsHash: record?.identity.toolsHash,
+      systemHash: record?.identity.systemHash,
+      userRollingHash: (() => {
+        const latest = record?.identity.latestHash;
+        if (typeof latest === 'string' && latest.includes('_')) {
+          const parts = latest.split('_');
+          return parts.length >= 3 ? parts[1] : undefined;
+        }
+        return undefined;
+      })(),
       rounds: snapshot.rounds,
       createdAt: snapshot.createdAt,
       lastActiveAt: snapshot.lastActiveAt,
@@ -350,9 +499,9 @@ export class SessionRegistry {
     let hydrated = 0;
     for (const record of this.listForwardConversationRecords()) {
       const session = this.buildSessionFromConversationRecord(record);
-      const existing = this.sessions.get(session.sessionId);
+      const existing = this.sessions.get(session.conversationId);
       if (!existing || existing.lastActiveAt < session.lastActiveAt) {
-        this.sessions.set(session.sessionId, session);
+        this.sessions.set(session.conversationId, session);
         hydrated++;
       }
     }
@@ -391,12 +540,15 @@ export class SessionRegistry {
 
   private buildConversationRecord(session: Session): ConversationRecord {
     return {
-      conversationId: session.sessionId,
+      conversationId: session.conversationId,
       mode: 'forward',
       providerKey: session.providerKey,
       model: session.model,
       identity: {
         sessionId: session.sessionId,
+        latestHash: session.sessionId,
+        toolsHash: session.toolsHash,
+        systemHash: session.systemHash,
       },
       promptState: {
         system: this.extractSystemPrompt(session.messages),
@@ -439,28 +591,12 @@ export class SessionRegistry {
 
     const { history, newMessages } = splitMessages(rawMessages, now);
     const headerSessionId = typeof options?.sessionHeader === 'string' ? options.sessionHeader.trim() : '';
-    const clientFpShort = shortHex(getClientFingerprintHex(options?.clientFingerprint), 16);
-    const conv = computeStableConversationKey(providerKey, model, tools, rawMessages);
-    const sessionId = (() => {
-      if (headerSessionId) return `hdr:${headerSessionId}`;
-      if (!conv.hasHistory) {
-        const key = `fp:${clientFpShort}:${conv.shortKey}`;
-        const existing = this.recentSessionByKey.get(key);
-        if (existing) {
-          const sess = this.sessions.get(existing);
-          if (sess && now - sess.lastActiveAt < 2 * 60 * 1000) {
-            return existing;
-          }
-          this.recentSessionByKey.delete(key);
-        }
-        const fresh = `fp:${clientFpShort}:${conv.shortKey}:${conv.lastUserHash}`;
-        this.recentSessionByKey.set(key, fresh);
-        return fresh;
-      }
-      return `fp:${clientFpShort}:${conv.fullKey}`;
-    })();
+    const hashes = computeSessionHashes({ messages: rawMessages, tools });
+    const lookupSessionId = headerSessionId ? `hdr:${headerSessionId}` : hashes.baseHash;
+    const nextSessionId = headerSessionId ? `hdr:${headerSessionId}` : hashes.updatedHash;
 
-    const existing = this.sessions.get(sessionId);
+    const existingRecord = this.conversationStore.findBySessionId(lookupSessionId);
+    const existing = existingRecord ? this.buildSessionFromConversationRecord(existingRecord) : undefined;
 
     if (existing) {
       // 命中已有 session：追加新消息
@@ -468,33 +604,46 @@ export class SessionRegistry {
         existing.messages.push(m);
       }
       existing.lastActiveAt = now;
+      existing.providerKey = providerKey;
+      existing.model = model;
+      existing.tools = tools;
+      existing.toolsHash = hashes.toolsHash;
+      existing.systemHash = hashes.systemHash;
+      existing.userRollingHash = hashes.userRollingHashAfter;
+      existing.sessionId = nextSessionId;
       // ✅ 立即持久化（防止数据丢失）
+      this.sessions.set(existing.conversationId, existing);
       this.save();
       this.syncConversationMirror(existing);
-      return { action: 'append', session: existing, newMessages };
+      return {
+        action: 'append',
+        session: existing,
+        newMessages,
+        previousSessionId: headerSessionId ? undefined : lookupSessionId,
+      };
     }
 
     // 新建 session：把历史消息 + 新消息都收入
     const allMessages = [...history, ...newMessages];
     const session: Session = {
-      sessionId,
+      conversationId: headerSessionId ? `hdr:${headerSessionId}` : lookupSessionId,
+      sessionId: nextSessionId,
       providerKey,
       model,
       tools,
+      toolsHash: hashes.toolsHash,
+      systemHash: hashes.systemHash,
+      userRollingHash: hashes.userRollingHashAfter,
       messages: allMessages,
       rounds: 0,
       createdAt: now,
       lastActiveAt: now,
     };
-    this.sessions.set(sessionId, session);
-    if (!headerSessionId) {
-      const key = `fp:${clientFpShort}:${conv.shortKey}`;
-      this.recentSessionByKey.set(key, sessionId);
-    }
+    this.sessions.set(session.conversationId, session);
     // ✅ 立即持久化（防止数据丢失）
     this.save();
     this.syncConversationMirror(session);
-    console.log(`[SessionRegistry] 新建 session ${sessionId.slice(0, 16)} (provider=${providerKey}, model=${model})`);
+    console.log(`[SessionRegistry] 新建 session ${session.sessionId.slice(0, 16)} (provider=${providerKey}, model=${model})`);
     return { action: 'new', session, newMessages: allMessages };
   }
 
@@ -507,8 +656,9 @@ export class SessionRegistry {
     toolCalls?: unknown[],
     finishReason?: string,
   ): Session | null {
-    const session = this.sessions.get(sessionId);
-    if (!session) return null;
+    const record = this.conversationStore.findBySessionId(sessionId);
+    if (!record || record.mode !== 'forward') return null;
+    const session = this.buildSessionFromConversationRecord(record);
 
     const now = Date.now();
     const assistantMsg: SessionMessage = {
@@ -522,6 +672,7 @@ export class SessionRegistry {
     session.lastActiveAt = now;
     void finishReason; // 暂不存储，可按需扩展
     // ✅ 立即持久化（防止数据丢失）
+    this.sessions.set(session.conversationId, session);
     this.save();
     this.syncConversationMirror(session);
     console.log(`[SessionRegistry] session ${sessionId.slice(0, 16)} rounds=${session.rounds}`);
@@ -537,19 +688,25 @@ export class SessionRegistry {
 
   /** 获取单个 session */
   getSession(sessionId: string): Session | undefined {
-    const record = this.conversationStore.findBySessionId(sessionId);
+    const record =
+      this.conversationStore.findBySessionId(sessionId) ??
+      this.conversationStore.findByLatestHash(sessionId);
     if (!record || record.mode !== 'forward') return undefined;
     return this.buildSessionFromConversationRecord(record);
   }
 
   /** 删除单个 session */
   deleteSession(sessionId: string): boolean {
-    const deleted = this.sessions.delete(sessionId);
+    const record =
+      this.conversationStore.findBySessionId(sessionId) ??
+      this.conversationStore.findByLatestHash(sessionId);
+    if (!record) return false;
+    const deleted = this.sessions.delete(record.conversationId);
     if (deleted) {
-      this.save(); // 立即保存
-      this.conversationStore.delete(sessionId);
+      this.save();
     }
-    return deleted;
+    this.conversationStore.delete(record.conversationId);
+    return true;
   }
 
   /** 获取所有 provider 名称（去重） */
@@ -575,12 +732,6 @@ export class SessionRegistry {
       if (now - session.lastActiveAt > SESSION_TTL_MS) {
         this.sessions.delete(id);
         cleaned++;
-      }
-    }
-    for (const [key, sessionId] of this.recentSessionByKey.entries()) {
-      const sess = this.sessions.get(sessionId);
-      if (!sess || now - sess.lastActiveAt > 2 * 60 * 1000) {
-        this.recentSessionByKey.delete(key);
       }
     }
     if (cleaned > 0) {

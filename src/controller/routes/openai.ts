@@ -154,6 +154,7 @@ async function sendForwardRequest(
     forwardMonitorBus.publish({
       type: 'session-append',
       sessionId: ingestResult.session.sessionId,
+      previousSessionId: ingestResult.previousSessionId,
       providerKey,
       newMessages: ingestResult.newMessages,
       timestamp: Date.now(),

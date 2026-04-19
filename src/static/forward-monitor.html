@@ -1194,7 +1194,28 @@ function onSessionNew(evt) {
 }
 
 function onSessionAppend(evt) {
-  const sess = sessions.get(evt.sessionId);
+  let sess = sessions.get(evt.sessionId);
+  if (!sess && evt.previousSessionId && evt.previousSessionId !== evt.sessionId) {
+    const prev = sessions.get(evt.previousSessionId);
+    if (prev) {
+      sessions.delete(evt.previousSessionId);
+      prev.sessionId = evt.sessionId;
+      sessions.set(evt.sessionId, prev);
+      if (activeId === evt.previousSessionId) {
+        activeId = evt.sessionId;
+        chSid.textContent = shortId(evt.sessionId);
+      }
+      if (prev.el) {
+        prev.el.dataset.sid = evt.sessionId;
+        const idEl = prev.el.querySelector('.sess-id');
+        if (idEl) {
+          idEl.textContent = shortId(evt.sessionId);
+          idEl.title = evt.sessionId;
+        }
+      }
+      sess = prev;
+    }
+  }
   if (!sess) return;
 
   for (const m of (evt.newMessages ?? [])) sess.messages.push(m);

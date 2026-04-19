@@ -318,19 +318,41 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.handle('browser:selectProvider', async (_event, provider: ProviderKey) => {
+    console.log(`[IPC] browser:selectProvider called with provider=${provider}`);
     if (!browserViewManager && mainWindowRef) {
+      console.log(`[IPC] browserViewManager is null, initializing...`);
       await refreshProviderCatalogFromService();
       await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
     }
-    browserViewManager?.showProvider(provider);
+    if (!browserViewManager) {
+      console.error(`[IPC] browserViewManager is still null after initialization!`);
+      return {
+        provider,
+        url: '',
+      };
+    }
+    // ✅ 修复：如果 providerSites 为空或不包含该 provider，先刷新配置
+    // 解决服务启动后的竞态条件问题
+    if (!providerSites[provider]) {
+      console.log(`[IPC] Provider ${provider} not found in providerSites, refreshing from service...`);
+      await refreshProviderCatalogFromService();
+    }
+    console.log(`[IPC] Syncing providerSites before showing provider...`);
+    console.log(`[IPC] providerSites:`, JSON.stringify(providerSites));
+    await browserViewManager.syncProviderSites(providerSites);
+    console.log(`[IPC] Calling browserViewManager.showProvider(${provider})`);
+    browserViewManager.showProvider(provider);
     return {
       provider,
-      url: browserViewManager?.getCurrentUrl() ?? '',
+      url: browserViewManager.getCurrentUrl() ?? '',
     };
   });
   ipcMain.handle('browser:reloadCurrent', async () => {
     await browserViewManager?.reloadCurrentProvider();
     return { url: browserViewManager?.getCurrentUrl() ?? '' };
+  });
+  ipcMain.handle('browser:reloadAllProviders', async () => {
+    await browserViewManager?.reloadAllProviders();
   });
   ipcMain.handle('browser:openDevTools', async () => {
     await browserViewManager?.openDevTools();

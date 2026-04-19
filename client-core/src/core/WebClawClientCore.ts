@@ -76,6 +76,9 @@ export class WebClawClientCore {
         content: trimmed,
       });
       await this.persistCurrentSession();
+      if (this.currentSession?.id) {
+        this.client.setSessionId?.(this.currentSession.id);
+      }
       const response = await this.client.sendMessage(trimmed);
       this.appendSessionMessage({
         role: 'assistant',
@@ -227,6 +230,7 @@ export class WebClawClientCore {
           };
         }
         this.currentSession = loaded;
+        this.client.setSessionId?.(loaded.id);
         this.provider = loaded.provider;
         this.mode = loaded.mode;
         this.client.setModel(loaded.model);
@@ -327,6 +331,7 @@ export class WebClawClientCore {
         const preferredMode = this.client.getRouteMode?.() ?? this.mode;
 
         this.currentSession = latest;
+        this.client.setSessionId?.(latest.id);
         this.provider = preferredProvider;
         this.mode = preferredMode;
         this.client.setModel(preferredModel);
@@ -361,6 +366,7 @@ export class WebClawClientCore {
       messages: [],
     };
     this.currentSession = session;
+    this.client.setSessionId?.(session.id);
     await this.persistCurrentSession();
   }
 

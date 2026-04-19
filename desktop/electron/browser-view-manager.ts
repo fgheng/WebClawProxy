@@ -126,10 +126,15 @@ export class BrowserViewManager {
   }
 
   async syncProviderSites(nextProviderSites: Record<ProviderKey, string>): Promise<void> {
+    console.log(`[BrowserViewManager] syncProviderSites called with:`, Object.keys(nextProviderSites));
     this.options.providerSites = nextProviderSites;
     for (const [provider, siteUrl] of Object.entries(nextProviderSites) as [ProviderKey, string][]) {
       if (!siteUrl || !siteUrl.trim()) continue;
-      if (this.views.has(provider)) continue;
+      if (this.views.has(provider)) {
+        console.log(`[BrowserViewManager] View for ${provider} already exists, skipping`);
+        continue;
+      }
+      console.log(`[BrowserViewManager] Creating view for ${provider}: ${siteUrl}`);
       const view = new BrowserView({
         webPreferences: {
           partition: `persist:webclaw-${provider}`,
@@ -160,6 +165,7 @@ export class BrowserViewManager {
         .catch(() => {
           this.failedProviders.add(provider);
         });
+      console.log(`[BrowserViewManager] View for ${provider} created successfully`);
     }
     if (this.currentProvider && !nextProviderSites[this.currentProvider]) {
       this.currentProvider = null;
@@ -170,21 +176,30 @@ export class BrowserViewManager {
     if (!this.window) return;
     const nextView = this.views.get(provider);
     if (!nextView) {
+      console.log(`[BrowserViewManager] showProvider(${provider}): view not found, showing waiting`);
       this.currentProvider = null;
       this.showWaiting();
       return;
     }
-    if (this.currentProvider === provider && this.activeView === nextView) {
+    // ✅ 修复：检查 activeView 是否真的是当前 provider 的 view
+    // 即使 currentProvider 相同，如果 activeView 不匹配（比如显示的是 waitingView），也需要切换
+    const isAlreadyShowing = this.currentProvider === provider && this.activeView === nextView;
+    console.log(`[BrowserViewManager] showProvider(${provider}): currentProvider=${this.currentProvider}, activeView=${this.activeView === this.waitingView ? 'waitingView' : this.activeView === nextView ? 'nextView' : 'otherView'}, isAlreadyShowing=${isAlreadyShowing}`);
+    if (isAlreadyShowing) {
+      console.log(`[BrowserViewManager] Already showing ${provider}, just updateBounds`);
       this.updateBounds();
       return;
     }
+    console.log(`[BrowserViewManager] Switching to ${provider}, detaching current view`);
     this.detachActiveView();
     this.currentProvider = provider;
     this.activeView = nextView;
     this.window.addBrowserView(nextView);
     const expectedUrl = this.options.providerSites[provider];
     const currentUrl = nextView.webContents.getURL();
+    console.log(`[BrowserViewManager] Provider ${provider}: expectedUrl=${expectedUrl}, currentUrl=${currentUrl}`);
     if (expectedUrl && (!currentUrl || currentUrl === 'about:blank')) {
+      console.log(`[BrowserViewManager] Loading ${provider} with loading page`);
       this.loadStateByProvider.set(provider, { targetUrl: expectedUrl, state: 'loading' });
       this.armTimeout(provider, nextView, expectedUrl);
       void nextView.webContents
@@ -197,6 +212,7 @@ export class BrowserViewManager {
         });
     }
     this.updateBounds();
+    console.log(`[BrowserViewManager] Finished switching to ${provider}`);
   }
 
   showWaiting(): void {
@@ -260,6 +276,17 @@ export class BrowserViewManager {
       return;
     }
     await this.activeView?.webContents.reload();
+  }
+
+  /**
+   * 刷新所有 provider 的 BrowserView
+   * 用于服务启动后刷新页面
+   */
+  async reloadAllProviders(): Promise<void> {
+    for (const view of this.views.values()) {
+      view.webContents.reload();
+    }
+    console.log(`[BrowserViewManager] 已刷新所有 ${this.views.size} 个 provider 的 BrowserView`);
   }
 
   async openDevTools(): Promise<void> {

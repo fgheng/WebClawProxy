@@ -46,6 +46,7 @@ export interface ClientTransport {
   importHistory(messages: ChatMessage[]): void;
   getHistory(): ChatMessage[];
   getConfig(): Required<ClientConfig>;
+  setSessionId?(sessionId: string): void;
   setModel(model: string): void;
   setSystem(system: string): void;
   setStream(enabled: boolean): void;

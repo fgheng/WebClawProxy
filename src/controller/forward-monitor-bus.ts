@@ -53,6 +53,7 @@ export type SessionNewEvent = {
 export type SessionAppendEvent = {
   type: 'session-append';
   sessionId: string;
+  previousSessionId?: string;
   providerKey: string;
   newMessages: SessionMessage[];
   timestamp: number;

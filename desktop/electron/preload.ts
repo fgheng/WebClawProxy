@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   selectProvider: (provider: string) => ipcRenderer.invoke('browser:selectProvider', provider),
   reloadCurrentProvider: () => ipcRenderer.invoke('browser:reloadCurrent'),
+  reloadAllProviders: () => ipcRenderer.invoke('browser:reloadAllProviders'),
   openBrowserDevTools: () => ipcRenderer.invoke('browser:openDevTools'),
   showBrowserWaiting: () => ipcRenderer.invoke('browser:showWaiting'),
   showBrowserMonitor: (url: string) => ipcRenderer.invoke('browser:showMonitor', { url }),

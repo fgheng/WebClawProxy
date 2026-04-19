@@ -75,6 +75,8 @@ export default function App() {
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [terminalInited, setTerminalInited] = useState(false);
   const serviceStatusRef = useRef(serviceStatus);
+  const displayModeRef = useRef(displayMode);
+  const currentProviderRef = useRef(currentProvider);
   const handledStoppedResetRef = useRef(false);
   const [splitRatio, setSplitRatio] = useState(() => {
     const saved = window.localStorage.getItem('webclaw:split-ratio');
@@ -220,6 +222,17 @@ export default function App() {
       ].slice(-300));
       if (event.status === 'running') {
         void refreshDesktopState();
+        // ✅ 服务启动后，切换到当前 provider 的 BrowserView（web 模式）
+        // 使用 ref.current 获取最新状态，避免闭包问题
+        const currentMode = displayModeRef.current;
+        const currentProv = currentProviderRef.current;
+        console.log(`[DEBUG] Service running: displayMode=${currentMode}, provider=${currentProv}`);
+        if (currentMode === 'web') {
+          console.log(`[DEBUG] Calling selectProvider(${currentProv})`);
+          void window.webclawDesktop?.selectProvider?.(currentProv);
+        } else {
+          console.log(`[DEBUG] Skip selectProvider, displayMode is ${currentMode}`);
+        }
       }
       requestSyncBrowserBounds();
     });
@@ -281,6 +294,15 @@ export default function App() {
       disposeTerminalStatus?.();
     };
   }, [pushError]);
+
+  // ✅ 同步 ref：确保回调中访问的是最新状态
+  useEffect(() => {
+    displayModeRef.current = displayMode;
+  }, [displayMode]);
+
+  useEffect(() => {
+    currentProviderRef.current = currentProvider;
+  }, [currentProvider]);
 
   useEffect(() => {
     let mounted = true;
@@ -745,7 +767,7 @@ export default function App() {
                   void window.webclawDesktop?.selectProvider?.(currentProvider);
                 }}
                 title="切换 web / forward 模式（forward 模式会自动连接服务）"
-                disabled={!serviceControlReady || (activeTab === 'webclaw' && webclawSending)}
+                disabled={!serviceControlReady || serviceStatus === 'starting' || (activeTab === 'webclaw' && webclawSending)}
               >
                 <option value="web">web</option>
                 <option value="forward">forward</option>

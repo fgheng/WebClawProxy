@@ -82,6 +82,13 @@ export class WebClawClient {
     return { ...this.config };
   }
 
+  setSessionId(sessionId: string): void {
+    const trimmed = String(sessionId ?? '').trim();
+    if (!trimmed) return;
+    this.config.sessionId = trimmed;
+    this.requestSeq = 0;
+  }
+
   setRouteMode(mode: ClientRouteMode): void {
     this.routeMode = mode;
     this.config.routeMode = mode;

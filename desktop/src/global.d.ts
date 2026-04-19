@@ -6,6 +6,7 @@ declare global {
       openExternal: (url: string) => Promise<void>;
       selectProvider: (provider: string) => Promise<{ provider: string; url: string }>;
       reloadCurrentProvider: () => Promise<{ url: string }>;
+      reloadAllProviders: () => Promise<void>;
       openBrowserDevTools: () => Promise<void>;
       showBrowserWaiting: () => Promise<{ url: string }>;
       showBrowserMonitor: (url: string) => Promise<{ url: string }>;
