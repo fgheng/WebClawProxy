@@ -297,8 +297,9 @@ async function createMainWindow(): Promise<BrowserWindow> {
   configuredServicePort = readConfiguredServicePortFromFile();
   runtimeServicePort = configuredServicePort;
   promptConfig = readPromptConfigFromFile();
+  // ✅ 修复：移除初始化时的 refreshProviderCatalogFromService()
+  // Provider 数据完全依赖服务 API，服务未启动时应为空
   clearProviderCatalog();
-  await refreshProviderCatalogFromService();
   await ensureBrowserViewManager(window, { allowProviderViews: true });
 
   serviceManager = new ServiceManager(PROJECT_ROOT, 'electron-cdp', CDP_URL, window);

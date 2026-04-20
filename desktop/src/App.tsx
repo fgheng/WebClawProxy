@@ -767,7 +767,7 @@ export default function App() {
                   void window.webclawDesktop?.selectProvider?.(currentProvider);
                 }}
                 title="切换 web / forward 模式（forward 模式会自动连接服务）"
-                disabled={!serviceControlReady || serviceStatus === 'starting' || (activeTab === 'webclaw' && webclawSending)}
+                disabled={serviceStatus !== 'running' || (activeTab === 'webclaw' && webclawSending)}
               >
                 <option value="web">web</option>
                 <option value="forward">forward</option>
