@@ -90,12 +90,6 @@ pnpm install
 > - **startup_preflight_enabled**: 服务启动时是否执行登录预检（false 可加速启动）
 > - **startup_open_sites_enabled**: 服务启动时是否打开 Web 页面
 
-> 💡 **如何获取 Cookie**（web 模式需要）：
-> 1. 打开浏览器，登录对应的 AI 平台（如 ChatGPT）
-> 2. 打开开发者工具（F12）→ Application → Cookies
-> 3. 复制所有 Cookie 值（格式：`key1=value1; key2=value2`）
-> 4. 在配置中添加 `"cookie": "your_cookie_here"`（注意：当前版本可能不需要手动配置 Cookie）
-
 ### 3. 启动服务
 
 #### 方式一：CLI 命令行模式
@@ -454,41 +448,10 @@ Forward Monitor 支持流式响应的实时显示。如果遇到问题：
 
 ### 添加新 Provider
 
-1. **配置文件**：在 `config/default.json` 添加配置
-   ```json
-   {
-     "providers": {
-       "new-provider": {
-         "default_mode": "web",
-         "models": ["model-1"],
-         "web": {
-           "site": "https://new-provider.com/",
-           "input_max_chars": 120000
-         }
-       }
-     }
-   }
-   ```
-
-2. **Web Driver**：在 `src/web-driver/` 创建对应的 driver 文件（如需自定义逻辑）
-
-3. **协议解析**：在 `src/protocol/` 添加协议解析逻辑（如需特殊处理）
-
-4. **桌面端集成**：更新 `desktop/electron/provider-sites.ts`（如需桌面端支持）
-
-### 模式切换
-
-项目支持两种运行模式：
-
-- **Web 模式**：通过 Playwright 自动化操作 Web 界面
-  - 优点：无需 API Key，可使用免费版或订阅版
-  - 缺点：速度较慢，依赖浏览器
-
-- **Forward 模式**：直接转发请求到上游 API
-  - 优点：速度快，稳定性高
-  - 缺点：需要有效的 API Key
-
-可以通过配置的 `default_mode` 设置默认模式，或在请求时通过参数指定。
+1. 在 `config/default.json` 添加配置
+2. 在 `src/web-driver/` 创建对应的 driver 文件
+3. 在 `src/protocol/` 添加协议解析逻辑
+4. 更新 `desktop/electron/provider-sites.ts`
 
 ### 调试
 
@@ -496,66 +459,8 @@ Forward Monitor 支持流式响应的实时显示。如果遇到问题：
 # 服务端日志
 pnpm dev  # 控制台输出
 
-# 查看日志文件
-tail -f .data/logs/webclaw-proxy-*.log
-
 # 桌面端日志
 pnpm dev:desktop  # 查看 Logs 标签页
-
-# 启用调试模式
-# 在 config/default.json 中设置
-{
-  "logging": {
-    "debug": true
-  }
-}
-```
-
-### 测试
-
-```bash
-# 运行所有测试
-pnpm test
-
-# 单独测试模块
-pnpm test:web-driver     # Web Driver 测试
-pnpm test:protocol       # 协议解析测试
-pnpm test:controller     # 控制器测试
-pnpm test:data-manager   # 数据管理测试
-
-# 运行测试脚本
-pnpm script:all          # 运行所有测试脚本
-pnpm script:web-driver   # Web Driver 测试脚本
-pnpm script:protocol     # 协议解析测试脚本
-```
-
-### 项目架构
-
-```
-src/
-├── controller/             # 路由和控制器
-│   ├── index.ts           # 服务入口
-│   ├── server.ts          # Express 服务器
-│   ├── session-registry.ts # Session 管理
-│   ├── forward-monitor-bus.ts # 事件总线
-│   └── routes/            # API 路由
-├── web-driver/            # Playwright 自动化
-│   ├── WebDriverManager.ts
-│   └── providers/         # 各 Provider 驱动
-├── protocol/              # 协议解析
-│   ├── openai.ts          # OpenAI 协议
-│   └── sse.ts             # SSE 协议
-├── data-manager/          # 数据管理
-└── conversation/          # 会话管理
-
-desktop/
-├── electron/              # Electron 主进程
-│   ├── main.ts           # 主入口
-│   └── provider-sites.ts # Provider 站点配置
-└── src/                  # React 渲染进程
-    ├── App.tsx           # 主组件
-    ├── panels/           # 功能面板
-    └── components/       # UI 组件
 ```
 
 ## 许可证

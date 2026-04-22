@@ -6,7 +6,7 @@
     "deepseek": {
       "default_mode": "web",
       "models": [
-        "deepseek-chat"
+        "deepseek-chat", "deepseek"
       ],
       "web": {
         "site": "https://chat.deepseek.com/",
@@ -19,7 +19,8 @@
           "deepseek-chat": "deepseek-chat",
           "deepseek-r1": "deepseek-chat",
           "deepseek-v3": "deepseek-chat",
-          "deepseek-coder": "deepseek-chat"
+          "deepseek-coder": "deepseek-chat",
+          "deepseek": "deepseek-chat"
         }
       }
     },

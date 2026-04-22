@@ -128,15 +128,17 @@ export class QwenDriver extends BaseDriver {
       await this.sleep(200);
 
       // 首轮发送尝试：优先按钮，必要时回退 Enter
-      const sendState = await this.waitForSendButtonStateAfterFill(canonicalText, 2000);
+      const sendState = await this.waitForSendButtonStateAfterFill(canonicalText, 3000);
       await this.tryPrimarySend(sendState);
 
-      let dispatched = await this.waitForDispatch(canonicalText, beforeCount, 2500);
+      let dispatched = await this.waitForDispatch(canonicalText, beforeCount, 3000);
 
-      // 二次兜底：Ctrl/Cmd+Enter，再确认一次
+      // 二次兜底：直接 Enter，再确认一次
       if (!dispatched) {
+        // 确保焦点在输入框
+        await this.page.click(SELECTORS.inputArea).catch(() => null);
         await this.tryFallbackSend();
-        dispatched = await this.waitForDispatch(canonicalText, beforeCount, 2000);
+        dispatched = await this.waitForDispatch(canonicalText, beforeCount, 2500);
       }
 
       // 注意：Qwen 某些版本发送后输入框不会立即清空，不能在此直接判失败
@@ -416,17 +418,30 @@ export class QwenDriver extends BaseDriver {
   private async fillInputRobustly(text: string): Promise<void> {
     await this.page.fill(SELECTORS.inputArea, text);
 
-    // 某些 contenteditable 场景下 fill 后不会触发框架监听，补发 input/change 事件
+    // Qwen 是 React 受控组件，需要通过 nativeInputValueSetter 触发 React 的 synthetic event，
+    // 否则 React state 不更新，发送按钮会保持 disabled 状态
     await this.page.evaluate(([selector, value]: [string, string]) => {
-      const el = (globalThis as any).document.querySelector(selector as string);
+      const el = (globalThis as any).document.querySelector(selector as string) as any;
       if (!el) return;
       const tag = (el.tagName || '').toUpperCase();
+
       if (tag === 'TEXTAREA' || tag === 'INPUT') {
-        (el as any).value = value;
+        // 尝试通过 React 内部 nativeInputValueSetter 触发受控更新
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+          (globalThis as any).window[tag === 'TEXTAREA' ? 'HTMLTextAreaElement' : 'HTMLInputElement'].prototype,
+          'value'
+        )?.set;
+        if (nativeInputValueSetter) {
+          nativeInputValueSetter.call(el, value);
+        } else {
+          el.value = value;
+        }
       } else {
-        (el as any).textContent = value;
+        el.textContent = value;
       }
-      el.dispatchEvent(new (globalThis as any).Event('input', { bubbles: true }));
+
+      // 触发原生事件（React 依赖 bubbles: true）
+      el.dispatchEvent(new (globalThis as any).InputEvent('input', { bubbles: true, cancelable: true }));
       el.dispatchEvent(new (globalThis as any).Event('change', { bubbles: true }));
     }, [SELECTORS.inputArea, text] as [string, string]);
   }
