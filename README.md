@@ -34,7 +34,7 @@ pnpm install
 
 ### 2. 配置服务
 
-编辑 `config/default.json`，配置你的 AI Providers：
+编辑 `config/default.json`，配置你的 AI Providers，使用 web 模式不需要配置 api_key
 
 ```json
 {
@@ -91,6 +91,8 @@ pnpm install
 > - **startup_open_sites_enabled**: 服务启动时是否打开 Web 页面
 
 ### 3. 启动服务
+
+启动后请现在打开的浏览器页面进行登录，登录后才能使用模型服务商提供的 web 服务
 
 #### 方式一：CLI 命令行模式
 
