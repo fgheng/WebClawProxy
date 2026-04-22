@@ -603,7 +603,7 @@ export class WebDriverManager {
     if (!page) return;
 
     const inputSelectorBySite: Record<SiteKey, string> = {
-      gpt: '#prompt-textarea, textarea[data-testid="prompt-textarea"], form textarea, [contenteditable="true"][role="textbox"]',
+      gpt: '#prompt-textarea, [contenteditable="true"][role="textbox"]',
       qwen: 'textarea:not([readonly]):not([aria-hidden="true"]), [contenteditable="true"]:not([aria-hidden="true"])',
       deepseek: 'textarea, [contenteditable="true"]',
       kimi: 'textarea, [contenteditable="true"][class*="input"]',

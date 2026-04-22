@@ -15,8 +15,10 @@ const SELECTORS = {
   newChatButton: '[data-testid="create-new-chat-button"]',
   /** 备用新建对话按钮 */
   newChatButtonAlt: 'a[href="/"]',
-  /** 消息输入框 */
-  inputArea: '#prompt-textarea, textarea[data-testid="prompt-textarea"], form textarea, [contenteditable="true"][role="textbox"]',
+  /** 消息输入框（优先使用 ID，备选 contenteditable） */
+  inputArea: '#prompt-textarea, [contenteditable="true"][role="textbox"]',
+  /** Composer 父容器（用于等待输入框区域挂载） */
+  composerSurface: '[data-composer-surface="true"]',
   /** 发送按钮 */
   sendButton: '[data-testid="send-button"]',
   /** 停止生成按钮 */
@@ -66,13 +68,44 @@ export class ChatGPTDriver extends BaseDriver {
       );
     }
 
-    const inputReady = await this.page
-      .waitForSelector(SELECTORS.inputArea, { timeout: 15000, state: 'visible' })
+    // 新增：先等待 composer 容器挂载（说明输入区域正在加载）
+    const composerMounted = await this.page
+      .waitForSelector(SELECTORS.composerSurface, { timeout: 10000, state: 'attached' })
+      .then(() => true)
+      .catch(() => {
+        this.debugLog('composer surface not found', {});
+        return false;
+      });
+
+    if (!composerMounted) {
+      this.debugLog('Composer container not mounted, page may not be fully loaded', {});
+    }
+
+    // 等待输入框挂载到 DOM（增加超时到 20秒）
+    const inputAttached = await this.page
+      .waitForSelector(SELECTORS.inputArea, { timeout: 20000, state: 'attached' })
       .then(() => true)
       .catch(() => false);
 
-    if (inputReady) return;
+    if (!inputAttached) {
+      throw new WebDriverError(
+        WebDriverErrorCode.NEW_CONVERSATION_FAILED,
+        `ChatGPT 输入框未挂载到 DOM，当前 URL: ${this.page.url()}`
+      );
+    }
 
+    // 再检查输入框可见性
+    const inputVisible = await this.page
+      .waitForSelector(SELECTORS.inputArea, { timeout: 5000, state: 'visible' })
+      .then(() => true)
+      .catch(() => false);
+
+    if (inputVisible) {
+      this.debugLog('Input area is visible and ready', {});
+      return;
+    }
+
+    // 检查是否有弹窗遮挡
     const overlayVisible = await this.page
       .isVisible(SELECTORS.modalOverlay)
       .catch(() => false);
@@ -86,7 +119,7 @@ export class ChatGPTDriver extends BaseDriver {
 
     throw new WebDriverError(
       WebDriverErrorCode.NEW_CONVERSATION_FAILED,
-      `ChatGPT 新建对话失败，输入框未出现，当前 URL: ${this.page.url()}`
+      `ChatGPT 输入框已挂载但不可见，当前 URL: ${this.page.url()}`
     );
   }
 
