@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { AgentSession, AgentSessionOptions, AgentChatResult } from './agent-session';
-import { builtInToolDefinitions, builtInToolNames } from '../tools/index';
+import { builtInToolDefinitions, builtInToolNames } from '../core/tools/index';
 
 /**
  * REST API 路由

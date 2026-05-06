@@ -86,7 +86,7 @@ export function handleWebSocketConnection(ws: WebSocket, sessionsManager: Sessio
   }));
 }
 
-async function handleChat(ws: WebSocket, session: AgentSession, data: any): void {
+async function handleChat(ws: WebSocket, session: AgentSession, data: any): Promise<void> {
   const { message, model, system, mode } = data;
 
   if (!message) {
@@ -117,7 +117,7 @@ async function handleChat(ws: WebSocket, session: AgentSession, data: any): void
   }
 }
 
-async function handleNewSession(ws: WebSocket, sessionsManager: SessionManager, data: any): void {
+async function handleNewSession(ws: WebSocket, sessionsManager: SessionManager, data: any): Promise<void> {
   const { model, system, mode, proxyBaseUrl } = data;
   const newSession = sessionsManager.create({ proxyBaseUrl, model, system, mode });
 

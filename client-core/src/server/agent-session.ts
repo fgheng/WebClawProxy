@@ -1,12 +1,12 @@
-import { WebClawClientCore } from '../WebClawClientCore';
-import { WebClawClient } from '../../WebClawClient';
-import { builtInToolExecutor, builtInToolDefinitions, builtInToolNames } from '../tools/index';
+import { WebClawClientCore } from '../core/WebClawClientCore';
+import { WebClawClient } from '../WebClawClient';
+import { builtInToolExecutor, builtInToolDefinitions, builtInToolNames } from '../core/tools/index';
 import { FileSessionStore } from './file-session-store';
-import { ProviderModelCatalog, createEmptyProviderModelCatalog } from '../provider-models';
-import { inferProviderFromModel } from '../provider-models';
-import type { ProviderKey } from '../types';
-import type { ClientCoreResult, ClientCoreState } from '../types';
-import type { ChatMessage, AssistantResponse } from '../../types';
+import { ProviderModelCatalog, createEmptyProviderModelCatalog } from '../core/provider-models';
+import { inferProviderFromModel } from '../core/provider-models';
+import type { ProviderKey } from '../core/provider-models';
+import type { ClientCoreResult, ClientCoreState } from '../core/types';
+import type { ChatMessage, AssistantResponse } from '../types';
 import type * as http from 'http';
 
 /**
