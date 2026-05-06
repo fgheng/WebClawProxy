@@ -573,6 +573,17 @@ app.whenReady().then(() => {
     await shellTerminalManager?.resize(terminalId, cols, rows);
   });
 
+  // ── 工具执行（在主进程 Node.js 环境中执行）─────────────────────────
+  ipcMain.handle('tool:execute', async (_event, payload: { toolName: string; args: Record<string, unknown> }) => {
+    const { toolName, args } = payload;
+    try {
+      const { builtInToolExecutor } = await import('../../client-core/src/core/tools/index');
+      return await builtInToolExecutor.execute(toolName, args);
+    } catch (err: any) {
+      return JSON.stringify({ error: err.message ?? String(err) });
+    }
+  });
+
   void createMainWindow();
 
   app.on('activate', () => {

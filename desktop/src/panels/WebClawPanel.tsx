@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { WebClawClientCore } from '../../../client-core/src/core/WebClawClientCore';
+import { browserToolExecutor } from '../../../client-core/src/core/tools';
 import type { ClientCoreResult } from '../../../client-core/src/core/types';
 import type { ProviderKey, ProviderModelCatalog } from '../../../client-core/src/core/provider-models';
 import type { ChatMessage } from '../../../client-core/src/types';
@@ -133,6 +134,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
       transport,
       catalog,
       sessionStore: new BrowserClientSessionStore(),
+      toolExecutor: browserToolExecutor,
       hostActions: {
         onEvent: (event) => {
           if (event.type === 'provider-change' && event.provider) {

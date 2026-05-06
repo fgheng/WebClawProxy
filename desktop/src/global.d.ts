@@ -92,6 +92,8 @@ declare global {
       onTerminalStatus: (
         callback: (event: { terminalId: string; status: string; backend: 'pty' | 'raw' | null; timestamp: number; shell: string; cwd: string; pid: number | null }) => void
       ) => () => void;
+      /** 执行工具（通过 IPC 在主进程 Node.js 环境中执行） */
+      executeTool: (toolName: string, args: Record<string, unknown>) => Promise<string>;
     };
   }
 }

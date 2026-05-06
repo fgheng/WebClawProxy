@@ -7,3 +7,4 @@ dist/
 *.map
 desktop/dist/
 .data/
+client-core/src/**/*.js
