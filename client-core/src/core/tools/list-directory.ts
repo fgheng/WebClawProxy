@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Tool } from '../../types';
 import { ToolModule } from './tool-module';
+import { expandPath } from './expand-path';
 
 export const listDirectoryModule: ToolModule = {
   definition: {
@@ -27,8 +28,9 @@ export const listDirectoryModule: ToolModule = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const dirPath = String(args.path ?? '');
+    let dirPath = String(args.path ?? '');
     if (!dirPath.trim()) return JSON.stringify({ error: 'Empty path' });
+    dirPath = expandPath(dirPath);
 
     const recursive = args.recursive === true;
     const maxItems = 500;

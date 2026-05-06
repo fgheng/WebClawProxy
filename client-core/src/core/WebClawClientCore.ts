@@ -107,6 +107,8 @@ export class WebClawClientCore {
         this.client.setSessionId?.(this.currentSession.id);
       }
       const response = await this.client.sendMessage(trimmed);
+      console.log(`[WebClawClientCore] sendMessage response: content="${(response.content ?? '').slice(0, 50)}", tool_calls=${response.tool_calls?.length ?? 0}, finish_reason=${response.finish_reason}`);
+
       this.appendSessionMessage({
         role: 'assistant',
         content: response.content ?? '',
@@ -117,11 +119,13 @@ export class WebClawClientCore {
       // ── 工具循环 ──────────────────────────────────────────────
       // 如果有 tool_calls，自动执行工具并将结果发回模型
       let finalResponse = response;
-      if (response.tool_calls.length > 0) {
+      if (response.tool_calls && response.tool_calls.length > 0) {
+        console.log(`[WebClawClientCore] Entering tool loop with ${response.tool_calls.length} tool_calls`);
         this._toolLoopRunning = true;
         this.emitEvent();
         try {
           finalResponse = await this.runToolLoop(response);
+          console.log(`[WebClawClientCore] Tool loop completed: content="${(finalResponse.content ?? '').slice(0, 50)}", tool_calls=${finalResponse.tool_calls?.length ?? 0}`);
         } finally {
           this._toolLoopRunning = false;
           this.emitEvent();
@@ -354,11 +358,13 @@ export class WebClawClientCore {
     let currentToolCalls = initialResponse.tool_calls;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      console.log(`[ToolLoop] Round ${round}: executing ${currentToolCalls.length} tool_calls`);
       // 执行每个 tool_call
       for (const tc of currentToolCalls) {
         const toolCall = tc as { id?: string; function?: { name?: string; arguments?: string } };
         const toolName = toolCall.function?.name ?? '';
         const toolArgsRaw = toolCall.function?.arguments ?? '{}';
+        console.log(`[ToolLoop] Executing tool: ${toolName}, args preview: ${toolArgsRaw.slice(0, 100)}`);
 
         let args: Record<string, unknown>;
         try {

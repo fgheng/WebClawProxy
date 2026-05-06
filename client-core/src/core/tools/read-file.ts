@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { Tool } from '../../types';
 import { ToolModule } from './tool-module';
+import { expandPath } from './expand-path';
 
 export const readFileModule: ToolModule = {
   definition: {
@@ -30,8 +31,9 @@ export const readFileModule: ToolModule = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const filePath = String(args.path ?? '');
+    let filePath = String(args.path ?? '');
     if (!filePath.trim()) return JSON.stringify({ error: 'Empty path' });
+    filePath = expandPath(filePath);
 
     const offset = typeof args.offset === 'number' && args.offset > 0 ? args.offset : 1;
     const limit = typeof args.limit === 'number' && args.limit > 0 ? args.limit : 2000;

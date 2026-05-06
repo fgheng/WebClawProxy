@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Tool } from '../../types';
 import { ToolModule } from './tool-module';
+import { expandPath } from './expand-path';
 
 export const writeFileModule: ToolModule = {
   definition: {
@@ -27,8 +28,9 @@ export const writeFileModule: ToolModule = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const filePath = String(args.path ?? '');
+    let filePath = String(args.path ?? '');
     const content = String(args.content ?? '');
+    filePath = expandPath(filePath);
     if (!filePath.trim()) return JSON.stringify({ error: 'Empty path' });
 
     try {
