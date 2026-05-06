@@ -136,7 +136,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
       client.disconnectWebSocket();
       clientRef.current = null;
     };
-  }, [agentUrl, onProviderChange]);
+  }, [agentUrl]); // 注意：不包含 onProviderChange，避免 re-render 重建 client
 
   // 同步 provider 和 mode（静默失败，Agent Service 可能还没启动）
   useEffect(() => {

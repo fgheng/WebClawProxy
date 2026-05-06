@@ -31,11 +31,25 @@ export class AgentClient {
   private sessionId: string | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _connected = false;
+  private sessionStorageKey = 'webclaw_agent_session_id';
 
   constructor(options?: { agentUrl?: string }) {
     const url = options?.agentUrl ?? `http://localhost:${DEFAULT_AGENT_PORT}`;
     this.baseUrl = url;
     this.wsUrl = url.replace(/^http/, 'ws') + '/ws';
+    // 从 localStorage 恢复 sessionId，避免组件重建后丢失会话
+    try {
+      const savedId = localStorage.getItem(this.sessionStorageKey);
+      if (savedId) this.sessionId = savedId;
+    } catch { /* localStorage 可能不可用 */ }
+  }
+
+  private saveSessionId(id: string | null): void {
+    this.sessionId = id;
+    try {
+      if (id) localStorage.setItem(this.sessionStorageKey, id);
+      else localStorage.removeItem(this.sessionStorageKey);
+    } catch { /* ignore */ }
   }
 
   // ── REST API ──────────────────────────────────────────
@@ -63,7 +77,7 @@ export class AgentClient {
 
     const data = await res.json();
     console.log(`[AgentClient] Response: kind=${data.kind}, sessionId=${data.sessionId}`);
-    if (data.sessionId) this.sessionId = data.sessionId;
+    if (data.sessionId) this.saveSessionId(data.sessionId);
     return data;
   }
 
@@ -80,7 +94,7 @@ export class AgentClient {
     }
 
     const data = await res.json();
-    this.sessionId = data.sessionId;
+    this.saveSessionId(data.sessionId);
     return data.sessionId;
   }
 
@@ -127,7 +141,7 @@ export class AgentClient {
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(String(event.data));
-        if (data.sessionId) this.sessionId = data.sessionId;
+        if (data.sessionId) this.saveSessionId(data.sessionId);
         this.eventCallback?.(data);
       } catch { /* ignore */ }
     };
