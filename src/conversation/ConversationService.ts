@@ -7,25 +7,34 @@ import { computeHashKey } from '../data-manager/utils/hash';
 /**
  * ConversationService
  *
- * 封装对 FileConversationStore 的所有操作，提供：
- * - findOrCreate: 根据 HASH_KEY 查找或新建对话记录
- * - appendAssistant: 追加 assistant 回复
- * - updateHash: 更新 latestHash（含 current+assistant 后重算）
- * - listSnapshots / findById / delete: 查询接口
+ * 封装对 FileConversationStore 的操作。
+ * 默认复用 sessionRegistry 的 conversationStore 实例，
+ * 确保 forward 和 web 模式的对话数据在同一个 store 中。
+ *
+ * 职责：
+ * - web 模式对话的 findOrCreate / appendAssistant / updateHash
+ * - 所有模式的 listSnapshots / findById / delete（供 REST API 使用）
+ *
+ * 注意：forward 模式的数据由 sessionRegistry 负责（ingest + appendResponse + syncConversationMirror），
+ * ConversationService 不再重复写入 forward 数据。
  */
 export class ConversationService {
   private store: FileConversationStore;
 
-  constructor(rootDir?: string) {
-    this.store = new FileConversationStore(rootDir);
+  constructor(store?: FileConversationStore) {
+    // 如果外部传入 store（如 sessionRegistry 的 conversationStore），直接复用
+    // 否则创建独立实例（仅用于测试等场景）
+    this.store = store ?? new FileConversationStore();
   }
 
   /**
-   * 根据 HASH_KEY 查找已有对话，或新建。
+   * 根据 HASH_KEY / sessionId 查找已有对话，或新建。
    *
-   * - 优先用 sessionId 精确匹配（若提供）
-   * - 命中：追加 current 消息，更新 stats
-   * - 未命中：新建 ConversationRecord，写入 system/history/current
+   * 仅用于 web 模式。forward 模式由 sessionRegistry 处理。
+   *
+   * - 优先用 sessionId 精确匹配
+   * - 回退到 hashKey 匹配
+   * - 未命中则新建
    */
   findOrCreate(params: {
     sessionId?: string;
@@ -41,7 +50,7 @@ export class ConversationService {
     const { sessionId, hashKey, mode, providerKey, model, system, history, tools, current } = params;
     const now = Date.now();
 
-    // 1. 优先用 sessionId 精确匹配（Desktop 客户端场景）
+    // 1. 优先用 sessionId 精确匹配
     if (sessionId) {
       const bySessionId = this.store.findBySessionId(sessionId);
       if (bySessionId) {
@@ -54,10 +63,9 @@ export class ConversationService {
       }
     }
 
-    // 2. 回退到 hashKey 匹配（第三方客户端场景，可能无 sessionId）
+    // 2. 回退到 hashKey 匹配
     const existing = this.store.findByLatestHash(hashKey);
     if (existing) {
-      // 追加 current 消息
       const currentMsgs = this.toConversationMessages(current, now);
       existing.messages.push(...currentMsgs);
       existing.stats.rounds += 1;
@@ -70,15 +78,10 @@ export class ConversationService {
     const conversationId = sessionId || uuidv4();
     const messages: ConversationMessage[] = [];
 
-    // 写入 system（放在 messages 最前，方便阅读；promptState 也保存）
     if (system) {
       messages.push({ role: 'system', content: system, timestamp: now });
     }
-
-    // 写入 history
     messages.push(...this.toConversationMessages(history, now));
-
-    // 写入 current
     messages.push(...this.toConversationMessages(current, now));
 
     const record: ConversationRecord = {
@@ -116,7 +119,7 @@ export class ConversationService {
   }
 
   /**
-   * 追加 assistant 回复消息到指定对话记录
+   * 追加 assistant 回复消息（仅用于 web 模式）
    */
   appendAssistant(
     conversationId: string,
@@ -144,7 +147,7 @@ export class ConversationService {
   }
 
   /**
-   * 更新对话记录的 latestHash（assistant 回复后重算）
+   * 更新对话记录的 latestHash
    */
   updateHash(conversationId: string, newHash: string): void {
     const record = this.store.findByConversationId(conversationId);
@@ -155,7 +158,7 @@ export class ConversationService {
   }
 
   /**
-   * 列出对话快照，支持按 provider 和 mode 过滤
+   * 列出对话快照（所有模式，供 /v1/conversations API 使用）
    */
   listSnapshots(providerKey?: string, mode?: string): ConversationSnapshot[] {
     const snapshots = this.store.listSnapshots(providerKey);
@@ -178,9 +181,7 @@ export class ConversationService {
   }
 
   /**
-   * 重新计算并更新 hash（assistant 回复后调用）
-   *
-   * newHistory = 原 history + current(user) + assistant
+   * 重新计算含 assistant 后的新 hash
    */
   static computeNewHash(
     system: string,
@@ -213,5 +214,20 @@ export class ConversationService {
   }
 }
 
-/** 全局单例 */
-export const conversationService = new ConversationService();
+/**
+ * 全局单例 — 初始化时必须调用 initConversationService()
+ * 让它复用 sessionRegistry 的 conversationStore
+ */
+let _conversationService: ConversationService | null = null;
+
+export function initConversationService(store: FileConversationStore): void {
+  _conversationService = new ConversationService(store);
+}
+
+export function getConversationService(): ConversationService {
+  if (!_conversationService) {
+    // 兜底：如果未初始化，创建独立实例（不应发生）
+    _conversationService = new ConversationService();
+  }
+  return _conversationService;
+}

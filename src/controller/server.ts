@@ -7,12 +7,15 @@ import { forwardMonitorBus } from './forward-monitor-bus';
 import { sessionRegistry } from './session-registry';
 import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-config';
 import { clearAppConfigCache, getAppConfigPath } from '../config/app-config';
-import { conversationService } from '../conversation/ConversationService';
+import { initConversationService, getConversationService } from '../conversation/ConversationService';
 
 /**
  * 创建并配置 Express 应用
  */
 export function createApp() {
+  // 初始化 ConversationService，复用 sessionRegistry 的 conversationStore
+  initConversationService(sessionRegistry.getConversationStore());
+
   const app = express();
 
   // ===== 中间件 =====
@@ -194,13 +197,13 @@ export function createApp() {
   app.get('/v1/conversations', (req: Request, res: Response) => {
     const provider = typeof req.query.provider === 'string' ? req.query.provider : undefined;
     const mode = typeof req.query.mode === 'string' ? req.query.mode : undefined;
-    const snapshots = conversationService.listSnapshots(provider, mode);
+    const snapshots = getConversationService().listSnapshots(provider, mode);
     res.json({ conversations: snapshots });
   });
 
   // GET /v1/conversations/:id — 完整 ConversationRecord
   app.get('/v1/conversations/:id', (req: Request, res: Response) => {
-    const record = conversationService.findById(req.params.id);
+    const record = getConversationService().findById(req.params.id);
     if (!record) {
       res.status(404).json({ error: { message: 'conversation not found', code: 'not_found' } });
       return;
@@ -210,7 +213,7 @@ export function createApp() {
 
   // GET /v1/conversations/:id/messages — 仅返回 messages 数组
   app.get('/v1/conversations/:id/messages', (req: Request, res: Response) => {
-    const record = conversationService.findById(req.params.id);
+    const record = getConversationService().findById(req.params.id);
     if (!record) {
       res.status(404).json({ error: { message: 'conversation not found', code: 'not_found' } });
       return;
@@ -220,7 +223,7 @@ export function createApp() {
 
   // DELETE /v1/conversations/:id — 删除
   app.delete('/v1/conversations/:id', (req: Request, res: Response) => {
-    const deleted = conversationService.delete(req.params.id);
+    const deleted = getConversationService().delete(req.params.id);
     res.json({ deleted });
   });
 

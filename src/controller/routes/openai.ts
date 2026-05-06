@@ -17,7 +17,7 @@ import {
 import { loadAppConfig } from '../../config/app-config';
 import { forwardMonitorBus } from '../forward-monitor-bus';
 import { sessionRegistry } from '../session-registry';
-import { conversationService, ConversationService } from '../../conversation/ConversationService';
+import { getConversationService, ConversationService } from '../../conversation/ConversationService';
 import { computeHashKey } from '../../data-manager/utils/hash';
 
 const config = loadAppConfig();
@@ -166,21 +166,6 @@ async function sendForwardRequest(
   }
   const currentSessionId = ingestResult.session.sessionId;
 
-  // ── 对话历史持久化 ──────────────────────────────────────────
-  const { internalReq, hashKey, sessionHeader } = options;
-  const headerSessionId = typeof sessionHeader === 'string' && sessionHeader.trim() ? sessionHeader.trim() : undefined;
-  const convRecord = conversationService.findOrCreate({
-    sessionId: headerSessionId,
-    hashKey,
-    mode: 'forward',
-    providerKey,
-    model: originalModel,
-    system: internalReq.system ?? '',
-    history: internalReq.history ?? [],
-    tools: internalReq.tools ?? [],
-    current: internalReq.current ?? [],
-  });
-
   const upstreamHeaders: Record<string, string> = {
     'content-type': 'application/json',
     authorization: `Bearer ${forwardConfig.api_key}`,
@@ -312,22 +297,6 @@ async function sendForwardRequest(
           durationMs: Date.now() - startTime,
           timestamp: Date.now(),
         });
-
-        // ── 持久化 assistant 回复 ──────────────────────────────
-        try {
-          conversationService.appendAssistant(convRecord.conversationId, {
-            content: streamContent || null,
-            tool_calls: mergedToolCalls,
-          });
-          const newHash = ConversationService.computeNewHash(
-            internalReq.system ?? '',
-            internalReq.history ?? [],
-            internalReq.current ?? [],
-            streamContent || null,
-            internalReq.tools ?? []
-          );
-          conversationService.updateHash(convRecord.conversationId, newHash);
-        } catch { /* 持久化失败不影响响应 */ }
       } finally {
         reader.releaseLock();
       }
@@ -364,22 +333,6 @@ async function sendForwardRequest(
         durationMs: Date.now() - startTime,
         timestamp: Date.now(),
       });
-
-      // ── 持久化 assistant 回复（非流式）──────────────────────
-      try {
-        conversationService.appendAssistant(convRecord.conversationId, {
-          content: normalizedContent,
-          tool_calls: Array.isArray(toolCalls) ? toolCalls : undefined,
-        });
-        const newHash = ConversationService.computeNewHash(
-          internalReq.system ?? '',
-          internalReq.history ?? [],
-          internalReq.current ?? [],
-          normalizedContent,
-          internalReq.tools ?? []
-        );
-        conversationService.updateHash(convRecord.conversationId, newHash);
-      } catch { /* 持久化失败不影响响应 */ }
     } catch {
       const fallback = bodyText.slice(0, 500);
       sessionRegistry.appendResponse(currentSessionId, fallback);
@@ -1359,7 +1312,7 @@ export async function chatCompletionsHandler(
 
     // ===== Step 2.5: 对话历史持久化 — 查找或新建 ConversationRecord =====
     const headerSessionId = String(req.headers['x-session-id'] ?? '').trim() || undefined;
-    const webConvRecord = conversationService.findOrCreate({
+    const webConvRecord = getConversationService().findOrCreate({
       sessionId: headerSessionId,
       hashKey,
       mode: 'web',
@@ -1629,7 +1582,7 @@ export async function chatCompletionsHandler(
     try {
       const assistantContent = messagePayload.content ?? responseContent;
       const assistantToolCalls = messagePayload.tool_calls;
-      conversationService.appendAssistant(webConvRecord.conversationId, {
+      getConversationService().appendAssistant(webConvRecord.conversationId, {
         content: typeof assistantContent === 'string' ? assistantContent : null,
         tool_calls: assistantToolCalls,
       });
@@ -1640,7 +1593,7 @@ export async function chatCompletionsHandler(
         typeof assistantContent === 'string' ? assistantContent : null,
         internalReq.tools ?? []
       );
-      conversationService.updateHash(webConvRecord.conversationId, newHash);
+      getConversationService().updateHash(webConvRecord.conversationId, newHash);
     } catch { /* 持久化失败不影响响应 */ }
 
     // ===== Step 9: 构造并返回响应 =====

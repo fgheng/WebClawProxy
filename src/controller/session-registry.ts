@@ -355,6 +355,11 @@ export class SessionRegistry {
     process.on('SIGTERM', () => this.gracefulShutdown('SIGTERM'));
   }
 
+  /** 获取内部的 conversationStore 实例（供 ConversationService / API 共用） */
+  getConversationStore(): FileConversationStore {
+    return this.conversationStore;
+  }
+
   private gracefulShutdown(signal: string): void {
     console.log(`[SessionRegistry] 接收到 ${signal}，保存数据并退出...`);
     this.save();
