@@ -31,9 +31,8 @@ export const readFileModule: ToolModule = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    let filePath = String(args.path ?? '');
+    const filePath = expandPath(String(args.path ?? ''));
     if (!filePath.trim()) return JSON.stringify({ error: 'Empty path' });
-    filePath = expandPath(filePath);
 
     const offset = typeof args.offset === 'number' && args.offset > 0 ? args.offset : 1;
     const limit = typeof args.limit === 'number' && args.limit > 0 ? args.limit : 2000;

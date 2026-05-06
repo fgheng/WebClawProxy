@@ -28,9 +28,8 @@ export const listDirectoryModule: ToolModule = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    let dirPath = String(args.path ?? '');
+    const dirPath = expandPath(String(args.path ?? ''));
     if (!dirPath.trim()) return JSON.stringify({ error: 'Empty path' });
-    dirPath = expandPath(dirPath);
 
     const recursive = args.recursive === true;
     const maxItems = 500;

@@ -28,9 +28,8 @@ export const writeFileModule: ToolModule = {
   },
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    let filePath = String(args.path ?? '');
+    const filePath = expandPath(String(args.path ?? ''));
     const content = String(args.content ?? '');
-    filePath = expandPath(filePath);
     if (!filePath.trim()) return JSON.stringify({ error: 'Empty path' });
 
     try {
