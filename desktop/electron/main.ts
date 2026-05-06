@@ -323,20 +323,24 @@ async function startAgentService(): Promise<void> {
     if (!fs.existsSync(agentEntry)) {
       console.error(`[AgentService] Entry file not found: ${agentEntry}`);
       sendLogToRenderer(`Agent Service 入口文件不存在: ${agentEntry}`);
+      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] Entry file not found: ${agentEntry}\n`);
       return;
     }
     
-    console.log(`[AgentService] Starting: node ts-node ${agentEntry}`);
-    sendLogToRenderer(`启动 Agent Service...`);
-
-    // 使用项目内 ts-node 绝对路径，不依赖 npx/PATH
+    // 使用项目内 ts-node 绝对路径
     const tsNodeBin = path.join(PROJECT_ROOT, 'node_modules', '.bin', 'ts-node');
     
     if (!fs.existsSync(tsNodeBin)) {
       console.error(`[AgentService] ts-node not found at: ${tsNodeBin}`);
       sendLogToRenderer(`ts-node 不存在: ${tsNodeBin}`);
+      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] ts-node not found: ${tsNodeBin}\n`);
       return;
     }
+    
+    console.log(`[AgentService] Starting: ${tsNodeBin} ${agentEntry}`);
+    sendLogToRenderer(`启动 Agent Service...`);
+    fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] Starting: ${tsNodeBin} ${agentEntry}\n`);
+    fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] WEBCLAW_AGENT_PORT=8100, WEBCLAW_PROXY_URL=http://localhost:${runtimeServicePort}\n`);
 
     agentServiceProc = spawn(tsNodeBin, [agentEntry], {
       cwd: PROJECT_ROOT,
@@ -348,11 +352,14 @@ async function startAgentService(): Promise<void> {
       stdio: 'pipe',
     });
 
+    fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] spawn called, pid=${agentServiceProc.pid}\n`);
+
     let readySignalReceived = false;
 
     agentServiceProc.stdout?.on('data', (data: Buffer) => {
       const text = data.toString();
       console.log(`[AgentService stdout] ${text.trim()}`);
+      fs.appendFileSync('/tmp/agent-service-debug.log', `[stdout] ${text.trim()}\n`);
       if (text.includes('Started on port')) {
         readySignalReceived = true;
         agentServiceStatus = 'running';
@@ -362,6 +369,7 @@ async function startAgentService(): Promise<void> {
     agentServiceProc.stderr?.on('data', (data: Buffer) => {
       const text = data.toString();
       console.error(`[AgentService stderr] ${text.trim()}`);
+      fs.appendFileSync('/tmp/agent-service-debug.log', `[stderr] ${text.trim()}\n`);
       if (text.includes('TSError') || text.includes('error TS')) {
         sendLogToRenderer(`Agent Service 编译错误: ${text.trim().substring(0, 200)}`);
       }
@@ -371,6 +379,7 @@ async function startAgentService(): Promise<void> {
       agentServiceProc = null;
       agentServiceStatus = 'stopped';
       sendLogToRenderer(`Agent Service spawn 失败: ${err.message}`);
+      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] spawn error: ${err.message}\n`);
     });
     agentServiceProc.on('exit', (code, signal) => {
       console.log(`[AgentService] exited with code=${code}, signal=${signal}`);
@@ -379,6 +388,7 @@ async function startAgentService(): Promise<void> {
       }
       agentServiceProc = null;
       agentServiceStatus = 'stopped';
+      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] exited: code=${code}, signal=${signal}\n`);
     });
 
     // 等待就绪信号或 15 秒超时
