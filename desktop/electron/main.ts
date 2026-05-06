@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, nativeTheme } from 'electron';
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
@@ -22,7 +22,6 @@ const BOTTOM_ACTION_BAR_HEIGHT = 24;
 let browserViewManager: BrowserViewManager | null = null;
 let serviceManager: ServiceManager | null = null;
 let shellTerminalManager: ShellTerminalManager | null = null;
-let agentServiceProc: ChildProcessWithoutNullStreams | null = null;
 let agentServiceStatus: 'stopped' | 'running' = 'stopped';
 let providerSites: Record<ProviderKey, string> = {} as Record<ProviderKey, string>;
 let providerModels: Record<ProviderKey, string[]> = {} as Record<ProviderKey, string[]>;
@@ -337,16 +336,6 @@ async function startAgentService(): Promise<void> {
 }
 
     // 等待就绪信号或 15 秒超时
-    const ready = await waitForAgentReady(15000);
-    if (!ready) {
-      sendLogToRenderer('Agent Service 启动超时（15秒内未收到就绪信号）');
-    }
-  } catch (err: any) {
-    console.error('[AgentService] Failed to start:', err.message);
-    sendLogToRenderer(`Agent Service 启动异常: ${err.message}`);
-  }
-}
-
 async function stopAgentService(): Promise<void> {
   // Agent Service 由用户手动管理，Electron 不负责停止
   agentServiceStatus = 'stopped';
@@ -357,22 +346,6 @@ function sendLogToRenderer(message: string): void {
   if (mainWindowRef && !mainWindowRef.isDestroyed()) {
     mainWindowRef.webContents.send('agent:log', { message, timestamp: Date.now() });
   }
-}
-
-async function waitForAgentReady(timeoutMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (agentServiceStatus === 'running') return true;
-    try {
-      const res = await fetch('http://localhost:8100/v1/health');
-      if (res.ok) {
-        agentServiceStatus = 'running';
-        return true;
-      }
-    } catch { /* not ready yet */ }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  return false;
 }
 
 app.whenReady().then(() => {
