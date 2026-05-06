@@ -1,44 +1,25 @@
 /**
- * AgentClient — 前端与 Agent Service 的通信层
+ * AgentClient (浏览器版) — Desktop 前端与 Agent Service 的通信层
  *
  * 通过 HTTP REST API + WebSocket 与 client-core Agent Service 交互。
- * Desktop/TUI 只 import 此文件，不 import client-core 内部代码。
+ * Desktop 不 import client-core 内部代码，只通过此客户端通信。
  */
 
-export interface AgentChatResponse {
-  kind: 'chat' | 'command';
-  content?: string;
-  toolCalls?: unknown[];
-  finishReason?: string;
-  model?: string;
-  sessionId: string;
-  provider?: string;
-  command?: string;
-  lines?: string[];
-}
+import type {
+  AgentChatResponse,
+  AgentEvent,
+  AgentConfig,
+  AgentToolInfo,
+  AgentEventCallback,
+} from '../../../client-core/src/shared/agent-client-types';
 
-export interface AgentEvent {
-  type: string;
-  data: Record<string, unknown>;
-  sessionId?: string;
-  timestamp: number;
-}
-
-export interface AgentConfig {
-  model?: string;
-  provider?: string;
-  mode?: 'web' | 'forward';
-  systemPrompt?: string;
-  sessionId?: string;
-}
-
-export interface AgentToolInfo {
-  name: string;
-  description: string;
-  parameters: unknown;
-}
-
-export type AgentEventCallback = (event: AgentEvent) => void;
+export type {
+  AgentChatResponse,
+  AgentEvent,
+  AgentConfig,
+  AgentToolInfo,
+  AgentEventCallback,
+} from '../../../client-core/src/shared/agent-client-types';
 
 const DEFAULT_AGENT_PORT = 8100;
 
@@ -48,7 +29,7 @@ export class AgentClient {
   private ws: WebSocket | null = null;
   private eventCallback: AgentEventCallback | null = null;
   private sessionId: string | null = null;
-  private reconnectTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _connected = false;
 
   constructor(options?: { agentUrl?: string }) {
@@ -59,7 +40,6 @@ export class AgentClient {
 
   // ── REST API ──────────────────────────────────────────
 
-  /** 发消息给模型（含 tool loop） */
   async chat(message: string, options?: { model?: string; system?: string; mode?: string }): Promise<AgentChatResponse> {
     const res = await fetch(`${this.baseUrl}/v1/chat`, {
       method: 'POST',
@@ -79,22 +59,15 @@ export class AgentClient {
     }
 
     const data = await res.json();
-    if (data.sessionId) {
-      this.sessionId = data.sessionId;
-    }
+    if (data.sessionId) this.sessionId = data.sessionId;
     return data;
   }
 
-  /** 新建会话 */
   async newSession(options?: { model?: string; system?: string; mode?: string }): Promise<string> {
     const res = await fetch(`${this.baseUrl}/v1/sessions/new`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: options?.model,
-        system: options?.system,
-        mode: options?.mode,
-      }),
+      body: JSON.stringify({ model: options?.model, system: options?.system, mode: options?.mode }),
     });
 
     if (!res.ok) {
@@ -107,13 +80,11 @@ export class AgentClient {
     return data.sessionId;
   }
 
-  /** 获取当前配置 */
   async getConfig(): Promise<AgentConfig> {
     const res = await fetch(`${this.baseUrl}/v1/config?sessionId=${this.sessionId ?? ''}`);
     return res.json();
   }
 
-  /** 更新配置 */
   async updateConfig(config: Partial<AgentConfig>): Promise<AgentConfig> {
     const res = await fetch(`${this.baseUrl}/v1/config`, {
       method: 'PATCH',
@@ -123,91 +94,54 @@ export class AgentClient {
     return res.json();
   }
 
-  /** 获取可用工具列表 */
   async getTools(): Promise<AgentToolInfo[]> {
     const res = await fetch(`${this.baseUrl}/v1/tools`);
     const data = await res.json();
     return data.tools ?? [];
   }
 
-  /** 获取会话列表 */
   async getSessions(): Promise<Array<{ sessionId: string; model: string; provider: string }>> {
     const res = await fetch(`${this.baseUrl}/v1/sessions`);
     const data = await res.json();
     return data.sessions ?? [];
   }
 
-  /** 健康检查 */
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/v1/health`);
       return res.ok;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
 
   // ── WebSocket ──────────────────────────────────────────
 
-  /** 连接 WebSocket（用于实时接收事件） */
   connectWebSocket(): void {
     if (this.ws) return;
-
     this.ws = new WebSocket(this.wsUrl);
 
-    this.ws.onopen = () => {
-      this._connected = true;
-    };
-
+    this.ws.onopen = () => { this._connected = true; };
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(String(event.data));
-        if (data.sessionId) {
-          this.sessionId = data.sessionId;
-        }
+        if (data.sessionId) this.sessionId = data.sessionId;
         this.eventCallback?.(data);
-      } catch { /* ignore parse errors */ }
+      } catch { /* ignore */ }
     };
-
     this.ws.onclose = () => {
       this._connected = false;
       this.ws = null;
-      // 自动重连（5秒后）
-      this.reconnectTimer = setTimeout(() => {
-        this.connectWebSocket();
-      }, 5000);
+      this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 5000);
     };
-
-    this.ws.onerror = () => {
-      this._connected = false;
-    };
+    this.ws.onerror = () => { this._connected = false; };
   }
 
-  /** 断开 WebSocket */
   disconnectWebSocket(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.ws) { this.ws.close(); this.ws = null; }
     this._connected = false;
   }
 
-  /** 是否 WebSocket 已连接 */
-  get connected(): boolean {
-    return this._connected;
-  }
-
-  /** 设置事件回调 */
-  setEventCallback(cb: AgentEventCallback): void {
-    this.eventCallback = cb;
-  }
-
-  /** 获取当前 session ID */
-  getSessionId(): string | null {
-    return this.sessionId;
-  }
+  get connected(): boolean { return this._connected; }
+  setEventCallback(cb: AgentEventCallback): void { this.eventCallback = cb; }
+  getSessionId(): string | null { return this.sessionId; }
 }
