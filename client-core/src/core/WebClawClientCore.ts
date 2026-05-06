@@ -109,6 +109,18 @@ export class WebClawClientCore {
       const response = await this.client.sendMessage(trimmed);
       console.log(`[WebClawClientCore] sendMessage response: content="${(response.content ?? '').slice(0, 50)}", tool_calls=${response.tool_calls?.length ?? 0}, finish_reason=${response.finish_reason}`);
 
+      // Web 模式下，模型可能把 tool_calls JSON 嵌入 content 字段而非 message.tool_calls
+      // 如果 tool_calls 为空但 content 包含 tool_calls JSON，尝试从中提取
+      if (response.tool_calls.length === 0 && response.content) {
+        const extracted = this.tryExtractToolCallsFromContent(response.content);
+        if (extracted) {
+          console.log(`[WebClawClientCore] Extracted ${extracted.tool_calls.length} tool_calls from content`);
+          response.content = extracted.content;
+          response.tool_calls = extracted.tool_calls;
+          response.finish_reason = 'tool_calls';
+        }
+      }
+
       this.appendSessionMessage({
         role: 'assistant',
         content: response.content ?? '',
@@ -434,6 +446,49 @@ export class WebClawClientCore {
       finish_reason: 'max_tool_rounds',
       usage: initialResponse.usage,
     };
+  }
+
+  /**
+   * Web 模式下，模型有时把 tool_calls 的原始 JSON 嵌入到 content 字段里。
+   * 这个方法尝试从 content 中提取出 tool_calls 数组，并将剩余文本作为 content 返回。
+   */
+  private tryExtractToolCallsFromContent(content: string): { content: string; tool_calls: unknown[] } | null {
+    // 尝试直接解析整个 content 为 JSON
+    try {
+      const parsed = JSON.parse(content);
+      // content 是一个 OpenAI message 格式的对象
+      if (parsed?.message?.tool_calls && Array.isArray(parsed.message.tool_calls) && parsed.message.tool_calls.length > 0) {
+        return {
+          content: parsed.message.content ?? '',
+          tool_calls: parsed.message.tool_calls,
+        };
+      }
+      // content 本身就是包含 tool_calls 的对象
+      if (parsed?.tool_calls && Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
+        return {
+          content: parsed.content ?? '',
+          tool_calls: parsed.tool_calls,
+        };
+      }
+    } catch { /* not JSON */ }
+
+    // 尝试从 content 中用正则提取 tool_calls JSON
+    const toolCallsMatch = content.match(/"tool_calls"\s*:\s*\[[\s\S]*?\]/);
+    if (toolCallsMatch) {
+      try {
+        const toolCallsJson = JSON.parse(`{${toolCallsMatch[0]}}`);
+        if (Array.isArray(toolCallsJson.tool_calls) && toolCallsJson.tool_calls.length > 0) {
+          // 移除 content 中的 tool_calls 部分
+          const remainingContent = content.replace(toolCallsMatch[0], '').trim();
+          return {
+            content: remainingContent || '',
+            tool_calls: toolCallsJson.tool_calls,
+          };
+        }
+      } catch { /* regex match but not valid JSON */ }
+    }
+
+    return null;
   }
 
   private emitEvent(): void {
