@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WebClawPanel } from './panels/WebClawPanel';
+import { ForwardMonitorPanel } from './panels/ForwardMonitorPanel';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
-type WorkspaceTabKey = 'webclaw' | 'terminal' | 'config' | 'logs' | 'errors';
+type WorkspaceTabKey = 'webclaw' | 'terminal' | 'config' | 'logs' | 'errors' | 'monitor';
 
 const tabs: { key: WorkspaceTabKey; label: string }[] = [
   { key: 'webclaw', label: 'webclaw' },
@@ -12,6 +13,7 @@ const tabs: { key: WorkspaceTabKey; label: string }[] = [
   { key: 'config', label: '配置' },
   { key: 'logs', label: '日志' },
   { key: 'errors', label: '错误' },
+  { key: 'monitor', label: '对话监控' },
 ];
 
 const PROVIDER_KEYS = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'] as const;
@@ -677,10 +679,19 @@ export default function App() {
         );
       case 'errors':
         return <ErrorPanel errors={errors} />;
+      case 'monitor':
+        return (
+          <div className="panel-shell">
+            <ForwardMonitorPanel
+              apiBaseUrl={apiBaseUrl}
+              providerFilter={undefined}
+            />
+          </div>
+        );
       default:
         return null;
     }
-  }, [activeTab, activeTerminalId, errors, handlePromptConfigSave, handleProviderConfigSave, handleServiceSettingsSave, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, promptConfig, providerApiKeyMasked, providerApiKeys, providerDefaultModes, providerForwardBaseUrls, providerInputMaxChars, providerModels, providerSites, serviceLogs, servicePort, serviceStatus, terminalsById, pushError]);
+  }, [activeTab, activeTerminalId, apiBaseUrl, errors, handlePromptConfigSave, handleProviderConfigSave, handleServiceSettingsSave, logAutoScroll, logProviderFilter, logSearch, logTypeFilter, promptConfig, providerApiKeyMasked, providerApiKeys, providerDefaultModes, providerForwardBaseUrls, providerInputMaxChars, providerModels, providerSites, serviceLogs, servicePort, serviceStatus, terminalsById, pushError]);
 
   return (
     <div className="console-shell">
@@ -780,6 +791,8 @@ export default function App() {
                     return;
                   }
                   setDisplayMode('web');
+                  // 如果当前在 monitor tab，切回 webclaw
+                  setActiveTab((prev) => prev === 'monitor' ? 'webclaw' : prev);
                   void window.webclawDesktop?.selectProvider?.(currentProvider);
                 }}
                 title="切换 web / forward 模式（forward 模式会自动连接服务）"
@@ -812,6 +825,19 @@ export default function App() {
                 </select>
               ) : null}
               {tabs.map((tab) => {
+                if (tab.key === 'monitor') {
+                  // 对话监控只在 forward 模式时显示
+                  if (displayMode !== 'forward') return null;
+                  return (
+                    <button
+                      key={tab.key}
+                      className={tab.key === activeTab ? 'tab active' : 'tab'}
+                      onClick={() => setActiveTab(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                }
                 if (tab.key !== 'terminal') {
                   return (
                     <button
