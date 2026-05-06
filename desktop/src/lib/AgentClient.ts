@@ -120,7 +120,7 @@ export class AgentClient {
   // ── WebSocket ──────────────────────────────────────────
 
   connectWebSocket(): void {
-    if (this.ws) return;
+    if (this.ws || this.reconnectTimer) return;
     this.ws = new WebSocket(this.wsUrl);
 
     this.ws.onopen = () => { this._connected = true; };
@@ -134,7 +134,11 @@ export class AgentClient {
     this.ws.onclose = () => {
       this._connected = false;
       this.ws = null;
-      this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 5000);
+      // 15秒后重连（不要太频繁）
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        this.connectWebSocket();
+      }, 15000);
     };
     this.ws.onerror = () => { this._connected = false; };
   }

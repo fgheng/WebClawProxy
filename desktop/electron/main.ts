@@ -326,10 +326,19 @@ async function startAgentService(): Promise<void> {
       return;
     }
     
-    console.log(`[AgentService] Starting: npx ts-node ${agentEntry}`);
+    console.log(`[AgentService] Starting: node ts-node ${agentEntry}`);
     sendLogToRenderer(`启动 Agent Service...`);
 
-    agentServiceProc = spawn('npx', ['ts-node', agentEntry], {
+    // 使用项目内 ts-node 绝对路径，不依赖 npx/PATH
+    const tsNodeBin = path.join(PROJECT_ROOT, 'node_modules', '.bin', 'ts-node');
+    
+    if (!fs.existsSync(tsNodeBin)) {
+      console.error(`[AgentService] ts-node not found at: ${tsNodeBin}`);
+      sendLogToRenderer(`ts-node 不存在: ${tsNodeBin}`);
+      return;
+    }
+
+    agentServiceProc = spawn(tsNodeBin, [agentEntry], {
       cwd: PROJECT_ROOT,
       env: {
         ...process.env,

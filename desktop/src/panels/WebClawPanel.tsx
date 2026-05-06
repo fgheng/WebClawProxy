@@ -138,17 +138,17 @@ export function WebClawPanel(props: WebClawPanelProps) {
     };
   }, [agentUrl, onProviderChange]);
 
-  // 同步 provider 和 mode
+  // 同步 provider 和 mode（静默失败，Agent Service 可能还没启动）
   useEffect(() => {
     const client = clientRef.current;
     if (!client) return;
 
     const nextModel = selectedModel || providerModels[currentProvider]?.[0];
     if (nextModel) {
-      void client.updateConfig({
+      client.updateConfig({
         model: nextModel,
         mode: displayMode,
-      });
+      }).catch(() => { /* Agent Service 可能未启动，忽略 */ });
     }
   }, [currentProvider, displayMode, selectedModel, providerModels]);
 
