@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { AgentSession, AgentSessionOptions, AgentChatResult } from './agent-session';
+import { WebSocket } from 'ws';
+import { AgentSession, AgentSessionOptions, AgentChatResult, type AgentEvent } from './agent-session';
 import { builtInToolDefinitions, builtInToolNames } from '../core/tools/index';
 
 /**
