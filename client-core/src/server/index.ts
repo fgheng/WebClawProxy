@@ -65,7 +65,8 @@ export interface AgentServiceOptions {
 }
 
 // ── 直接运行入口 ──────────────────────────────────────────
-// 如果此文件被 node 直接执行（而非 import），启动服务
-if (require.main === module) {
+// ts-node 直接执行此文件时才启动服务（被 import 时不启动）
+const entryFile = process.argv[1] ?? '';
+if (entryFile.includes('server/index.ts') || entryFile.includes('server/index')) {
   startAgentService();
 }

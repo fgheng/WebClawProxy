@@ -311,7 +311,52 @@ async function createMainWindow(): Promise<BrowserWindow> {
 }
 
 async function shutdownAppResources(): Promise<void> {
+  await stopAgentService();
   await serviceManager?.stop();
+}
+
+async function startAgentService(): Promise<void> {
+  if (agentServiceProc) return;
+  try {
+    const agentEntry = path.join(PROJECT_ROOT, 'client-core', 'src', 'server', 'index.ts');
+    agentServiceProc = spawn('npx', ['ts-node', agentEntry], {
+      cwd: PROJECT_ROOT,
+      env: {
+        ...process.env,
+        WEBCLAW_AGENT_PORT: '8100',
+        WEBCLAW_PROXY_URL: `http://localhost:${runtimeServicePort}`,
+      },
+      stdio: 'pipe',
+    });
+
+    agentServiceProc.stdout?.on('data', (data: Buffer) => {
+      console.log(`[AgentService] ${data.toString().trim()}`);
+    });
+    agentServiceProc.stderr?.on('data', (data: Buffer) => {
+      console.error(`[AgentService] ${data.toString().trim()}`);
+    });
+    agentServiceProc.on('exit', () => {
+      agentServiceProc = null;
+      agentServiceStatus = 'stopped';
+    });
+
+    agentServiceStatus = 'running';
+    console.log('[AgentService] Started on port 8100');
+  } catch (err: any) {
+    console.error('[AgentService] Failed to start:', err.message);
+  }
+}
+
+async function stopAgentService(): Promise<void> {
+  if (!agentServiceProc) return;
+  try {
+    agentServiceProc.kill('SIGTERM');
+    agentServiceProc = null;
+    agentServiceStatus = 'stopped';
+    console.log('[AgentService] Stopped');
+  } catch (err: any) {
+    console.error('[AgentService] Failed to stop:', err.message);
+  }
 }
 
 app.whenReady().then(() => {
@@ -535,10 +580,13 @@ app.whenReady().then(() => {
       runtimeServicePort = configuredServicePort;
       await refreshProviderCatalogFromService();
       if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
+      // WebClawProxy 启动后自动启动 Agent Service
+      await startAgentService();
     }
     return { status };
   });
   ipcMain.handle('service:stop', async () => {
+    await stopAgentService();
     const status = await serviceManager?.stop() ?? 'stopped';
     const healthyBefore = await probeServiceHealth(getApiBaseUrl());
     if (healthyBefore) {
@@ -554,6 +602,9 @@ app.whenReady().then(() => {
       runtimeServicePort = configuredServicePort;
       await refreshProviderCatalogFromService();
       if (mainWindowRef) await ensureBrowserViewManager(mainWindowRef, { allowProviderViews: true });
+      // 重启 Agent Service
+      await stopAgentService();
+      await startAgentService();
     }
     return { status };
   });
@@ -577,48 +628,13 @@ app.whenReady().then(() => {
 
   // ── Agent Service 管理 ──────────────────────────────────
   ipcMain.handle('agent:start', async () => {
-    if (agentServiceProc) return { status: 'already_running' };
-    try {
-      // Agent Service 是 client-core 的独立 Node.js 进程
-      const agentEntry = path.join(PROJECT_ROOT, 'client-core', 'src', 'server', 'index.ts');
-      agentServiceProc = spawn('npx', ['ts-node', agentEntry], {
-        cwd: PROJECT_ROOT,
-        env: {
-          ...process.env,
-          WEBCLAW_AGENT_PORT: '8100',
-          WEBCLAW_PROXY_URL: `http://localhost:${runtimeServicePort}`,
-        },
-        stdio: 'pipe',
-      });
-
-      agentServiceProc.stdout?.on('data', (data: Buffer) => {
-        console.log(`[AgentService] ${data.toString().trim()}`);
-      });
-      agentServiceProc.stderr?.on('data', (data: Buffer) => {
-        console.error(`[AgentService] ${data.toString().trim()}`);
-      });
-      agentServiceProc.on('exit', () => {
-        agentServiceProc = null;
-        agentServiceStatus = 'stopped';
-      });
-
-      agentServiceStatus = 'running';
-      return { status: 'running' };
-    } catch (err: any) {
-      return { status: 'error', message: err.message };
-    }
+    await startAgentService();
+    return { status: agentServiceStatus };
   });
 
   ipcMain.handle('agent:stop', async () => {
-    if (!agentServiceProc) return { status: 'stopped' };
-    try {
-      agentServiceProc.kill('SIGTERM');
-      agentServiceProc = null;
-      agentServiceStatus = 'stopped';
-      return { status: 'stopped' };
-    } catch (err: any) {
-      return { status: 'error', message: err.message };
-    }
+    await stopAgentService();
+    return { status: agentServiceStatus };
   });
 
   void createMainWindow();
