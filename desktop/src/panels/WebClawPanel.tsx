@@ -23,6 +23,7 @@ type WebClawPanelProps = {
   onProviderChange: (provider: string) => Promise<void> | void;
   onError: (message: string) => void;
   onSendingChange?: (sending: boolean) => void;
+  notice?: { id: number; message: string; tone?: 'error' | 'muted' } | null;
 };
 
 function buildCatalog(providerModels: Record<string, string[]>): ProviderModelCatalog {
@@ -62,7 +63,7 @@ function buildFeedFromHistory(history: ChatMessage[]): FeedItem[] {
 }
 
 export function WebClawPanel(props: WebClawPanelProps) {
-  const { apiBaseUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError, onSendingChange } = props;
+  const { apiBaseUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError, onSendingChange, notice } = props;
   const feedRef = useRef<HTMLDivElement | null>(null);
   const coreRef = useRef<WebClawClientCore | null>(null);
   const onProviderChangeRef = useRef(onProviderChange);
@@ -82,6 +83,22 @@ export function WebClawPanel(props: WebClawPanelProps) {
   useEffect(() => {
     onProviderChangeRef.current = onProviderChange;
   }, [onProviderChange]);
+
+  // 外部推入的通知消息，由 App.tsx 设置，通过 notice prop 传入
+  const prevNoticeIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!notice || notice.id === prevNoticeIdRef.current) return;
+    prevNoticeIdRef.current = notice.id;
+    setFeed((prev) => [
+      ...prev,
+      {
+        id: `notice-${notice.id}`,
+        role: 'webclaw' as const,
+        content: notice.message,
+        tone: notice.tone ?? 'muted',
+      },
+    ]);
+  }, [notice]);
 
   useEffect(() => {
     onSendingChange?.(isSending);

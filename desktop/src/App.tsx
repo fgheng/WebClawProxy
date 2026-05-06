@@ -73,6 +73,7 @@ export default function App() {
   const [logAutoScroll, setLogAutoScroll] = useState(true);
   const [errors, setErrors] = useState<string[]>([]);
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
+  const [webclawNotice, setWebclawNotice] = useState<{ id: number; message: string; tone?: 'error' | 'muted' } | null>(null);
   const [terminalInited, setTerminalInited] = useState(false);
   const serviceStatusRef = useRef(serviceStatus);
   const displayModeRef = useRef(displayMode);
@@ -86,6 +87,10 @@ export default function App() {
   const splitPaneRef = useRef<HTMLDivElement | null>(null);
   const browserPaneRef = useRef<HTMLDivElement | null>(null);
   const lastBrowserBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  const pushWebclawNotice = useCallback((message: string, tone: 'error' | 'muted' = 'muted') => {
+    setWebclawNotice({ id: Date.now(), message, tone });
+  }, []);
 
   const pushError = useCallback((message: string) => {
     setErrors((prev) => [`${new Date().toLocaleTimeString()} ${message}`, ...prev].slice(0, 100));
@@ -447,10 +452,16 @@ export default function App() {
     setCurrentProvider(provider);
     if (displayMode === 'web') {
       await window.webclawDesktop?.selectProvider?.(provider);
-    } else if (serviceStatus === 'running') {
-      await window.webclawDesktop?.showBrowserMonitor?.(`${apiBaseUrl}/monitor?theme=${theme}`);
+    } else {
+      // forward 模式下切换 provider，检查新 provider 的配置
+      if (!providerForwardBaseUrls[provider]?.trim() || !providerApiKeys[provider]?.trim()) {
+        pushWebclawNotice(`⚠️ ${provider} 未配置 forward base_url 或 api_key，请前往「配置」面板填写后再使用 forward 模式`, 'error');
+      }
+      if (serviceStatus === 'running') {
+        await window.webclawDesktop?.showBrowserMonitor?.(`${apiBaseUrl}/monitor?theme=${theme}`);
+      }
     }
-  }, [apiBaseUrl, displayMode, serviceStatus, theme]);
+  }, [apiBaseUrl, displayMode, providerApiKeys, providerForwardBaseUrls, pushWebclawNotice, serviceStatus, theme]);
 
   useEffect(() => {
     if (displayMode !== 'forward') return;
@@ -577,8 +588,9 @@ export default function App() {
       onProviderChange={handleProviderChange}
       onError={pushError}
       onSendingChange={setWebclawSending}
+      notice={webclawNotice}
     />
-  ), [apiBaseUrl, currentProvider, displayMode, selectedForwardModel, providerModels, serviceStatus, handleProviderChange, pushError]);
+  ), [apiBaseUrl, currentProvider, displayMode, selectedForwardModel, providerModels, serviceStatus, handleProviderChange, pushError, webclawNotice]);
 
   const panel = useMemo(() => {
     if (activeTab === 'webclaw') return null;
@@ -759,6 +771,10 @@ export default function App() {
                       setDisplayMode('web');
                       return;
                     }
+                    // 切换到 forward 时，检查当前 provider 的配置是否完整
+                    if (!providerForwardBaseUrls[currentProvider]?.trim() || !providerApiKeys[currentProvider]?.trim()) {
+                      pushWebclawNotice(`⚠️ ${currentProvider} 未配置 forward base_url 或 api_key，请前往「配置」面板填写后再使用 forward 模式`, 'error');
+                    }
                     setDisplayMode('forward');
                     void window.webclawDesktop?.showBrowserMonitor?.(`${apiBaseUrl}/monitor?theme=${theme}`);
                     return;
@@ -777,8 +793,16 @@ export default function App() {
                   className="control-provider-select control-mode-select"
                   value={selectedForwardModel}
                   onChange={(e) => setSelectedForwardModel(e.target.value)}
-                  title="forward 模式请求使用的模型"
-                  disabled={activeTab === 'webclaw' && webclawSending}
+                  title={
+                    (!providerForwardBaseUrls[currentProvider]?.trim() || !providerApiKeys[currentProvider]?.trim())
+                      ? `${currentProvider} 未配置 forward base_url 或 api_key，请前往配置面板填写`
+                      : 'forward 模式请求使用的模型'
+                  }
+                  disabled={
+                    (activeTab === 'webclaw' && webclawSending) ||
+                    !providerForwardBaseUrls[currentProvider]?.trim() ||
+                    !providerApiKeys[currentProvider]?.trim()
+                  }
                 >
                   {(providerModels[currentProvider] ?? []).map((model) => (
                     <option key={model} value={model}>
@@ -1679,57 +1703,75 @@ function ConfigPanel({
                       ) : null}
                     </td>
                     <td>
-                      <input
-                        className={`mono ${getBaseUrlError(provider) ? 'input-invalid' : ''}`}
-                        value={rows[provider]?.forwardBaseUrl ?? providerForwardBaseUrls[provider] ?? ''}
-                        onChange={(e) => updateRow(provider, { forwardBaseUrl: e.target.value })}
-                        onBlur={(event) => {
-                          if (rows[provider]?.saving) return;
-                          const next = event.relatedTarget as HTMLElement | null;
-                          if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
-                          const base = providerForwardBaseUrls[provider] ?? '';
-                          if ((rows[provider]?.forwardBaseUrl ?? '') !== base) {
-                            updateRow(provider, { forwardBaseUrl: base, message: '' });
-                          }
-                        }}
-                        placeholder="https://api.example.com"
-                      />
-                      {getBaseUrlError(provider) ? (
-                        <div className="config-error mono">{getBaseUrlError(provider)}</div>
-                      ) : null}
+                      {(() => {
+                        const isWebMode = (rows[provider]?.defaultMode ?? (providerDefaultModes[provider] ?? 'web')) === 'web';
+                        return (
+                          <>
+                            <input
+                              className={`mono ${getBaseUrlError(provider) ? 'input-invalid' : ''}`}
+                              value={rows[provider]?.forwardBaseUrl ?? providerForwardBaseUrls[provider] ?? ''}
+                              onChange={(e) => updateRow(provider, { forwardBaseUrl: e.target.value })}
+                              onBlur={(event) => {
+                                if (rows[provider]?.saving) return;
+                                const next = event.relatedTarget as HTMLElement | null;
+                                if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
+                                const base = providerForwardBaseUrls[provider] ?? '';
+                                if ((rows[provider]?.forwardBaseUrl ?? '') !== base) {
+                                  updateRow(provider, { forwardBaseUrl: base, message: '' });
+                                }
+                              }}
+                              placeholder="https://api.example.com"
+                              disabled={isWebMode}
+                              title={isWebMode ? 'default mode 为 web 时无需配置' : undefined}
+                            />
+                            {getBaseUrlError(provider) ? (
+                              <div className="config-error mono">{getBaseUrlError(provider)}</div>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td>
-                      <input
-                        className="mono"
-                        value={
-                          rows[provider]?.apiKeyReveal
-                            ? (rows[provider]?.apiKeyDraft ?? '')
-                            : ((rows[provider]?.apiKeyDraft?.trim() || providerApiKeyMasked[provider]) ? '****' : '')
-                        }
-                        placeholder="粘贴后自动掩码"
-                        onMouseEnter={() => updateRow(provider, { apiKeyReveal: true })}
-                        onMouseLeave={() => updateRow(provider, { apiKeyReveal: false })}
-                        onFocus={() => updateRow(provider, { apiKeyReveal: true })}
-                        onPaste={(e) => {
-                          e.preventDefault();
-                          const text = e.clipboardData.getData('text');
-                          updateRow(provider, { apiKeyDraft: text, apiKeyReveal: false });
-                        }}
-                        onChange={(e) => {
-                          updateRow(provider, { apiKeyDraft: e.target.value });
-                        }}
-                        onBlur={(event) => {
-                          if (rows[provider]?.saving) return;
-                          const next = event.relatedTarget as HTMLElement | null;
-                          if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
-                          const base = rows[provider]?.apiKeyValue ?? '';
-                          if ((rows[provider]?.apiKeyDraft ?? '') !== base) {
-                            updateRow(provider, { apiKeyDraft: base, apiKeyReveal: false, message: '' });
-                            return;
-                          }
-                          updateRow(provider, { apiKeyReveal: false });
-                        }}
-                      />
+                      {(() => {
+                        const isWebMode = (rows[provider]?.defaultMode ?? (providerDefaultModes[provider] ?? 'web')) === 'web';
+                        return (
+                          <input
+                            className="mono"
+                            value={
+                              rows[provider]?.apiKeyReveal
+                                ? (rows[provider]?.apiKeyDraft ?? '')
+                                : ((rows[provider]?.apiKeyDraft?.trim() || providerApiKeyMasked[provider]) ? '****' : '')
+                            }
+                            placeholder="粘贴后自动掩码"
+                            disabled={isWebMode}
+                            title={isWebMode ? 'default mode 为 web 时无需配置' : undefined}
+                            onMouseEnter={() => !isWebMode && updateRow(provider, { apiKeyReveal: true })}
+                            onMouseLeave={() => updateRow(provider, { apiKeyReveal: false })}
+                            onFocus={() => !isWebMode && updateRow(provider, { apiKeyReveal: true })}
+                            onPaste={(e) => {
+                              if (isWebMode) return;
+                              e.preventDefault();
+                              const text = e.clipboardData.getData('text');
+                              updateRow(provider, { apiKeyDraft: text, apiKeyReveal: false });
+                            }}
+                            onChange={(e) => {
+                              if (isWebMode) return;
+                              updateRow(provider, { apiKeyDraft: e.target.value });
+                            }}
+                            onBlur={(event) => {
+                              if (rows[provider]?.saving) return;
+                              const next = event.relatedTarget as HTMLElement | null;
+                              if (next?.dataset?.action === 'save-provider' && next?.dataset?.provider === provider) return;
+                              const base = rows[provider]?.apiKeyValue ?? '';
+                              if ((rows[provider]?.apiKeyDraft ?? '') !== base) {
+                                updateRow(provider, { apiKeyDraft: base, apiKeyReveal: false, message: '' });
+                                return;
+                              }
+                              updateRow(provider, { apiKeyReveal: false });
+                            }}
+                          />
+                        );
+                      })()}
                     </td>
                     <td>
                       <button

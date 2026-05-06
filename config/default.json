@@ -6,7 +6,8 @@
     "deepseek": {
       "default_mode": "web",
       "models": [
-        "deepseek-chat", "deepseek"
+        "deepseek-chat",
+        "deepseek"
       ],
       "web": {
         "site": "https://chat.deepseek.com/",
