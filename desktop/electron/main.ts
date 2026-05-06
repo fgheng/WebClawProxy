@@ -316,80 +316,25 @@ async function shutdownAppResources(): Promise<void> {
 }
 
 async function startAgentService(): Promise<void> {
-  if (agentServiceProc) return;
+  // Agent Service 现在由用户手动启动（npm run agent）
+  // Electron 只负责检查它是否可用并通知前端
+  fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] startAgentService called (manual mode - no spawn)\n`);
+  
+  // 尝试 health check
   try {
-    const agentEntry = path.join(PROJECT_ROOT, 'client-core', 'src', 'server', 'index.ts');
-    
-    if (!fs.existsSync(agentEntry)) {
-      console.error(`[AgentService] Entry file not found: ${agentEntry}`);
-      sendLogToRenderer(`Agent Service 入口文件不存在: ${agentEntry}`);
-      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] Entry file not found: ${agentEntry}\n`);
+    const res = await fetch('http://localhost:8100/v1/health');
+    if (res.ok) {
+      agentServiceStatus = 'running';
+      sendLogToRenderer('Agent Service 已连接 (端口 8100)');
+      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] health check OK - Agent Service is running\n`);
       return;
     }
-    
-    // 使用项目内 ts-node 绝对路径
-    const tsNodeBin = path.join(PROJECT_ROOT, 'node_modules', '.bin', 'ts-node');
-    
-    if (!fs.existsSync(tsNodeBin)) {
-      console.error(`[AgentService] ts-node not found at: ${tsNodeBin}`);
-      sendLogToRenderer(`ts-node 不存在: ${tsNodeBin}`);
-      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] ts-node not found: ${tsNodeBin}\n`);
-      return;
-    }
-    
-    console.log(`[AgentService] Starting: ${tsNodeBin} ${agentEntry}`);
-    sendLogToRenderer(`启动 Agent Service...`);
-    fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] Starting: ${tsNodeBin} ${agentEntry}\n`);
-    fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] WEBCLAW_AGENT_PORT=8100, WEBCLAW_PROXY_URL=http://localhost:${runtimeServicePort}\n`);
-
-    agentServiceProc = spawn(tsNodeBin, [agentEntry], {
-      cwd: PROJECT_ROOT,
-      env: {
-        ...process.env,
-        WEBCLAW_AGENT_PORT: '8100',
-        WEBCLAW_PROXY_URL: `http://localhost:${runtimeServicePort}`,
-      },
-      stdio: 'pipe',
-    });
-
-    fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] spawn called, pid=${agentServiceProc.pid}\n`);
-
-    let readySignalReceived = false;
-
-    agentServiceProc.stdout?.on('data', (data: Buffer) => {
-      const text = data.toString();
-      console.log(`[AgentService stdout] ${text.trim()}`);
-      fs.appendFileSync('/tmp/agent-service-debug.log', `[stdout] ${text.trim()}\n`);
-      if (text.includes('Started on port')) {
-        readySignalReceived = true;
-        agentServiceStatus = 'running';
-        sendLogToRenderer('Agent Service 已启动 (端口 8100)');
-      }
-    });
-    agentServiceProc.stderr?.on('data', (data: Buffer) => {
-      const text = data.toString();
-      console.error(`[AgentService stderr] ${text.trim()}`);
-      fs.appendFileSync('/tmp/agent-service-debug.log', `[stderr] ${text.trim()}\n`);
-      if (text.includes('TSError') || text.includes('error TS')) {
-        sendLogToRenderer(`Agent Service 编译错误: ${text.trim().substring(0, 200)}`);
-      }
-    });
-    agentServiceProc.on('error', (err) => {
-      console.error(`[AgentService] spawn error: ${err.message}`);
-      agentServiceProc = null;
-      agentServiceStatus = 'stopped';
-      sendLogToRenderer(`Agent Service spawn 失败: ${err.message}`);
-      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] spawn error: ${err.message}\n`);
-    });
-    agentServiceProc.on('exit', (code, signal) => {
-      console.log(`[AgentService] exited with code=${code}, signal=${signal}`);
-      if (!readySignalReceived) {
-        sendLogToRenderer(`Agent Service 异常退出 (code=${code})`);
-      }
-      agentServiceProc = null;
-      agentServiceStatus = 'stopped';
-      fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] exited: code=${code}, signal=${signal}\n`);
-    });
+  } catch {}
+  
+  agentServiceStatus = 'stopped';
+  sendLogToRenderer('Agent Service 未运行。请先启动: npm run agent');
+  fs.appendFileSync('/tmp/agent-service-debug.log', `[${new Date().toISOString()}] health check failed - Agent Service not running\n`);
+}
 
     // 等待就绪信号或 15 秒超时
     const ready = await waitForAgentReady(15000);
@@ -403,16 +348,8 @@ async function startAgentService(): Promise<void> {
 }
 
 async function stopAgentService(): Promise<void> {
-  if (!agentServiceProc) return;
-  try {
-    agentServiceProc.kill('SIGTERM');
-    agentServiceProc = null;
-    agentServiceStatus = 'stopped';
-    console.log('[AgentService] Stopped');
-    sendLogToRenderer('Agent Service 已停止');
-  } catch (err: any) {
-    console.error('[AgentService] Failed to stop:', err.message);
-  }
+  // Agent Service 由用户手动管理，Electron 不负责停止
+  agentServiceStatus = 'stopped';
 }
 
 /** 把日志推到渲染进程 */
