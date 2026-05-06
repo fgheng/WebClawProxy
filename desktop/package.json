@@ -5,10 +5,11 @@
   "description": "Electron + React console for WebClawProxy",
   "main": ".electron-dist/electron/main.js",
   "scripts": {
-    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\" \"npm:dev:app\"",
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\" \"npm:dev:app\" \"npm:dev:agent\"",
     "dev:renderer": "vite",
     "dev:electron": "tsc -p tsconfig.electron.json --watch",
     "dev:app": "node scripts/ensure-electron-install.cjs && wait-on tcp:5173 file:.electron-dist/electron/main.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "dev:agent": "wait-on tcp:3000 && cross-env WEBCLAW_AGENT_PORT=8100 WEBCLAW_PROXY_URL=http://localhost:3000 ../node_modules/.bin/ts-node ../client-core/src/server/index.ts",
     "build": "npm run build:renderer && npm run build:electron",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
