@@ -146,27 +146,43 @@ export function WebClawPanel(props: WebClawPanelProps) {
     };
   }, [agentUrl]); // 注意：不包含 onProviderChange，避免 re-render 重建 client
 
-  // 启动时恢复上次的 session（验证是否还在服务端）
+  // 启动时恢复上次的 session（验证是否还在服务端）+ 拉取历史消息
   useEffect(() => {
     const client = clientRef.current;
     if (!client) return;
     const savedId = client.getSessionId();
     if (!savedId) return;
 
-    client.validateSession().then((valid) => {
+    client.validateSession().then(async (valid) => {
       if (valid) {
-        setFeed((prev) => [
-          ...prev,
-          { id: `session-restore-${Date.now()}`, role: 'webclaw', content: `已恢复上次会话: ${savedId}`, tone: 'muted' },
-        ]);
-      } else {
-        // 服务端已重启，session 不存在，清除并创建新 session
-        client.newSession().then((newId) => {
+        const history = await client.getSessionHistory();
+        if (history.length > 0) {
+          const historyItems = history
+            .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+            .map((m: any, i: number): FeedItem => ({
+              id: `history-${i}-${Date.now()}`,
+              role: m.role === 'assistant' ? 'webclaw' as const : 'user' as const,
+              content: m.content ?? '',
+              tone: 'normal' as const,
+            }));
+          setFeed((prev) => [
+            ...historyItems,
+            ...prev,
+            { id: `session-restore-${Date.now()}`, role: 'webclaw', content: `已恢复上次会话 (${history.length} 条历史消息)`, tone: 'muted' },
+          ]);
+        } else {
           setFeed((prev) => [
             ...prev,
-            { id: `session-new-${Date.now()}`, role: 'webclaw', content: `上次会话已失效，已创建新会话: ${newId}`, tone: 'muted' },
+            { id: `session-restore-${Date.now()}`, role: 'webclaw', content: `已恢复上次会话: ${savedId}`, tone: 'muted' },
           ]);
-        }).catch(() => {});
+        }
+      } else {
+        // 服务端已重启，session 不存在，清除并创建新 session
+        const newId = await client.newSession();
+        setFeed((prev) => [
+          ...prev,
+          { id: `session-new-${Date.now()}`, role: 'webclaw', content: `上次会话已失效，已创建新会话: ${newId}`, tone: 'muted' },
+        ]);
       }
     }).catch(() => {});
   }, [agentUrl]);

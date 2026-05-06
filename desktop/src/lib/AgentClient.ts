@@ -149,6 +149,17 @@ export class AgentClient {
     } catch { return null; }
   }
 
+  /** 获取当前 session 的历史消息 */
+  async getSessionHistory(): Promise<Array<{ role: string; content: string }>> {
+    if (!this.sessionId) return [];
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/sessions/${this.sessionId}`);
+      if (!res.ok) return [];
+      const state = await res.json();
+      return state.history ?? [];
+    } catch { return []; }
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/v1/health`);
