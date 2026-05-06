@@ -22,6 +22,16 @@ export function startAgentService(options?: AgentServiceOptions): void {
   // 创建 SessionManager
   const sessionsManager = new SessionManager({ proxyBaseUrl });
 
+  // 从 FileSessionStore 加载已有 session（服务重启后恢复）
+  sessionsManager.initialize().then(() => {
+    const count = sessionsManager.list().length;
+    if (count > 0) {
+      console.log(`[Agent Service] Restored ${count} sessions from storage`);
+    }
+  }).catch((err) => {
+    console.error(`[Agent Service] Failed to restore sessions: ${err.message}`);
+  });
+
   // Express REST API
   const app = express();
   app.use(cors());

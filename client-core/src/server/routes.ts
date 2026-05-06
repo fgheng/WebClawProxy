@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { WebSocket } from 'ws';
 import { AgentSession, AgentSessionOptions, AgentChatResult, type AgentEvent } from './agent-session';
+import { FileSessionStore } from './file-session-store';
 import { builtInToolDefinitions, builtInToolNames } from '../core/tools/index';
 
 /**
@@ -150,11 +151,48 @@ export class SessionManager {
   private sessions = new Map<string, AgentSession>();
   private defaultSession: AgentSession | null = null;
   private defaultOptions: AgentSessionOptions = {};
+  private sessionStore: FileSessionStore;
   /** 已连接的 WebSocket，用于广播事件 */
   private wsClients: Set<WebSocket> = new Set();
+  private initialized = false;
 
   constructor(defaultOptions?: AgentSessionOptions) {
     this.defaultOptions = defaultOptions ?? {};
+    this.sessionStore = new FileSessionStore();
+  }
+
+  /** 启动时从 FileSessionStore 加载已有 session 到内存 */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
+    const summaries = await this.sessionStore.listSessions();
+    for (const summary of summaries) {
+      const data = await this.sessionStore.loadSession(summary.id);
+      if (!data) continue;
+      // 从文件数据重建 AgentSession
+      const session = new AgentSession({
+        sessionId: data.id,
+        model: data.model,
+        mode: data.mode,
+        sessionStore: this.sessionStore,
+      });
+      // 将文件里的历史消息恢复到 client.messages
+      if (data.messages && data.messages.length > 0) {
+        const history = data.messages.map((m) => {
+          const msg: any = { role: m.role, content: m.content ?? '' };
+          if (m.toolCalls) msg.tool_calls = m.toolCalls;
+          if (m.toolResultOf) { msg.role = 'tool'; msg.tool_call_id = m.toolResultOf; msg.name = m.toolResultOf; }
+          return msg;
+        }).filter((m: any) => m.role === 'user' || m.role === 'assistant' || m.role === 'system' || m.role === 'tool');
+        session.client.importHistory(history);
+        session.core.currentSession = data;
+      }
+      this.sessions.set(session.getSessionId(), session);
+      if (!this.defaultSession || summary.updatedAt > (this.defaultSession as any).updatedAt) {
+        this.defaultSession = session;
+      }
+      session.setEventCallback((event) => this.broadcastEvent(event));
+    }
   }
 
   /** 注册 WebSocket 连接（用于广播工具事件等） */

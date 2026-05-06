@@ -28,6 +28,7 @@ export class WebClawClientCore {
   private readonly sessionStore?: ClientSessionStore;
   private readonly toolExecutor: ToolExecutor;
   private readonly mergedTools: unknown[];
+  private readonly autoLoadLatestSession: boolean;
   private provider: ProviderKey;
   private mode: ClientRouteMode = 'web';
   private currentSession: ClientSessionData | null = null;
@@ -38,6 +39,7 @@ export class WebClawClientCore {
     this.catalog = options.catalog ?? createEmptyProviderModelCatalog();
     this.hostActions = options.hostActions;
     this.sessionStore = options.sessionStore;
+    this.autoLoadLatestSession = options.autoLoadLatestSession ?? true;
 
     // 合并内置工具和外部注入的工具定义
     const extraTools = options.extraTools ?? [];
@@ -458,6 +460,14 @@ export class WebClawClientCore {
 
   private async ensureSessionInitialized(): Promise<void> {
     if (this.currentSession) return;
+
+    // 如果 autoLoadLatestSession 为 false，直接创建新空 session
+    // （Agent Service 模式：session 由 SessionManager 管理，不从文件加载旧数据）
+    if (!this.autoLoadLatestSession) {
+      await this.createNewSession();
+      return;
+    }
+
     const sessions = await this.sessionStore?.listSessions();
     if (sessions && sessions.length > 0) {
       const latest = await this.sessionStore?.loadSession(sessions[0].id);

@@ -118,4 +118,8 @@ export type ClientCoreOptions = {
   toolExecutor?: ToolExecutor;
   /** 额外注入的工具定义（与内置定义合并，追加到 body.tools） */
   extraTools?: unknown[];
+  /** 是否在初始化时自动加载最近的旧 session（默认 true）。
+   *  Agent Service 应设为 false：session 由 SessionManager 管理，
+   *  不从文件自动加载旧数据到 client.messages */
+  autoLoadLatestSession?: boolean;
 };
