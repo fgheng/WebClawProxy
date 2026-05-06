@@ -87,9 +87,11 @@ export type ClientCoreResult =
     };
 
 export type ClientCoreEvents = {
-  type: 'provider-change' | 'state-change';
+  type: 'provider-change' | 'state-change' | 'tool-executing' | 'tool-loop-start' | 'tool-loop-end';
   provider?: ProviderKey;
   model?: string;
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
 };
 
 export type ClientCoreHostActions = {
