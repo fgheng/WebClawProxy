@@ -59,6 +59,10 @@ export class WebClawBrowserTransport implements ClientTransport {
     this.requestSeq = 0;
   }
 
+  setTools(tools: unknown[]): void {
+    this.config.tools = tools;
+  }
+
   getRouteMode(): 'web' | 'forward' {
     return this.routeMode;
   }

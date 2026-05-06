@@ -52,6 +52,42 @@ export interface AssistantResponse {
 /**
  * OpenAI 格式请求体
  */
+/**
+ * 工具参数属性定义（OpenAI function schema）
+ */
+export interface ToolParameterProperty {
+  type?: string;
+  description?: string;
+  enum?: string[];
+  items?: unknown;
+}
+
+/**
+ * 工具参数定义（OpenAI function schema）
+ */
+export interface ToolParameters {
+  type?: string;
+  properties?: Record<string, ToolParameterProperty>;
+  required?: string[];
+}
+
+/**
+ * 工具函数定义（OpenAI function schema）
+ */
+export interface ToolFunction {
+  name: string;
+  description?: string;
+  parameters?: ToolParameters;
+}
+
+/**
+ * 工具定义（OpenAI function schema）
+ */
+export interface Tool {
+  type: 'function' | string;
+  function: ToolFunction;
+}
+
 export interface OpenAIRequestBody {
   model: string;
   messages: ChatMessage[];

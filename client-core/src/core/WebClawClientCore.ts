@@ -19,13 +19,15 @@ import {
   ClientTransport,
   ToolExecutor,
 } from './types';
+import { builtInToolDefinitions, builtInToolExecutor, builtInToolNames } from './tools';
 
 export class WebClawClientCore {
   private readonly client: ClientTransport;
   private readonly catalog;
   private readonly hostActions?: ClientCoreHostActions;
   private readonly sessionStore?: ClientSessionStore;
-  private readonly toolExecutor?: ToolExecutor;
+  private readonly toolExecutor: ToolExecutor;
+  private readonly mergedTools: unknown[];
   private provider: ProviderKey;
   private mode: ClientRouteMode = 'web';
   private currentSession: ClientSessionData | null = null;
@@ -36,7 +38,23 @@ export class WebClawClientCore {
     this.catalog = options.catalog ?? createEmptyProviderModelCatalog();
     this.hostActions = options.hostActions;
     this.sessionStore = options.sessionStore;
-    this.toolExecutor = options.toolExecutor;
+
+    // 合并内置工具和外部注入的工具定义
+    const extraTools = options.extraTools ?? [];
+    this.mergedTools = [...builtInToolDefinitions, ...extraTools];
+
+    // 合并内置工具执行器和外部注入的执行器
+    const extraExecutor = options.toolExecutor;
+    this.toolExecutor = extraExecutor
+      ? createMergedExecutor(builtInToolExecutor, extraExecutor)
+      : builtInToolExecutor;
+
+    // 把工具定义注入到 Transport 的 config 中
+    const currentTools = this.client.getConfig().tools ?? [];
+    if (currentTools.length === 0) {
+      this.client.setTools?.(this.mergedTools);
+    }
+
     this.provider = inferProviderFromModel(this.client.getConfig().model, this.catalog);
     this.mode = this.client.getRouteMode?.() ?? 'web';
   }
@@ -97,9 +115,9 @@ export class WebClawClientCore {
       await this.persistCurrentSession();
 
       // ── 工具循环 ──────────────────────────────────────────────
-      // 如果有 tool_calls 且有 toolExecutor，自动执行工具并将结果发回模型
+      // 如果有 tool_calls，自动执行工具并将结果发回模型
       let finalResponse = response;
-      if (this.toolExecutor && response.tool_calls.length > 0) {
+      if (response.tool_calls.length > 0) {
         this._toolLoopRunning = true;
         this.emitEvent();
         try {
@@ -525,4 +543,18 @@ export class WebClawClientCore {
     const rand = Math.random().toString(36).slice(2, 8);
     return `session-${now}-${rand}`;
   }
+}
+
+/** 合并多个 ToolExecutor：先尝试 extraExecutor，再 fallback 到 baseExecutor */
+function createMergedExecutor(baseExecutor: ToolExecutor, extraExecutor: ToolExecutor): ToolExecutor {
+  return {
+    async execute(toolName: string, args: Record<string, unknown>): Promise<string> {
+      // 如果是内置工具名，用内置执行器
+      if (builtInToolNames.includes(toolName)) {
+        return baseExecutor.execute(toolName, args);
+      }
+      // 否则尝试额外执行器
+      return extraExecutor.execute(toolName, args);
+    },
+  };
 }

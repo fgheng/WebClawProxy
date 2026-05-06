@@ -55,6 +55,8 @@ export interface ClientTransport {
   setRouteMode?(mode: ClientRouteMode): void;
   getRouteMode?(): ClientRouteMode;
   setTraceEnabled(enabled: boolean): void;
+  /** 设置可用工具列表（注入到请求 body.tools） */
+  setTools?(tools: unknown[]): void;
   healthCheck(): Promise<boolean>;
 }
 
@@ -110,5 +112,8 @@ export type ClientCoreOptions = {
   catalog?: ProviderModelCatalog;
   hostActions?: ClientCoreHostActions;
   sessionStore?: ClientSessionStore;
+  /** 额外注入的工具执行器（与内置执行器合并） */
   toolExecutor?: ToolExecutor;
+  /** 额外注入的工具定义（与内置定义合并，追加到 body.tools） */
+  extraTools?: unknown[];
 };

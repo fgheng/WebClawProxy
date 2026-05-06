@@ -47,6 +47,11 @@ export class WebClawClient {
     this.logTrace('stream_toggled', { enabled });
   }
 
+  /** 设置可用工具列表（注入到请求 body.tools） */
+  setTools(tools: unknown[]): void {
+    this.config.tools = tools;
+  }
+
   isStreamEnabled(): boolean {
     return this.config.stream;
   }
