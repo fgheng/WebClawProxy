@@ -23,10 +23,12 @@ export class ConversationService {
   /**
    * 根据 HASH_KEY 查找已有对话，或新建。
    *
+   * - 优先用 sessionId 精确匹配（若提供）
    * - 命中：追加 current 消息，更新 stats
    * - 未命中：新建 ConversationRecord，写入 system/history/current
    */
   findOrCreate(params: {
+    sessionId?: string;
     hashKey: string;
     mode: 'web' | 'forward';
     providerKey: string;
@@ -36,10 +38,23 @@ export class ConversationService {
     tools: Tool[];
     current: Message[];
   }): ConversationRecord {
-    const { hashKey, mode, providerKey, model, system, history, tools, current } = params;
+    const { sessionId, hashKey, mode, providerKey, model, system, history, tools, current } = params;
     const now = Date.now();
 
-    // 尝试命中已有记录
+    // 1. 优先用 sessionId 精确匹配（Desktop 客户端场景）
+    if (sessionId) {
+      const bySessionId = this.store.findBySessionId(sessionId);
+      if (bySessionId) {
+        const currentMsgs = this.toConversationMessages(current, now);
+        bySessionId.messages.push(...currentMsgs);
+        bySessionId.stats.rounds += 1;
+        bySessionId.stats.lastActiveAt = now;
+        this.store.save(bySessionId);
+        return bySessionId;
+      }
+    }
+
+    // 2. 回退到 hashKey 匹配（第三方客户端场景，可能无 sessionId）
     const existing = this.store.findByLatestHash(hashKey);
     if (existing) {
       // 追加 current 消息
@@ -51,8 +66,8 @@ export class ConversationService {
       return existing;
     }
 
-    // 新建记录
-    const conversationId = uuidv4();
+    // 3. 新建记录
+    const conversationId = sessionId || uuidv4();
     const messages: ConversationMessage[] = [];
 
     // 写入 system（放在 messages 最前，方便阅读；promptState 也保存）
@@ -72,6 +87,7 @@ export class ConversationService {
       providerKey,
       model,
       identity: {
+        sessionId: sessionId || undefined,
         latestHash: hashKey,
         systemHash: undefined,
         toolsHash: undefined,

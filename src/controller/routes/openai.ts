@@ -167,8 +167,10 @@ async function sendForwardRequest(
   const currentSessionId = ingestResult.session.sessionId;
 
   // ── 对话历史持久化 ──────────────────────────────────────────
-  const { internalReq, hashKey } = options;
+  const { internalReq, hashKey, sessionHeader } = options;
+  const headerSessionId = typeof sessionHeader === 'string' && sessionHeader.trim() ? sessionHeader.trim() : undefined;
   const convRecord = conversationService.findOrCreate({
+    sessionId: headerSessionId,
     hashKey,
     mode: 'forward',
     providerKey,
@@ -1356,7 +1358,9 @@ export async function chatCompletionsHandler(
     const initPromptForNewSession = dm.get_init_prompt_for_new_session();
 
     // ===== Step 2.5: 对话历史持久化 — 查找或新建 ConversationRecord =====
+    const headerSessionId = String(req.headers['x-session-id'] ?? '').trim() || undefined;
     const webConvRecord = conversationService.findOrCreate({
+      sessionId: headerSessionId,
       hashKey,
       mode: 'web',
       providerKey,
