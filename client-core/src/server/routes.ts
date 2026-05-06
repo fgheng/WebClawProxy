@@ -176,19 +176,10 @@ export class SessionManager {
         mode: data.mode,
         sessionStore: this.sessionStore,
       });
-      // 将文件里的历史消息恢复到 client.messages
-      if (data.messages && data.messages.length > 0) {
-        const history = data.messages.map((m) => {
-          const msg: any = { role: m.role, content: m.content ?? '' };
-          if (m.toolCalls) msg.tool_calls = m.toolCalls;
-          if (m.toolResultOf) { msg.role = 'tool'; msg.tool_call_id = m.toolResultOf; msg.name = m.toolResultOf; }
-          return msg;
-        }).filter((m: any) => m.role === 'user' || m.role === 'assistant' || m.role === 'system' || m.role === 'tool');
-        session.client.importHistory(history);
-        session.core.currentSession = data;
-      }
+      // 将文件里的历史消息恢复到 client
+      session.restoreFromData(data);
       this.sessions.set(session.getSessionId(), session);
-      if (!this.defaultSession || summary.updatedAt > (this.defaultSession as any).updatedAt) {
+      if (!this.defaultSession || data.updatedAt > (this.defaultSession as any)._updatedAt) {
         this.defaultSession = session;
       }
       session.setEventCallback((event) => this.broadcastEvent(event));

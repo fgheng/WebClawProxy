@@ -5,7 +5,7 @@ import { FileSessionStore } from './file-session-store';
 import { ProviderModelCatalog, createEmptyProviderModelCatalog } from '../core/provider-models';
 import { inferProviderFromModel } from '../core/provider-models';
 import type { ProviderKey } from '../core/provider-models';
-import type { ClientCoreResult, ClientCoreState } from '../core/types';
+import type { ClientCoreResult, ClientCoreState, ClientSessionData } from '../core/types';
 import type { ChatMessage, AssistantResponse } from '../types';
 import type * as http from 'http';
 
@@ -20,8 +20,8 @@ import type * as http from 'http';
  * - 事件推送（通过回调函数）
  */
 export class AgentSession {
-  public core: WebClawClientCore;
-  public client: WebClawClient;
+  private core: WebClawClientCore;
+  private client: WebClawClient;
   private sessionId: string;
   private eventCallback?: (event: AgentEvent) => void;
 
@@ -148,6 +148,23 @@ export class AgentSession {
   /** 设置 route mode */
   setMode(mode: 'web' | 'forward'): void {
     this.client.setRouteMode?.(mode);
+  }
+
+  /** 从文件数据恢复 session（用于 Agent Service 启动时恢复） */
+  restoreFromData(data: ClientSessionData): void {
+    if (data.messages && data.messages.length > 0) {
+      const history = data.messages
+        .map((m) => {
+          const msg: any = { role: m.role, content: m.content ?? '' };
+          if (m.toolCalls) msg.tool_calls = m.toolCalls;
+          if (m.toolResultOf) { msg.role = 'tool'; msg.tool_call_id = m.toolResultOf; msg.name = m.toolResultOf; }
+          return msg;
+        })
+        .filter((m: any) => m.role === 'user' || m.role === 'assistant' || m.role === 'system' || m.role === 'tool');
+      this.client.importHistory(history);
+      this.core.setSessionData(data);
+    }
+    (this as any)._updatedAt = data.updatedAt;
   }
 
   /** 获取 session ID */

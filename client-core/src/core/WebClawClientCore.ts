@@ -516,6 +516,11 @@ export class WebClawClientCore {
     await this.persistCurrentSession();
   }
 
+  /** 外部设置 session 数据（用于 Agent Service 启动时从文件恢复） */
+  setSessionData(data: ClientSessionData): void {
+    this.currentSession = data;
+  }
+
   private appendSessionMessage(input: {
     role: ClientSessionMessage['role'];
     content: string;
