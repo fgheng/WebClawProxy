@@ -31,12 +31,14 @@ export class WebClawClient {
 
   /** 设置系统提示词（会清空历史） */
   setSystem(system: string): void {
+    if (this.config.system === system) return;
     this.config.system = system;
     this.clearHistory();
   }
 
-  /** 切换模型（会清空历史） */
+  /** 切换模型（仅模型变化时清空历史） */
   setModel(model: string): void {
+    if (this.config.model === model) return;
     this.config.model = model;
     this.clearHistory();
   }
