@@ -65,11 +65,9 @@ export function handleWebSocketConnection(ws: WebSocket, sessionsManager: Sessio
 
   ws.on('close', () => {
     // WebSocket 断开时不销毁 session（session 可能被 REST API 重新使用）
-    boundSession = null;
   });
 
   ws.on('error', () => {
-    boundSession = null;
   });
 
   // 发送初始状态
