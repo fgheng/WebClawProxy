@@ -319,6 +319,16 @@ async function startAgentService(): Promise<void> {
   if (agentServiceProc) return;
   try {
     const agentEntry = path.join(PROJECT_ROOT, 'client-core', 'src', 'server', 'index.ts');
+    
+    if (!fs.existsSync(agentEntry)) {
+      console.error(`[AgentService] Entry file not found: ${agentEntry}`);
+      sendLogToRenderer(`Agent Service 入口文件不存在: ${agentEntry}`);
+      return;
+    }
+    
+    console.log(`[AgentService] Starting: npx ts-node ${agentEntry}`);
+    sendLogToRenderer(`启动 Agent Service...`);
+
     agentServiceProc = spawn('npx', ['ts-node', agentEntry], {
       cwd: PROJECT_ROOT,
       env: {
@@ -329,21 +339,47 @@ async function startAgentService(): Promise<void> {
       stdio: 'pipe',
     });
 
+    let readySignalReceived = false;
+
     agentServiceProc.stdout?.on('data', (data: Buffer) => {
-      console.log(`[AgentService] ${data.toString().trim()}`);
+      const text = data.toString();
+      console.log(`[AgentService stdout] ${text.trim()}`);
+      if (text.includes('Started on port')) {
+        readySignalReceived = true;
+        agentServiceStatus = 'running';
+        sendLogToRenderer('Agent Service 已启动 (端口 8100)');
+      }
     });
     agentServiceProc.stderr?.on('data', (data: Buffer) => {
-      console.error(`[AgentService] ${data.toString().trim()}`);
+      const text = data.toString();
+      console.error(`[AgentService stderr] ${text.trim()}`);
+      if (text.includes('TSError') || text.includes('error TS')) {
+        sendLogToRenderer(`Agent Service 编译错误: ${text.trim().substring(0, 200)}`);
+      }
     });
-    agentServiceProc.on('exit', () => {
+    agentServiceProc.on('error', (err) => {
+      console.error(`[AgentService] spawn error: ${err.message}`);
+      agentServiceProc = null;
+      agentServiceStatus = 'stopped';
+      sendLogToRenderer(`Agent Service spawn 失败: ${err.message}`);
+    });
+    agentServiceProc.on('exit', (code, signal) => {
+      console.log(`[AgentService] exited with code=${code}, signal=${signal}`);
+      if (!readySignalReceived) {
+        sendLogToRenderer(`Agent Service 异常退出 (code=${code})`);
+      }
       agentServiceProc = null;
       agentServiceStatus = 'stopped';
     });
 
-    agentServiceStatus = 'running';
-    console.log('[AgentService] Started on port 8100');
+    // 等待就绪信号或 15 秒超时
+    const ready = await waitForAgentReady(15000);
+    if (!ready) {
+      sendLogToRenderer('Agent Service 启动超时（15秒内未收到就绪信号）');
+    }
   } catch (err: any) {
     console.error('[AgentService] Failed to start:', err.message);
+    sendLogToRenderer(`Agent Service 启动异常: ${err.message}`);
   }
 }
 
@@ -354,9 +390,33 @@ async function stopAgentService(): Promise<void> {
     agentServiceProc = null;
     agentServiceStatus = 'stopped';
     console.log('[AgentService] Stopped');
+    sendLogToRenderer('Agent Service 已停止');
   } catch (err: any) {
     console.error('[AgentService] Failed to stop:', err.message);
   }
+}
+
+/** 把日志推到渲染进程 */
+function sendLogToRenderer(message: string): void {
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.webContents.send('agent:log', { message, timestamp: Date.now() });
+  }
+}
+
+async function waitForAgentReady(timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (agentServiceStatus === 'running') return true;
+    try {
+      const res = await fetch('http://localhost:8100/v1/health');
+      if (res.ok) {
+        agentServiceStatus = 'running';
+        return true;
+      }
+    } catch { /* not ready yet */ }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
 }
 
 app.whenReady().then(() => {

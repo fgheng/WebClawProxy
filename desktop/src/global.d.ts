@@ -96,6 +96,8 @@ declare global {
       startAgent: () => Promise<{ status: string }>;
       /** 停止 Agent Service 子进程 */
       stopAgent: () => Promise<{ status: string }>;
+      /** 监听 Agent Service 日志推送 */
+      onAgentLog: (callback: (payload: { message: string; timestamp: number }) => void) => () => void;
     };
   }
 }

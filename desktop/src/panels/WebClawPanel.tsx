@@ -64,7 +64,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
     {
       id: 'welcome',
       role: 'webclaw',
-      content: '已进入 WebClaw 面板。Agent Service 将自动处理工具调用。',
+      content: `已进入 WebClaw 面板。Agent Service: ${agentUrl}`,
       tone: 'muted',
     },
   ]);
@@ -93,9 +93,23 @@ export function WebClawPanel(props: WebClawPanelProps) {
     onSendingChange?.(isSending);
   }, [isSending, onSendingChange]);
 
+  // 监听主进程推送的 Agent Service 日志
+  useEffect(() => {
+    const unsubscribe = window.webclawDesktop?.onAgentLog?.((payload: { message: string; timestamp: number }) => {
+      setFeed((prev) => [
+        ...prev,
+        { id: `agent-log-${payload.timestamp}`, role: 'webclaw', content: `[Agent] ${payload.message}`, tone: 'muted' },
+      ]);
+    });
+    return () => {
+      // cleanup if needed
+    };
+  }, []);
+
   // 初始化 AgentClient
   useEffect(() => {
     if (!agentUrl || clientRef.current) return;
+    console.log(`[WebClawPanel] Initializing AgentClient with agentUrl=${agentUrl}`);
 
     const client = new AgentClient({ agentUrl });
 

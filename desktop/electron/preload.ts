@@ -81,4 +81,12 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
   startAgent: () => ipcRenderer.invoke('agent:start'),
   /** 停止 Agent Service 子进程 */
   stopAgent: () => ipcRenderer.invoke('agent:stop'),
+  /** 监听 Agent Service 日志推送 */
+  onAgentLog: (callback: (payload: { message: string; timestamp: number }) => void) => {
+    const listener = (_event: unknown, payload: { message: string; timestamp: number }) => {
+      callback(payload);
+    };
+    ipcRenderer.on('agent:log', listener);
+    return () => ipcRenderer.removeListener('agent:log', listener);
+  },
 });

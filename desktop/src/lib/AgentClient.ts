@@ -41,7 +41,9 @@ export class AgentClient {
   // ── REST API ──────────────────────────────────────────
 
   async chat(message: string, options?: { model?: string; system?: string; mode?: string }): Promise<AgentChatResponse> {
-    const res = await fetch(`${this.baseUrl}/v1/chat`, {
+    const url = `${this.baseUrl}/v1/chat`;
+    console.log(`[AgentClient] POST ${url} sessionId=${this.sessionId}`);
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -55,10 +57,12 @@ export class AgentClient {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
+      console.error(`[AgentClient] HTTP ${res.status}: ${JSON.stringify(err)}`);
       throw new Error(err.error ?? `HTTP ${res.status}`);
     }
 
     const data = await res.json();
+    console.log(`[AgentClient] Response: kind=${data.kind}, sessionId=${data.sessionId}`);
     if (data.sessionId) this.sessionId = data.sessionId;
     return data;
   }
