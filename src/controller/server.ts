@@ -7,6 +7,7 @@ import { forwardMonitorBus } from './forward-monitor-bus';
 import { sessionRegistry } from './session-registry';
 import { getNormalizedProviderConfigMap, isSiteKey } from '../config/provider-config';
 import { clearAppConfigCache, getAppConfigPath } from '../config/app-config';
+import { conversationService } from '../conversation/ConversationService';
 
 /**
  * 创建并配置 Express 应用
@@ -185,6 +186,42 @@ export function createApp() {
     fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf-8');
     clearAppConfigCache();
     res.json({ ok: true, settings: { server_port: nextPort } });
+  });
+
+  // ===== Conversations API =====
+
+  // GET /v1/conversations — 对话快照列表，支持 ?provider= 和 ?mode= 过滤
+  app.get('/v1/conversations', (req: Request, res: Response) => {
+    const provider = typeof req.query.provider === 'string' ? req.query.provider : undefined;
+    const mode = typeof req.query.mode === 'string' ? req.query.mode : undefined;
+    const snapshots = conversationService.listSnapshots(provider, mode);
+    res.json({ conversations: snapshots });
+  });
+
+  // GET /v1/conversations/:id — 完整 ConversationRecord
+  app.get('/v1/conversations/:id', (req: Request, res: Response) => {
+    const record = conversationService.findById(req.params.id);
+    if (!record) {
+      res.status(404).json({ error: { message: 'conversation not found', code: 'not_found' } });
+      return;
+    }
+    res.json({ conversation: record });
+  });
+
+  // GET /v1/conversations/:id/messages — 仅返回 messages 数组
+  app.get('/v1/conversations/:id/messages', (req: Request, res: Response) => {
+    const record = conversationService.findById(req.params.id);
+    if (!record) {
+      res.status(404).json({ error: { message: 'conversation not found', code: 'not_found' } });
+      return;
+    }
+    res.json({ messages: record.messages });
+  });
+
+  // DELETE /v1/conversations/:id — 删除
+  app.delete('/v1/conversations/:id', (req: Request, res: Response) => {
+    const deleted = conversationService.delete(req.params.id);
+    res.json({ deleted });
   });
 
   // 健康检查

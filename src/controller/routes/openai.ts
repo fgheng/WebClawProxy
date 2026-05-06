@@ -4,7 +4,7 @@ import { DataManager } from '../../data-manager/DataManager';
 import { WebDriverManager } from '../../web-driver/WebDriverManager';
 import { SiteKey } from '../../web-driver/types';
 import { WebDriverError, WebDriverErrorCode } from '../../web-driver/types';
-import { ProtocolParseError } from '../../protocol/types';
+import { ProtocolParseError, InternalRequest } from '../../protocol/types';
 import { logDebug, stringifyLogPayload, formatRequestBodyPreview } from '../logger';
 import {
   type ForwardModeConfig,
@@ -17,6 +17,8 @@ import {
 import { loadAppConfig } from '../../config/app-config';
 import { forwardMonitorBus } from '../forward-monitor-bus';
 import { sessionRegistry } from '../session-registry';
+import { conversationService, ConversationService } from '../../conversation/ConversationService';
+import { computeHashKey } from '../../data-manager/utils/hash';
 
 const config = loadAppConfig();
 
@@ -99,6 +101,8 @@ async function sendForwardRequest(
     providerKey: string;
     providerConfig: NormalizedProviderConfig;
     requestBody: Record<string, unknown>;
+    internalReq: InternalRequest;
+    hashKey: string;
     sessionHeader?: string;
     clientFingerprint?: {
       authorization?: string;
@@ -161,6 +165,19 @@ async function sendForwardRequest(
     });
   }
   const currentSessionId = ingestResult.session.sessionId;
+
+  // ── 对话历史持久化 ──────────────────────────────────────────
+  const { internalReq, hashKey } = options;
+  const convRecord = conversationService.findOrCreate({
+    hashKey,
+    mode: 'forward',
+    providerKey,
+    model: originalModel,
+    system: internalReq.system ?? '',
+    history: internalReq.history ?? [],
+    tools: internalReq.tools ?? [],
+    current: internalReq.current ?? [],
+  });
 
   const upstreamHeaders: Record<string, string> = {
     'content-type': 'application/json',
@@ -293,6 +310,22 @@ async function sendForwardRequest(
           durationMs: Date.now() - startTime,
           timestamp: Date.now(),
         });
+
+        // ── 持久化 assistant 回复 ──────────────────────────────
+        try {
+          conversationService.appendAssistant(convRecord.conversationId, {
+            content: streamContent || null,
+            tool_calls: mergedToolCalls,
+          });
+          const newHash = ConversationService.computeNewHash(
+            internalReq.system ?? '',
+            internalReq.history ?? [],
+            internalReq.current ?? [],
+            streamContent || null,
+            internalReq.tools ?? []
+          );
+          conversationService.updateHash(convRecord.conversationId, newHash);
+        } catch { /* 持久化失败不影响响应 */ }
       } finally {
         reader.releaseLock();
       }
@@ -329,6 +362,22 @@ async function sendForwardRequest(
         durationMs: Date.now() - startTime,
         timestamp: Date.now(),
       });
+
+      // ── 持久化 assistant 回复（非流式）──────────────────────
+      try {
+        conversationService.appendAssistant(convRecord.conversationId, {
+          content: normalizedContent,
+          tool_calls: Array.isArray(toolCalls) ? toolCalls : undefined,
+        });
+        const newHash = ConversationService.computeNewHash(
+          internalReq.system ?? '',
+          internalReq.history ?? [],
+          internalReq.current ?? [],
+          normalizedContent,
+          internalReq.tools ?? []
+        );
+        conversationService.updateHash(convRecord.conversationId, newHash);
+      } catch { /* 持久化失败不影响响应 */ }
     } catch {
       const fallback = bodyText.slice(0, 500);
       sessionRegistry.appendResponse(currentSessionId, fallback);
@@ -1243,12 +1292,39 @@ export async function chatCompletionsHandler(
       : undefined;
     const providerMode = requestedMode ?? providerConfig?.default_mode ?? 'web';
 
+    // ===== Step 0: 统一 parse（forward 和 web 共用）=====
+    let internalReq: InternalRequest;
+    try {
+      internalReq = protocol.parse(req.body, { traceId, source: 'chatCompletionsHandler' });
+    } catch (err) {
+      if (err instanceof ProtocolParseError) {
+        res.status(400).json({
+          error: {
+            message: `请求格式错误: ${err.message}`,
+            type: 'invalid_request_error',
+            code: 'invalid_request',
+          },
+        });
+        return;
+      }
+      throw err;
+    }
+
+    // ===== Step 0.5: 计算 HASH_KEY =====
+    const hashKey = computeHashKey(
+      internalReq.system ?? '',
+      internalReq.history ?? [],
+      internalReq.tools ?? []
+    );
+
     if (providerMode === 'forward') {
       await sendForwardRequest(res, {
         traceId,
         providerKey,
         providerConfig: providerConfig ?? normalizeProviderConfig(undefined),
         requestBody,
+        internalReq,
+        hashKey,
         sessionHeader: (req.headers['x-session-id'] as string | undefined) ?? '',
         clientFingerprint: {
           authorization: typeof req.headers.authorization === 'string' ? req.headers.authorization : '',
@@ -1272,31 +1348,25 @@ export async function chatCompletionsHandler(
 
     const site = providerKey;
 
-    // ===== Step 1: 解析协议 =====
-    let internalReq;
-    try {
-      internalReq = protocol.parse(req.body, { traceId, source: 'chatCompletionsHandler' });
-    } catch (err) {
-      if (err instanceof ProtocolParseError) {
-        res.status(400).json({
-          error: {
-            message: `请求格式错误: ${err.message}`,
-            type: 'invalid_request_error',
-            code: 'invalid_request',
-          },
-        });
-        return;
-      }
-      throw err;
-    }
-
     // ===== Step 2: 初始化 DataManager =====
     const dm = new DataManager(internalReq);
     dm.set_trace_id(traceId);
     logSessionTrace('init_dm', dm, traceId);
 
     const initPromptForNewSession = dm.get_init_prompt_for_new_session();
-    
+
+    // ===== Step 2.5: 对话历史持久化 — 查找或新建 ConversationRecord =====
+    const webConvRecord = conversationService.findOrCreate({
+      hashKey,
+      mode: 'web',
+      providerKey,
+      model: internalReq.model,
+      system: internalReq.system ?? '',
+      history: internalReq.history ?? [],
+      tools: internalReq.tools ?? [],
+      current: internalReq.current ?? [],
+    });
+
     // ===== Step 3: 保存数据 =====
     await dm.save_data();
     logSessionTrace('after_save_request', dm, traceId);
@@ -1550,6 +1620,24 @@ export async function chatCompletionsHandler(
 
     await dm.save_data();
     logSessionTrace('after_save_assistant', dm, traceId);
+
+    // ===== Step 8.5: 持久化 assistant 回复到 ConversationRecord =====
+    try {
+      const assistantContent = messagePayload.content ?? responseContent;
+      const assistantToolCalls = messagePayload.tool_calls;
+      conversationService.appendAssistant(webConvRecord.conversationId, {
+        content: typeof assistantContent === 'string' ? assistantContent : null,
+        tool_calls: assistantToolCalls,
+      });
+      const newHash = ConversationService.computeNewHash(
+        internalReq.system ?? '',
+        internalReq.history ?? [],
+        internalReq.current ?? [],
+        typeof assistantContent === 'string' ? assistantContent : null,
+        internalReq.tools ?? []
+      );
+      conversationService.updateHash(webConvRecord.conversationId, newHash);
+    } catch { /* 持久化失败不影响响应 */ }
 
     // ===== Step 9: 构造并返回响应 =====
     // 统一通过 protocol.format 返回 OpenAI 格式（与 DataManager 共用同源解析对象）
