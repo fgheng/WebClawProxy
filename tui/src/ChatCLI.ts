@@ -185,10 +185,10 @@ export class ChatCLI {
       if (result.kind === 'chat') {
         this.roundCount++;
         console.log(colorize(`  第 ${this.roundCount} 轮`, 'gray') + colorize(' ──────────────────────────────────────────────', 'gray'));
-        this.printAssistantMessage(result.content ?? '(空响应)', result.model);
         if (result.toolCalls && result.toolCalls.length > 0) {
           this.printToolCalls(result.toolCalls);
         }
+        this.printAssistantMessage(result.content ?? '(空响应)', result.model);
       } else if (result.kind === 'command') {
         this.renderCommandResult(result);
       }

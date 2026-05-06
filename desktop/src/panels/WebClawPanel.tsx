@@ -248,7 +248,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
         ? toolCalls.map((tc: any) => `🔧 ${tc?.function?.name ?? 'unknown'}(${(tc?.function?.arguments ?? '').slice(0, 60)}...)`).join('\n')
         : '';
       const displayContent = toolSummary
-        ? (result.content ? `${result.content}\n${toolSummary}` : toolSummary)
+        ? (result.content ? `${toolSummary}\n${result.content}` : toolSummary)
         : (result.content || '（空响应）');
 
       setFeed((prev) => prev.map((item) => (
