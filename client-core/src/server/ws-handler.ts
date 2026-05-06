@@ -5,22 +5,16 @@ import { SessionManager } from './routes';
 /**
  * WebSocket 事件处理
  *
- * 每个 WebSocket 连接可能绑定一个 AgentSession。
- * 前端通过 WebSocket 发送指令，服务端通过 WebSocket 推送事件。
+ * 事件通过 SessionManager.broadcastEvent 广播到所有已连接的 WebSocket，
+ * 而不是绑定到特定 session。这样 HTTP /v1/chat 触发的工具事件
+ * 也能推送到已连接的前端。
  */
 export function handleWebSocketConnection(ws: WebSocket, sessionsManager: SessionManager): void {
-  let boundSession: AgentSession | null = null;
+  // 注册到 SessionManager 以接收事件广播
+  sessionsManager.registerWs(ws);
 
-  // 为此 WebSocket 连接创建一个新 session（或绑定已有 session）
+  // 默认 session（如果还不存在则创建）
   const session = sessionsManager.getDefault() ?? sessionsManager.create();
-  boundSession = session;
-
-  // 设置事件回调：core 内部事件通过 WebSocket 推送给前端
-  session.setEventCallback((event: AgentEvent) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(event));
-    }
-  });
 
   ws.on('message', async (raw: any) => {
     try {

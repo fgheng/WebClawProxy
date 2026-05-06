@@ -149,9 +149,27 @@ export class SessionManager {
   private sessions = new Map<string, AgentSession>();
   private defaultSession: AgentSession | null = null;
   private defaultOptions: AgentSessionOptions = {};
+  /** 已连接的 WebSocket，用于广播事件 */
+  private wsClients: Set<WebSocket> = new Set();
 
   constructor(defaultOptions?: AgentSessionOptions) {
     this.defaultOptions = defaultOptions ?? {};
+  }
+
+  /** 注册 WebSocket 连接（用于广播工具事件等） */
+  registerWs(ws: WebSocket): void {
+    this.wsClients.add(ws);
+    ws.on('close', () => this.wsClients.delete(ws));
+  }
+
+  /** 广播事件到所有已连接的 WebSocket */
+  broadcastEvent(event: AgentEvent): void {
+    const data = JSON.stringify(event);
+    for (const ws of this.wsClients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    }
   }
 
   create(options?: AgentSessionOptions): AgentSession {
@@ -161,6 +179,8 @@ export class SessionManager {
     if (!this.defaultSession) {
       this.defaultSession = session;
     }
+    // 所有 session 的事件都广播到 WebSocket 客户端
+    session.setEventCallback((event) => this.broadcastEvent(event));
     return session;
   }
 
