@@ -168,6 +168,77 @@ export class WebClawBrowserTransport implements ClientTransport {
     }
   }
 
+  /**
+   * 发送完整 messages（含 tool results）用于工具循环。
+   * 不追加消息到内部 history，由外部管理。
+   */
+  async sendRequest(messages: ChatMessage[]): Promise<AssistantResponse> {
+    const traceId = this.buildTraceId();
+
+    const requestMessages: ChatMessage[] = [];
+    if (this.config.system) {
+      requestMessages.push({ role: 'system', content: this.config.system });
+    }
+    requestMessages.push(...messages.map((m) => this.sanitizeMessage(m)));
+
+    const body: OpenAIRequestBody = {
+      model: this.config.model,
+      messages: requestMessages,
+      tools: this.config.tools,
+      stream: this.config.stream,
+    };
+
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.config.timeoutMs);
+    this.inFlight = controller;
+
+    try {
+      const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-trace-id': traceId,
+          'x-session-id': this.config.sessionId,
+          'x-webclaw-mode': this.routeMode,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      const contentType = response.headers.get('content-type') ?? '';
+      const raw = await response.text();
+      const parsed = contentType.includes('text/event-stream')
+        ? this.parseSseResponse(raw)
+        : (JSON.parse(raw) as OpenAIResponseBody);
+
+      if (!response.ok) {
+        throw new Error(parsed.error?.message ?? `HTTP ${response.status}: ${raw}`);
+      }
+
+      return this.extractAssistantResponse(parsed);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        if (timedOut) {
+          throw new Error(`请求超时（${this.config.timeoutMs}ms）`);
+        }
+        throw new Error('已终止');
+      }
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        throw new Error(`无法连接到服务 ${this.config.baseUrl}，请确认服务已启动且允许 GUI 请求`);
+      }
+      throw error instanceof Error ? error : new Error(String(error));
+    } finally {
+      clearTimeout(timeout);
+      if (this.inFlight === controller) {
+        this.inFlight = null;
+      }
+    }
+  }
+
   private parseSseResponse(raw: string): OpenAIResponseBody {
     const lines = raw
       .split('\n')
@@ -291,6 +362,12 @@ export class WebClawBrowserTransport implements ClientTransport {
     };
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
       next.tool_calls = message.tool_calls;
+    }
+    if (message.tool_call_id) {
+      next.tool_call_id = message.tool_call_id;
+    }
+    if (message.name) {
+      next.name = message.name;
     }
     return next;
   }

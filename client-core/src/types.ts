@@ -28,9 +28,11 @@ export interface ClientConfig {
  * 客户端内部对话消息
  */
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   tool_calls?: unknown[];
+  tool_call_id?: string;
+  name?: string;
 }
 
 /**

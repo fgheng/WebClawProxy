@@ -1,4 +1,4 @@
-import { ChatMessage } from '../types';
+import { AssistantResponse, ChatMessage } from '../types';
 import { parseCommand } from './commands';
 import { getClientCommandHelpText } from './help-text';
 import {
@@ -17,6 +17,7 @@ import {
   ClientCoreResult,
   ClientCoreState,
   ClientTransport,
+  ToolExecutor,
 } from './types';
 
 export class WebClawClientCore {
@@ -24,17 +25,25 @@ export class WebClawClientCore {
   private readonly catalog;
   private readonly hostActions?: ClientCoreHostActions;
   private readonly sessionStore?: ClientSessionStore;
+  private readonly toolExecutor?: ToolExecutor;
   private provider: ProviderKey;
   private mode: ClientRouteMode = 'web';
   private currentSession: ClientSessionData | null = null;
+  private _toolLoopRunning = false;
 
   constructor(options: ClientCoreOptions) {
     this.client = options.transport;
     this.catalog = options.catalog ?? createEmptyProviderModelCatalog();
     this.hostActions = options.hostActions;
     this.sessionStore = options.sessionStore;
+    this.toolExecutor = options.toolExecutor;
     this.provider = inferProviderFromModel(this.client.getConfig().model, this.catalog);
     this.mode = this.client.getRouteMode?.() ?? 'web';
+  }
+
+  /** 是否正在执行工具循环 */
+  get toolLoopRunning(): boolean {
+    return this._toolLoopRunning;
   }
 
   getTransport(): ClientTransport {
@@ -86,10 +95,25 @@ export class WebClawClientCore {
         toolCalls: response.tool_calls,
       });
       await this.persistCurrentSession();
+
+      // ── 工具循环 ──────────────────────────────────────────────
+      // 如果有 tool_calls 且有 toolExecutor，自动执行工具并将结果发回模型
+      let finalResponse = response;
+      if (this.toolExecutor && response.tool_calls.length > 0) {
+        this._toolLoopRunning = true;
+        this.emitEvent();
+        try {
+          finalResponse = await this.runToolLoop(response);
+        } finally {
+          this._toolLoopRunning = false;
+          this.emitEvent();
+        }
+      }
+
       return {
         kind: 'chat',
         userInput: trimmed,
-        response,
+        response: finalResponse,
         provider: this.provider,
         model: this.client.getConfig().model,
       };
@@ -299,6 +323,93 @@ export class WebClawClientCore {
 
   private syncProviderWithModel(): void {
     this.provider = inferProviderFromModel(this.client.getConfig().model, this.catalog);
+  }
+
+  /**
+   * 工具循环：执行 tool_calls → 将结果发回模型 → 重复直到无 tool_calls 或达到最大轮次
+   */
+  private async runToolLoop(initialResponse: AssistantResponse): Promise<AssistantResponse> {
+    const MAX_TOOL_ROUNDS = 10;
+    const loopMessages: ChatMessage[] = [...this.client.getHistory()];
+
+    // 首次 response 已经有 assistant(tool_calls) 在 history 里了
+    let currentToolCalls = initialResponse.tool_calls;
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      // 执行每个 tool_call
+      for (const tc of currentToolCalls) {
+        const toolCall = tc as { id?: string; function?: { name?: string; arguments?: string } };
+        const toolName = toolCall.function?.name ?? '';
+        const toolArgsRaw = toolCall.function?.arguments ?? '{}';
+
+        let args: Record<string, unknown>;
+        try {
+          args = JSON.parse(toolArgsRaw);
+        } catch {
+          args = {};
+        }
+
+        let result: string;
+        try {
+          result = await this.toolExecutor!.execute(toolName, args);
+        } catch (err) {
+          result = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+        }
+
+        // 把 tool result 添加到 loopMessages 和 session
+        const toolResultMsg: ChatMessage = {
+          role: 'tool',
+          content: result,
+          tool_call_id: toolCall.id ?? '',
+          name: toolName,
+        };
+        loopMessages.push(toolResultMsg);
+
+        this.appendSessionMessage({
+          role: 'tool',
+          content: result,
+          toolResultOf: toolCall.id ?? '',
+        });
+        await this.persistCurrentSession();
+        this.emitEvent();
+      }
+
+      // 发送带 tool results 的消息给模型
+      const nextResponse = await this.client.sendRequest(loopMessages);
+
+      // 记录新的 assistant 响应
+      this.appendSessionMessage({
+        role: 'assistant',
+        content: nextResponse.content ?? '',
+        toolCalls: nextResponse.tool_calls,
+      });
+      await this.persistCurrentSession();
+      this.emitEvent();
+
+      // 把 assistant 消息也加入 loopMessages
+      const assistantMsg: ChatMessage = {
+        role: 'assistant',
+        content: nextResponse.content ?? '',
+        tool_calls: nextResponse.tool_calls.length > 0 ? nextResponse.tool_calls : undefined,
+      };
+      loopMessages.push(assistantMsg);
+
+      // 如果没有更多 tool_calls，循环结束
+      if (nextResponse.tool_calls.length === 0) {
+        return nextResponse;
+      }
+
+      // 继续循环
+      currentToolCalls = nextResponse.tool_calls;
+    }
+
+    // 达到最大轮次，返回最后一条响应
+    return {
+      content: initialResponse.content,
+      tool_calls: [],
+      finish_reason: 'max_tool_rounds',
+      usage: initialResponse.usage,
+    };
   }
 
   private emitEvent(): void {

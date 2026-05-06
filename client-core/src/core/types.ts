@@ -42,6 +42,8 @@ export interface ClientSessionStore {
 
 export interface ClientTransport {
   sendMessage(userContent: string): Promise<AssistantResponse>;
+  /** 发送完整 messages（含 tool results）用于工具循环 */
+  sendRequest(messages: ChatMessage[]): Promise<AssistantResponse>;
   clearHistory(): void;
   importHistory(messages: ChatMessage[]): void;
   getHistory(): ChatMessage[];
@@ -94,9 +96,19 @@ export type ClientCoreHostActions = {
 
 export type ClientCoreConfig = ClientConfig;
 
+/**
+ * 工具执行器接口 — 由外部注入，负责执行模型返回的 tool_calls。
+ * 如果不注入，工具调用不做自动执行，只记录在对话中展示给用户。
+ */
+export interface ToolExecutor {
+  /** 执行指定工具，返回 JSON 字符串结果 */
+  execute(toolName: string, args: Record<string, unknown>): Promise<string>;
+}
+
 export type ClientCoreOptions = {
   transport: ClientTransport;
   catalog?: ProviderModelCatalog;
   hostActions?: ClientCoreHostActions;
   sessionStore?: ClientSessionStore;
+  toolExecutor?: ToolExecutor;
 };

@@ -8,9 +8,11 @@ import { BrowserClientSessionStore } from '../lib/BrowserClientSessionStore';
 
 type FeedItem = {
   id: string;
-  role: 'user' | 'webclaw';
+  role: 'user' | 'webclaw' | 'tool';
   content: string;
   tone?: 'normal' | 'error' | 'muted';
+  /** 工具名称（仅 tool role 时有值） */
+  toolName?: string;
 };
 
 type WebClawPanelProps = {
@@ -52,7 +54,19 @@ function buildFeedFromHistory(history: ChatMessage[]): FeedItem[] {
       continue;
     }
     if (msg.role === 'assistant') {
-      items.push({ id: `history-${i}-assistant`, role: 'webclaw', content: msg.content ?? '', tone: 'normal' });
+      // 如果有 tool_calls，显示工具调用摘要
+      const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+      const toolSummary = toolCalls.length > 0
+        ? toolCalls.map((tc: any) => `🔧 ${tc?.function?.name ?? 'unknown'}(${(tc?.function?.arguments ?? '').slice(0, 60)}...)`).join('\n')
+        : '';
+      const displayContent = toolSummary
+        ? (msg.content ? `${msg.content}\n${toolSummary}` : toolSummary)
+        : (msg.content ?? '');
+      items.push({ id: `history-${i}-assistant`, role: 'webclaw', content: displayContent, tone: toolSummary ? 'muted' : 'normal' });
+      continue;
+    }
+    if (msg.role === 'tool') {
+      items.push({ id: `history-${i}-tool`, role: 'tool', content: msg.content ?? '', tone: 'muted', toolName: msg.name });
       continue;
     }
     if (msg.role === 'system') {
@@ -309,9 +323,17 @@ export function WebClawPanel(props: WebClawPanelProps) {
 
   function applyResultToFeed(result: ClientCoreResult, pendingId?: string) {
     if (result.kind === 'chat') {
+      const toolCalls = Array.isArray(result.response.tool_calls) ? result.response.tool_calls : [];
+      const toolSummary = toolCalls.length > 0
+        ? toolCalls.map((tc: any) => `🔧 ${tc?.function?.name ?? 'unknown'}(${(tc?.function?.arguments ?? '').slice(0, 60)}...)`).join('\n')
+        : '';
+      const displayContent = toolSummary
+        ? (result.response.content ? `${result.response.content}\n${toolSummary}` : toolSummary)
+        : (result.response.content || '（空响应）');
+
       setFeed((prev) => prev.map((item) => (
         item.id === pendingId
-          ? { ...item, id: `assistant-${Date.now()}-${result.model}`, content: result.response.content || '（空响应）', tone: 'normal' }
+          ? { ...item, id: `assistant-${Date.now()}-${result.model}`, content: displayContent, tone: toolSummary ? 'muted' : 'normal' }
           : item
       )));
       return;

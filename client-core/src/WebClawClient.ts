@@ -164,6 +164,58 @@ export class WebClawClient {
     return assistant;
   }
 
+  /**
+   * 发送完整 messages（含 tool results）用于工具循环。
+   * 不追加 user message 到内部 history，由外部管理 messages。
+   */
+  async sendRequest(messages: ChatMessage[]): Promise<AssistantResponse> {
+    const traceId = this.buildTraceId();
+
+    const requestMessages: ChatMessage[] = [];
+    if (this.config.system) {
+      requestMessages.push({ role: 'system', content: this.config.system });
+    }
+    requestMessages.push(...messages.map((m) => this.sanitizeMessage(m)));
+
+    const body: OpenAIRequestBody = {
+      model: this.config.model,
+      messages: requestMessages,
+      tools: this.config.tools,
+      stream: this.config.stream,
+    };
+
+    this.logTrace('tool_loop_request', {
+      trace_id: traceId,
+      session_id: this.config.sessionId,
+      model: this.config.model,
+      message_count: requestMessages.length,
+      roles: requestMessages.map((m) => m.role),
+      tools_count: this.config.tools.length,
+    });
+
+    let responseData: OpenAIResponseBody;
+    try {
+      responseData = await this.post('/v1/chat/completions', body, traceId);
+    } catch (err) {
+      this.logTrace('tool_loop_request_failed', {
+        trace_id: traceId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+
+    const assistant = this.extractAssistantResponse(responseData, traceId);
+
+    this.logTrace('tool_loop_response', {
+      trace_id: traceId,
+      assistant_preview: this.preview(assistant.content),
+      tool_call_count: assistant.tool_calls.length,
+      finish_reason: assistant.finish_reason,
+    });
+
+    return assistant;
+  }
+
   async listModels(): Promise<string[]> {
     const response = await this.get('/v1/models');
     const data = response as { object?: string; data?: { id: string }[] };
@@ -464,6 +516,12 @@ export class WebClawClient {
     };
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
       next.tool_calls = message.tool_calls;
+    }
+    if (message.tool_call_id) {
+      next.tool_call_id = message.tool_call_id;
+    }
+    if (message.name) {
+      next.name = message.name;
     }
     return next;
   }
