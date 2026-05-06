@@ -367,6 +367,13 @@ export class WebClawClientCore {
           args = {};
         }
 
+        // 通知前端/宿主：正在执行某个工具
+        this.hostActions?.onEvent?.({
+          type: 'tool-executing',
+          toolName,
+          toolArgs: args,
+        });
+
         let result: string;
         try {
           result = await this.toolExecutor!.execute(toolName, args);

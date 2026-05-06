@@ -202,6 +202,9 @@ function convertCoreEvent(event: any): AgentEvent {
   if (event.type === 'provider-change') {
     return { type: 'provider_change', data: { provider: event.provider }, timestamp };
   }
+  if (event.type === 'tool-executing') {
+    return { type: 'tool_executing', data: { toolName: event.toolName, toolArgs: event.toolArgs }, timestamp };
+  }
   if (event.type === 'tool-loop-start') {
     return { type: 'tool_loop_start', data: {}, timestamp };
   }

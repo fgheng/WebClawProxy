@@ -45,6 +45,17 @@ export class ChatCLI {
   async start(): Promise<void> {
     this.isRunning = true;
     await this.showWelcome();
+    // 监听工具执行事件
+    this.client.setEventCallback((event) => {
+      if (event.type === 'tool_executing' && event.data.toolName) {
+        const name = String(event.data.toolName);
+        process.stdout.write(colorize(`  执行工具: ${name}...`, 'gray') + '\r');
+      }
+      if (event.type === 'tool_loop_end') {
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+      }
+    });
     this.client.connectWebSocket();
     this.promptLoop();
   }

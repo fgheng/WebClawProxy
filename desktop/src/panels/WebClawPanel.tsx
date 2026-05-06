@@ -121,11 +121,19 @@ export function WebClawPanel(props: WebClawPanelProps) {
       if (event.type === 'tool_loop_start') {
         setFeed((prev) => [
           ...prev,
-          { id: `tool-loop-${Date.now()}`, role: 'webclaw', content: '🔧 开始执行工具...', tone: 'muted' },
+          { id: `tool-loop-${Date.now()}`, role: 'webclaw', content: '开始执行工具...', tone: 'muted' },
         ]);
       }
+      if (event.type === 'tool_executing' && event.data.toolName) {
+        const name = String(event.data.toolName);
+        setFeed((prev) => {
+          // 移除之前的 tool-loop 提示，替换为具体工具名
+          const cleaned = prev.filter((item) => !item.id.startsWith('tool-loop-'));
+          return [...cleaned, { id: `tool-${Date.now()}`, role: 'webclaw', content: `执行工具: ${name}...`, tone: 'muted' }];
+        });
+      }
       if (event.type === 'tool_loop_end') {
-        setFeed((prev) => prev.filter((item) => !item.id.startsWith('tool-loop-')));
+        setFeed((prev) => prev.filter((item) => !item.id.startsWith('tool-loop-') && !item.id.startsWith('tool-')));
       }
     });
 

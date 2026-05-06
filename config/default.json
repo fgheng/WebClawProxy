@@ -4,7 +4,7 @@
   },
   "providers": {
     "deepseek": {
-      "default_mode": "web",
+      "default_mode": "forward",
       "models": [
         "deepseek-chat",
         "deepseek"
