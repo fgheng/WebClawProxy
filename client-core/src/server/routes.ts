@@ -24,9 +24,11 @@ export function createApiRouter(sessionsManager: SessionManager): Router {
         return res.status(400).json({ error: 'message is required' });
       }
 
+      console.log(`[AgentService /chat] received: sessionId=${sessionId}, message="${message.slice(0,50)}"`);
       let session = sessionId
         ? sessionsManager.get(sessionId)
         : sessionsManager.getDefault();
+      console.log(`[AgentService /chat] session lookup: sessionId=${sessionId} → found=${!!session}${session ? ` (id=${session.getSessionId()})` : ' (null)'}`);
 
       if (!session) {
         session = sessionsManager.create({
@@ -35,6 +37,7 @@ export function createApiRouter(sessionsManager: SessionManager): Router {
           system,
           mode,
         });
+        console.log(`[AgentService /chat] created new session: id=${session.getSessionId()}`);
       }
 
       if (model) session.setModel(model);

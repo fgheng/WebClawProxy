@@ -1,7 +1,6 @@
 import { WebClawClientCore } from '../core/WebClawClientCore';
 import { WebClawClient } from '../WebClawClient';
 import { builtInToolExecutor, builtInToolDefinitions, builtInToolNames } from '../core/tools/index';
-import { FileSessionStore } from './file-session-store';
 import { ProviderModelCatalog, createEmptyProviderModelCatalog } from '../core/provider-models';
 import { inferProviderFromModel } from '../core/provider-models';
 import type { ProviderKey } from '../core/provider-models';
@@ -47,7 +46,10 @@ export class AgentSession {
     this.core = new WebClawClientCore({
       transport: this.client,
       catalog,
-      sessionStore: options.sessionStore ?? new FileSessionStore(),
+      // Agent Service 不使用 sessionStore：
+      // - 会话历史由 WebClawClient.messages 内部维护，每次 chat 自然累积
+      // - 不从文件加载旧 session 数据，避免无关历史污染当前对话
+      sessionStore: undefined,
       toolExecutor: options.toolExecutor ?? builtInToolExecutor,
       hostActions: {
         onEvent: (event) => {
@@ -61,6 +63,11 @@ export class AgentSession {
   /** 设置事件回调（用于 WebSocket 推送等） */
   setEventCallback(cb: (event: AgentEvent) => void): void {
     this.eventCallback = cb;
+  }
+
+  /** 获取历史消息数量 */
+  getHistoryLength(): number {
+    return this.client.getHistory().length;
   }
 
   /** 发消息给模型（含 tool loop） */
@@ -102,13 +109,16 @@ export class AgentSession {
     this.core = new WebClawClientCore({
       transport: this.client,
       catalog: createEmptyProviderModelCatalog(),
-      sessionStore: new FileSessionStore(),
+      sessionStore: undefined, // Agent Service 不加载旧 session 数据
+      toolExecutor: builtInToolExecutor,
       hostActions: {
         onEvent: (event) => {
           this.eventCallback?.(convertCoreEvent(event));
         },
       },
     });
+    // 新会话需要清空 client 的历史消息
+    this.client.clearHistory();
     return newId;
   }
 
