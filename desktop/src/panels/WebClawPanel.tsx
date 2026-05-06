@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { WebClawClientCore } from '../../../client-core/src/core/WebClawClientCore';
-import { browserToolExecutor } from '../../../client-core/src/core/tools';
-import type { ClientCoreResult } from '../../../client-core/src/core/types';
-import type { ProviderKey, ProviderModelCatalog } from '../../../client-core/src/core/provider-models';
-import type { ChatMessage } from '../../../client-core/src/types';
-import { WebClawBrowserTransport } from '../lib/WebClawBrowserTransport';
-import { BrowserClientSessionStore } from '../lib/BrowserClientSessionStore';
+import { AgentClient } from '../lib/AgentClient';
+import type { AgentChatResponse, AgentEvent } from '../lib/AgentClient';
 
 type FeedItem = {
   id: string;
@@ -17,7 +12,7 @@ type FeedItem = {
 };
 
 type WebClawPanelProps = {
-  apiBaseUrl: string;
+  agentUrl: string;
   currentProvider: string;
   displayMode: 'web' | 'forward';
   selectedModel?: string;
@@ -29,33 +24,16 @@ type WebClawPanelProps = {
   notice?: { id: number; message: string; tone?: 'error' | 'muted' } | null;
 };
 
-function buildCatalog(providerModels: Record<string, string[]>): ProviderModelCatalog {
-  const modelToProvider = new Map<string, ProviderKey>();
-  const providerToModels = new Map<ProviderKey, string[]>();
-  const providers: ProviderKey[] = ['gpt', 'qwen', 'deepseek', 'kimi', 'glm', 'claude', 'doubao'];
-
-  for (const provider of providers) {
-    const models = providerModels[provider] ?? [];
-    providerToModels.set(provider, models);
-    for (const model of models) {
-      modelToProvider.set(model.toLowerCase(), provider);
-    }
-  }
-
-  return { modelToProvider, providerToModels };
-}
-
-function buildFeedFromHistory(history: ChatMessage[]): FeedItem[] {
+function buildFeedFromEventHistory(messages: any[]): FeedItem[] {
   const items: FeedItem[] = [];
-  for (let i = 0; i < history.length; i += 1) {
-    const msg = history[i];
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
     if (!msg) continue;
     if (msg.role === 'user') {
       items.push({ id: `history-${i}-user`, role: 'user', content: msg.content ?? '', tone: 'normal' });
       continue;
     }
     if (msg.role === 'assistant') {
-      // 如果有 tool_calls，显示工具调用摘要
       const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
       const toolSummary = toolCalls.length > 0
         ? toolCalls.map((tc: any) => `🔧 ${tc?.function?.name ?? 'unknown'}(${(tc?.function?.arguments ?? '').slice(0, 60)}...)`).join('\n')
@@ -70,27 +48,23 @@ function buildFeedFromHistory(history: ChatMessage[]): FeedItem[] {
       items.push({ id: `history-${i}-tool`, role: 'tool', content: msg.content ?? '', tone: 'muted', toolName: msg.name });
       continue;
     }
-    if (msg.role === 'system') {
-      items.push({ id: `history-${i}-system`, role: 'webclaw', content: msg.content ?? '', tone: 'muted' });
-    }
   }
   return items;
 }
 
 export function WebClawPanel(props: WebClawPanelProps) {
-  const { apiBaseUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError, onSendingChange, notice } = props;
+  const { agentUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError, onSendingChange, notice } = props;
   const feedRef = useRef<HTMLDivElement | null>(null);
-  const coreRef = useRef<WebClawClientCore | null>(null);
+  const clientRef = useRef<AgentClient | null>(null);
   const onProviderChangeRef = useRef(onProviderChange);
   const hydratedRef = useRef(false);
-  const abortRequestedRef = useRef(false);
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([
     {
       id: 'welcome',
       role: 'webclaw',
-      content: '已进入 WebClaw 面板。支持 /model /clear /new /help 命令（provider/mode 请使用上方选择器）。',
+      content: '已进入 WebClaw 面板。Agent Service 将自动处理工具调用。',
       tone: 'muted',
     },
   ]);
@@ -99,7 +73,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
     onProviderChangeRef.current = onProviderChange;
   }, [onProviderChange]);
 
-  // 外部推入的通知消息，由 App.tsx 设置，通过 notice prop 传入
+  // 外部推入的通知消息
   const prevNoticeIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (!notice || notice.id === prevNoticeIdRef.current) return;
@@ -119,150 +93,58 @@ export function WebClawPanel(props: WebClawPanelProps) {
     onSendingChange?.(isSending);
   }, [isSending, onSendingChange]);
 
-  const catalog = useMemo(() => buildCatalog(providerModels), [providerModels]);
+  // 初始化 AgentClient
   useEffect(() => {
-    if (!apiBaseUrl || coreRef.current) return;
-    const transport = new WebClawBrowserTransport({
-      baseUrl: apiBaseUrl,
-      model: selectedModel || providerModels[currentProvider]?.[0] || 'gpt-4o',
-      routeMode: displayMode,
-      stream: false,
-      traceEnabled: true,
-    });
+    if (!agentUrl || clientRef.current) return;
 
-    const nextCore = new WebClawClientCore({
-      transport,
-      catalog,
-      sessionStore: new BrowserClientSessionStore(),
-      toolExecutor: browserToolExecutor,
-      hostActions: {
-        onEvent: (event) => {
-          if (event.type === 'provider-change' && event.provider) {
-            void onProviderChangeRef.current(event.provider);
-          }
-        },
-      },
-    });
+    const client = new AgentClient({ agentUrl });
 
-    coreRef.current = nextCore;
-  }, [apiBaseUrl, catalog, currentProvider, displayMode, selectedModel, onProviderChange, providerModels]);
-
-  useEffect(() => {
-    const core = coreRef.current;
-    if (!core) return;
-    if (serviceStatus !== 'running') return;
-    if (hydratedRef.current) return;
-    if (feed.some((item) => item.role === 'user')) return;
-    hydratedRef.current = true;
-    const run = async () => {
-      try {
-        await core.executeInput('/history');
-        const items = buildFeedFromHistory(core.getState().history);
-        if (items.length > 0) setFeed(items);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        onError(message);
-        hydratedRef.current = false;
+    // WebSocket 事件回调
+    client.setEventCallback((event: AgentEvent) => {
+      if (event.type === 'provider_change' && event.data.provider) {
+        void onProviderChangeRef.current(String(event.data.provider));
       }
-    };
-    void run();
-  }, [feed, onError, serviceStatus]);
+      if (event.type === 'tool_loop_start') {
+        setFeed((prev) => [
+          ...prev,
+          { id: `tool-loop-${Date.now()}`, role: 'webclaw', content: '🔧 开始执行工具...', tone: 'muted' },
+        ]);
+      }
+      if (event.type === 'tool_loop_end') {
+        setFeed((prev) => prev.filter((item) => !item.id.startsWith('tool-loop-')));
+      }
+    });
 
+    client.connectWebSocket();
+    clientRef.current = client;
+
+    return () => {
+      client.disconnectWebSocket();
+      clientRef.current = null;
+    };
+  }, [agentUrl, onProviderChange]);
+
+  // 同步 provider 和 mode
   useEffect(() => {
-    const core = coreRef.current;
-    if (!core) return;
+    const client = clientRef.current;
+    if (!client) return;
+
     const nextModel = selectedModel || providerModels[currentProvider]?.[0];
-    if (!nextModel) return;
-    const transport = core.getTransport();
-    if (transport.getConfig().model === nextModel) return;
-    transport.setModel(nextModel);
-    setFeed((prev) => [
-      ...prev,
-      {
-        id: `provider-${Date.now()}`,
-        role: 'webclaw',
-        content: `已切换到 ${currentProvider}，默认模型为 ${nextModel}`,
-        tone: 'muted',
-      },
-    ]);
-  }, [currentProvider, providerModels, selectedModel]);
-
-  useEffect(() => {
-    const core = coreRef.current;
-    if (!core) return;
-    const transport = core.getTransport() as WebClawBrowserTransport;
-    if (transport.getRouteMode() === displayMode) return;
-    transport.setRouteMode(displayMode);
-    setFeed((prev) => [
-      ...prev,
-      {
-        id: `route-${Date.now()}`,
-        role: 'webclaw',
-        content:
-          displayMode === 'forward'
-            ? `已切换为 forward 路由：${currentProvider} 将走直连转发`
-            : `已切换为 web 路由：${currentProvider} 将走 WebClaw 网页驱动`,
-        tone: 'muted',
-      },
-    ]);
-  }, [currentProvider, displayMode]);
-
-  useEffect(() => {
-    const core = coreRef.current;
-    if (!core) return;
-
-    let syncing = false;
-    const runSync = async () => {
-      if (syncing) return;
-      syncing = true;
-      try {
-        const state = core.getState();
-        const desiredMode = displayMode;
-        const desiredProvider = currentProvider as ProviderKey;
-
-        const adjusted: string[] = [];
-        if (state.provider !== desiredProvider) {
-          await core.executeInput(`/provider ${desiredProvider}`);
-          adjusted.push(`provider=${desiredProvider}`);
-        }
-        if (state.mode !== desiredMode) {
-          await core.executeInput(`/mode ${desiredMode}`);
-          adjusted.push(`mode=${desiredMode}`);
-        }
-
-        if (adjusted.length > 0) {
-          setFeed((prev) => [
-            ...prev,
-            {
-              id: `sync-${Date.now()}`,
-              role: 'webclaw',
-              content: `已同步当前会话设置：${adjusted.join(', ')}`,
-              tone: 'muted',
-            },
-          ]);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        onError(message);
-      } finally {
-        syncing = false;
-      }
-    };
-
-    void runSync();
-    const timer = window.setInterval(() => {
-      void runSync();
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [currentProvider, displayMode, onError]);
+    if (nextModel) {
+      void client.updateConfig({
+        model: nextModel,
+        mode: displayMode,
+      });
+    }
+  }, [currentProvider, displayMode, selectedModel, providerModels]);
 
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });
   }, [feed]);
 
   async function handleSubmit() {
-    const core = coreRef.current;
-    if (!core || !draft.trim() || isSending) return;
+    const client = clientRef.current;
+    if (!client || !draft.trim() || isSending) return;
     const input = draft.trim();
     const blockedCommand = input.match(/^\/(provider|mode)\b/i)?.[1]?.toLowerCase();
     setDraft('');
@@ -273,7 +155,6 @@ export function WebClawPanel(props: WebClawPanelProps) {
     const isCommand = input.startsWith('/');
 
     try {
-      abortRequestedRef.current = false;
       if (blockedCommand) {
         setFeed((prev) => [
           ...prev,
@@ -286,19 +167,9 @@ export function WebClawPanel(props: WebClawPanelProps) {
         ]);
         return;
       }
+
       const nextModel = selectedModel || providerModels[currentProvider]?.[0];
-      if (nextModel && core.getTransport().getConfig().model !== nextModel) {
-        core.getTransport().setModel(nextModel);
-        setFeed((prev) => [
-          ...prev,
-          {
-            id: `provider-${Date.now()}`,
-            role: 'webclaw',
-            content: `已切换到 ${currentProvider}，当前模型为 ${nextModel}`,
-            tone: 'muted',
-          },
-        ]);
-      }
+
       if (!isCommand) {
         setFeed((prev) => [
           ...prev,
@@ -306,16 +177,41 @@ export function WebClawPanel(props: WebClawPanelProps) {
           { id: pendingId, role: 'webclaw', content: '...', tone: 'muted' },
         ]);
       }
-      const result = await core.executeInput(input);
+
+      // 处理特殊命令
+      if (input === '/clear') {
+        setFeed([{ id: `clear-${Date.now()}`, role: 'webclaw', content: '已清空对话', tone: 'muted' }]);
+        setIsSending(false);
+        return;
+      }
+      if (input === '/new') {
+        const newSessionId = await client.newSession({ model: nextModel, mode: displayMode });
+        setFeed([{ id: `new-${Date.now()}`, role: 'webclaw', content: `已创建新会话: ${newSessionId}`, tone: 'muted' }]);
+        hydratedRef.current = false;
+        setIsSending(false);
+        return;
+      }
+      if (input === '/help') {
+        setFeed((prev) => [
+          ...prev,
+          { id: `help-${Date.now()}`, role: 'webclaw', content: '可用命令: /new /clear /help\n工具调用由 Agent Service 自动执行', tone: 'muted' },
+        ]);
+        setIsSending(false);
+        return;
+      }
+
+      const result = await client.chat(input, {
+        model: nextModel,
+        mode: displayMode,
+      });
+
       applyResultToFeed(result, pendingId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message !== '已终止') {
-        onError(message);
-      }
+      onError(message);
       setFeed((prev) => prev.map((item) => (
         item.id === pendingId
-          ? { ...item, content: message, tone: message === '已终止' ? 'muted' : 'error' }
+          ? { ...item, content: message, tone: 'error' }
           : item
       )));
     } finally {
@@ -323,15 +219,15 @@ export function WebClawPanel(props: WebClawPanelProps) {
     }
   }
 
-  function applyResultToFeed(result: ClientCoreResult, pendingId?: string) {
+  function applyResultToFeed(result: AgentChatResponse, pendingId?: string) {
     if (result.kind === 'chat') {
-      const toolCalls = Array.isArray(result.response.tool_calls) ? result.response.tool_calls : [];
+      const toolCalls = Array.isArray(result.toolCalls) ? result.toolCalls : [];
       const toolSummary = toolCalls.length > 0
         ? toolCalls.map((tc: any) => `🔧 ${tc?.function?.name ?? 'unknown'}(${(tc?.function?.arguments ?? '').slice(0, 60)}...)`).join('\n')
         : '';
       const displayContent = toolSummary
-        ? (result.response.content ? `${result.response.content}\n${toolSummary}` : toolSummary)
-        : (result.response.content || '（空响应）');
+        ? (result.content ? `${result.content}\n${toolSummary}` : toolSummary)
+        : (result.content || '（空响应）');
 
       setFeed((prev) => prev.map((item) => (
         item.id === pendingId
@@ -341,45 +237,21 @@ export function WebClawPanel(props: WebClawPanelProps) {
       return;
     }
 
-    if (result.command === 'noop') return;
-    if (result.command === 'session') {
-      hydratedRef.current = true;
-      const items = buildFeedFromHistory(result.state.history ?? []);
-      setFeed([
-        ...items,
-        {
-          id: `cmd-${Date.now()}-${result.command}`,
-          role: 'webclaw',
-          content: result.lines.join('\n'),
-          tone: 'muted',
-        },
-      ]);
-      return;
+    // command result
+    if (result.command) {
+      setFeed((prev) => {
+        const withoutPending = pendingId ? prev.filter((item) => item.id !== pendingId) : prev;
+        return [
+          ...withoutPending,
+          {
+            id: `cmd-${Date.now()}-${result.command}`,
+            role: 'webclaw',
+            content: (result.lines ?? []).join('\n'),
+            tone: 'muted',
+          },
+        ];
+      });
     }
-    if (result.command === 'clear' || result.command === 'new' || result.command === 'reset') {
-      setFeed([
-        {
-          id: `reset-${Date.now()}`,
-          role: 'webclaw',
-          content: result.lines.join('\n'),
-          tone: 'muted',
-        },
-      ]);
-      return;
-    }
-    const tone = result.command === 'invalid' ? 'error' : 'muted';
-    setFeed((prev) => {
-      const withoutPending = pendingId ? prev.filter((item) => item.id !== pendingId) : prev;
-      return [
-        ...withoutPending,
-        {
-          id: `cmd-${Date.now()}-${result.command}`,
-          role: 'webclaw',
-          content: result.lines.join('\n'),
-          tone,
-        },
-      ];
-    });
   }
 
   return (
@@ -397,7 +269,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
       <div className="webclaw-inputbar">
         <textarea
           value={draft}
-          placeholder={serviceStatus === 'running' ? '输入消息或 /help 查看命令' : '服务未启动，输入后也可直接尝试发送'}
+          placeholder={serviceStatus === 'running' ? '输入消息或 /help 查看命令' : 'Agent Service 未连接'}
           onChange={(e) => setDraft(e.target.value)}
           disabled={isSending}
           onKeyDown={(e) => {
@@ -412,15 +284,11 @@ export function WebClawPanel(props: WebClawPanelProps) {
           onClick={() => {
             if (!isSending) {
               void handleSubmit();
-              return;
             }
-            abortRequestedRef.current = true;
-            const transport = coreRef.current?.getTransport() as WebClawBrowserTransport | undefined;
-            transport?.abortInFlight?.();
           }}
           disabled={!isSending && !draft.trim()}
         >
-          {isSending ? '终止' : '发送'}
+          {isSending ? '等待...' : '发送'}
         </button>
       </div>
     </div>

@@ -581,7 +581,7 @@ export default function App() {
 
   const webclawPanel = useMemo(() => (
     <WebClawPanel
-      apiBaseUrl={apiBaseUrl}
+      agentUrl={`http://127.0.0.1:8100`}
       currentProvider={currentProvider}
       displayMode={displayMode}
       selectedModel={displayMode === 'forward' ? selectedForwardModel : undefined}
@@ -592,7 +592,7 @@ export default function App() {
       onSendingChange={setWebclawSending}
       notice={webclawNotice}
     />
-  ), [apiBaseUrl, currentProvider, displayMode, selectedForwardModel, providerModels, serviceStatus, handleProviderChange, pushError, webclawNotice]);
+  ), [currentProvider, displayMode, selectedForwardModel, providerModels, serviceStatus, handleProviderChange, pushError, webclawNotice]);
 
   const panel = useMemo(() => {
     if (activeTab === 'webclaw') return null;

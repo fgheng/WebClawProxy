@@ -2,27 +2,26 @@ import { ToolExecutor } from '../types';
 
 /**
  * 浏览器环境下的 ToolExecutor
- * 通过 IPC 调用 Electron 主进程执行工具（主进程是 Node.js 环境）
  *
- * 使用方式：
- *   const executor = new BrowserToolExecutor();
- *   const result = await executor.execute('list_directory', { path: '~/Downloads' });
+ * 在新架构下，工具执行完全在 Agent Service（独立 Node.js 进程）中完成。
+ * BrowserToolExecutor 作为备用方案，通过 HTTP 调用 Agent Service 的 API 执行工具。
+ *
+ * 注意：在正常使用中，前端（WebClawPanel）直接与 Agent Service 通信，
+ * 不需要通过 BrowserToolExecutor。此类仅用于需要 ToolExecutor 接口
+ * 但运行在浏览器环境中的特殊场景。
  */
 export class BrowserToolExecutor implements ToolExecutor {
-  async execute(toolName: string, args: Record<string, unknown>): Promise<string> {
-    // 通过 window.webclawDesktop IPC 调主进程执行
-    if (typeof window !== 'undefined' && window.webclawDesktop?.executeTool) {
-      try {
-        const result = await window.webclawDesktop.executeTool(toolName, args);
-        return result;
-      } catch (err: any) {
-        return JSON.stringify({ error: `IPC execution failed: ${err.message ?? String(err)}` });
-      }
-    }
+  private agentUrl: string;
 
-    // fallback：如果不在 Electron 环境中，返回错误提示
+  constructor(agentUrl?: string) {
+    this.agentUrl = agentUrl ?? 'http://localhost:8100';
+  }
+
+  async execute(toolName: string, args: Record<string, unknown>): Promise<string> {
+    // 在新架构下，浏览器不应直接执行工具
+    // 工具执行由 Agent Service 处理
     return JSON.stringify({
-      error: `Tool "${toolName}" requires Node.js environment. Current environment is browser. Please run in Electron desktop app or use TUI mode.`,
+      error: `Tool execution should go through Agent Service. Direct browser execution is not supported. Use AgentClient.chat() to send messages with tool support.`,
     });
   }
 }

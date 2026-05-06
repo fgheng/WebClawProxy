@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, nativeTheme } from 'electron';
-import { execFile } from 'child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
@@ -22,6 +22,8 @@ const BOTTOM_ACTION_BAR_HEIGHT = 24;
 let browserViewManager: BrowserViewManager | null = null;
 let serviceManager: ServiceManager | null = null;
 let shellTerminalManager: ShellTerminalManager | null = null;
+let agentServiceProc: ChildProcessWithoutNullStreams | null = null;
+let agentServiceStatus: 'stopped' | 'running' = 'stopped';
 let providerSites: Record<ProviderKey, string> = {} as Record<ProviderKey, string>;
 let providerModels: Record<ProviderKey, string[]> = {} as Record<ProviderKey, string[]>;
 let providerDefaultModes: Record<ProviderKey, 'web' | 'forward'> = {} as Record<ProviderKey, 'web' | 'forward'>;
@@ -573,14 +575,49 @@ app.whenReady().then(() => {
     await shellTerminalManager?.resize(terminalId, cols, rows);
   });
 
-  // ── 工具执行（在主进程 Node.js 环境中执行）─────────────────────────
-  ipcMain.handle('tool:execute', async (_event, payload: { toolName: string; args: Record<string, unknown> }) => {
-    const { toolName, args } = payload;
+  // ── Agent Service 管理 ──────────────────────────────────
+  ipcMain.handle('agent:start', async () => {
+    if (agentServiceProc) return { status: 'already_running' };
     try {
-      const { builtInToolExecutor } = await import('../../client-core/src/core/tools/index');
-      return await builtInToolExecutor.execute(toolName, args);
+      // Agent Service 是 client-core 的独立 Node.js 进程
+      const agentEntry = path.join(PROJECT_ROOT, 'client-core', 'src', 'server', 'index.ts');
+      agentServiceProc = spawn('npx', ['ts-node', agentEntry], {
+        cwd: PROJECT_ROOT,
+        env: {
+          ...process.env,
+          WEBCLAW_AGENT_PORT: '8100',
+          WEBCLAW_PROXY_URL: `http://localhost:${runtimeServicePort}`,
+        },
+        stdio: 'pipe',
+      });
+
+      agentServiceProc.stdout?.on('data', (data: Buffer) => {
+        console.log(`[AgentService] ${data.toString().trim()}`);
+      });
+      agentServiceProc.stderr?.on('data', (data: Buffer) => {
+        console.error(`[AgentService] ${data.toString().trim()}`);
+      });
+      agentServiceProc.on('exit', () => {
+        agentServiceProc = null;
+        agentServiceStatus = 'stopped';
+      });
+
+      agentServiceStatus = 'running';
+      return { status: 'running' };
     } catch (err: any) {
-      return JSON.stringify({ error: err.message ?? String(err) });
+      return { status: 'error', message: err.message };
+    }
+  });
+
+  ipcMain.handle('agent:stop', async () => {
+    if (!agentServiceProc) return { status: 'stopped' };
+    try {
+      agentServiceProc.kill('SIGTERM');
+      agentServiceProc = null;
+      agentServiceStatus = 'stopped';
+      return { status: 'stopped' };
+    } catch (err: any) {
+      return { status: 'error', message: err.message };
     }
   });
 

@@ -77,7 +77,8 @@ contextBridge.exposeInMainWorld('webclawDesktop', {
     ipcRenderer.on('terminal:status', listener);
     return () => ipcRenderer.removeListener('terminal:status', listener);
   },
-  /** 执行工具（通过 IPC 在主进程 Node.js 环境中执行） */
-  executeTool: (toolName: string, args: Record<string, unknown>) =>
-    ipcRenderer.invoke('tool:execute', { toolName, args }),
+  /** 启动 Agent Service 子进程 */
+  startAgent: () => ipcRenderer.invoke('agent:start'),
+  /** 停止 Agent Service 子进程 */
+  stopAgent: () => ipcRenderer.invoke('agent:stop'),
 });
