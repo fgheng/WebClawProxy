@@ -146,6 +146,31 @@ export function WebClawPanel(props: WebClawPanelProps) {
     };
   }, [agentUrl]); // 注意：不包含 onProviderChange，避免 re-render 重建 client
 
+  // 启动时恢复上次的 session（验证是否还在服务端）
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!client) return;
+    const savedId = client.getSessionId();
+    if (!savedId) return;
+
+    client.validateSession().then((valid) => {
+      if (valid) {
+        setFeed((prev) => [
+          ...prev,
+          { id: `session-restore-${Date.now()}`, role: 'webclaw', content: `已恢复上次会话: ${savedId}`, tone: 'muted' },
+        ]);
+      } else {
+        // 服务端已重启，session 不存在，清除并创建新 session
+        client.newSession().then((newId) => {
+          setFeed((prev) => [
+            ...prev,
+            { id: `session-new-${Date.now()}`, role: 'webclaw', content: `上次会话已失效，已创建新会话: ${newId}`, tone: 'muted' },
+          ]);
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [agentUrl]);
+
   // 同步 provider 和 mode（静默失败，Agent Service 可能还没启动）
   useEffect(() => {
     const client = clientRef.current;
@@ -216,8 +241,34 @@ export function WebClawPanel(props: WebClawPanelProps) {
       if (input === '/help') {
         setFeed((prev) => [
           ...prev,
-          { id: `help-${Date.now()}`, role: 'webclaw', content: '可用命令: /new /clear /help\n工具调用由 Agent Service 自动执行', tone: 'muted' },
+          { id: `help-${Date.now()}`, role: 'webclaw', content: '可用命令:\n/new - 创建新会话\n/clear - 清空对话面板\n/sessions - 列出所有会话\n/session - 显示当前会话信息\n/help - 查看帮助\n工具调用由 Agent Service 自动执行', tone: 'muted' },
         ]);
+        setIsSending(false);
+        return;
+      }
+      if (input === '/sessions') {
+        const sessions = await client.getSessions();
+        const lines = sessions.length === 0
+          ? '没有活跃会话'
+          : sessions.map((s) => `  ${s.sessionId}  模型: ${s.model}  提供商: ${s.provider}`).join('\n');
+        setFeed((prev) => [
+          ...prev,
+          { id: `sessions-${Date.now()}`, role: 'webclaw', content: `会话列表:\n${lines}`, tone: 'muted' },
+        ]);
+        setIsSending(false);
+        return;
+      }
+      if (input === '/session') {
+        const sid = client.getSessionId();
+        if (!sid) {
+          setFeed((prev) => [...prev, { id: `session-${Date.now()}`, role: 'webclaw', content: '当前没有活跃会话', tone: 'muted' }]);
+        } else {
+          const config = await client.getConfig();
+          setFeed((prev) => [
+            ...prev,
+            { id: `session-${Date.now()}`, role: 'webclaw', content: `当前会话:\n  ID: ${sid}\n  模型: ${config.model ?? '未设置'}\n  提供商: ${config.provider ?? '未设置'}\n  模式: ${config.mode ?? '未设置'}`, tone: 'muted' },
+          ]);
+        }
         setIsSending(false);
         return;
       }

@@ -124,6 +124,31 @@ export class AgentClient {
     return data.sessions ?? [];
   }
 
+  /** 验证当前 sessionId 是否还存在于服务端 */
+  async validateSession(): Promise<boolean> {
+    if (!this.sessionId) return false;
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/sessions/${this.sessionId}`);
+      return res.ok;
+    } catch { return false; }
+  }
+
+  /** 切换到已有的 session */
+  async loadSession(sessionId: string): Promise<AgentConfig | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/sessions/${sessionId}`);
+      if (!res.ok) return null;
+      const state = await res.json();
+      this.saveSessionId(sessionId);
+      return {
+        model: state.model,
+        provider: state.provider,
+        mode: state.mode,
+        sessionId,
+      };
+    } catch { return null; }
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/v1/health`);
