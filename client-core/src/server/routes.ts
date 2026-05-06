@@ -1,0 +1,189 @@
+import { Router, Request, Response } from 'express';
+import { AgentSession, AgentSessionOptions, AgentChatResult } from './agent-session';
+import { builtInToolDefinitions, builtInToolNames } from '../tools/index';
+
+/**
+ * REST API 路由
+ *
+ * 所有 API 都通过 sessionsManager 来管理 AgentSession 实例。
+ */
+export function createApiRouter(sessionsManager: SessionManager): Router {
+  const router = Router();
+
+  // ── Health ──────────────────────────────────────────────
+  router.get('/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', timestamp: Date.now() });
+  });
+
+  // ── Chat ──────────────────────────────────────────────
+  router.post('/chat', async (req: Request, res: Response) => {
+    try {
+      const { message, sessionId, model, system, mode, proxyBaseUrl } = req.body;
+
+      if (!message || typeof message !== 'string') {
+        return res.status(400).json({ error: 'message is required' });
+      }
+
+      let session = sessionId
+        ? sessionsManager.get(sessionId)
+        : sessionsManager.getDefault();
+
+      if (!session) {
+        session = sessionsManager.create({
+          proxyBaseUrl,
+          model,
+          system,
+          mode,
+        });
+      }
+
+      if (model) session.setModel(model);
+      if (system) session.setSystem(system);
+      if (mode) session.setMode(mode);
+
+      const result = await session.chat(message);
+      res.json({
+        ...result,
+        sessionId: session.getSessionId(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? String(err) });
+    }
+  });
+
+  // ── Sessions ──────────────────────────────────────────
+  router.get('/sessions', (_req: Request, res: Response) => {
+    res.json({ sessions: sessionsManager.list() });
+  });
+
+  router.post('/sessions/new', async (req: Request, res: Response) => {
+    try {
+      const { model, system, mode, proxyBaseUrl } = req.body;
+      const session = sessionsManager.create({
+        proxyBaseUrl,
+        model,
+        system,
+        mode,
+      });
+      res.json({ sessionId: session.getSessionId() });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? String(err) });
+    }
+  });
+
+  router.get('/sessions/:id', (req: Request, res: Response) => {
+    const session = sessionsManager.get(req.params.id);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    res.json(session.getState());
+  });
+
+  router.delete('/sessions/:id', (req: Request, res: Response) => {
+    const removed = sessionsManager.remove(req.params.id);
+    res.json({ ok: removed });
+  });
+
+  // ── Tools ──────────────────────────────────────────────
+  router.get('/tools', (_req: Request, res: Response) => {
+    const tools = builtInToolNames.map((name) => {
+      const def = builtInToolDefinitions.find((t) => t.function.name === name);
+      return {
+        name,
+        description: def?.function.description ?? '',
+        parameters: def?.function.parameters ?? {},
+      };
+    });
+    res.json({ tools });
+  });
+
+  // ── Config ──────────────────────────────────────────────
+  router.get('/config', (req: Request, res: Response) => {
+    const sessionId = req.query.sessionId as string | undefined;
+    const session = sessionId
+      ? sessionsManager.get(sessionId)
+      : sessionsManager.getDefault();
+
+    if (!session) {
+      return res.status(404).json({ error: 'No active session' });
+    }
+    const state = session.getState();
+    res.json({
+      model: state.model,
+      provider: state.provider,
+      mode: state.mode,
+      systemPrompt: state.systemPrompt,
+      sessionId: state.sessionId,
+    });
+  });
+
+  router.patch('/config', (req: Request, res: Response) => {
+    const { sessionId, model, system, mode } = req.body;
+    const session = sessionId
+      ? sessionsManager.get(sessionId)
+      : sessionsManager.getDefault();
+
+    if (!session) {
+      return res.status(404).json({ error: 'No active session' });
+    }
+
+    if (model) session.setModel(model);
+    if (system) session.setSystem(system);
+    if (mode) session.setMode(mode);
+
+    res.json({ ok: true, state: session.getState() });
+  });
+
+  return router;
+}
+
+// ── Session Manager ──────────────────────────────────────
+
+/**
+ * 管理 AgentSession 实例的生命周期
+ */
+export class SessionManager {
+  private sessions = new Map<string, AgentSession>();
+  private defaultSession: AgentSession | null = null;
+  private defaultOptions: AgentSessionOptions = {};
+
+  constructor(defaultOptions?: AgentSessionOptions) {
+    this.defaultOptions = defaultOptions ?? {};
+  }
+
+  create(options?: AgentSessionOptions): AgentSession {
+    const merged = { ...this.defaultOptions, ...options };
+    const session = new AgentSession(merged);
+    this.sessions.set(session.getSessionId(), session);
+    if (!this.defaultSession) {
+      this.defaultSession = session;
+    }
+    return session;
+  }
+
+  get(sessionId: string): AgentSession | null {
+    return this.sessions.get(sessionId) ?? null;
+  }
+
+  getDefault(): AgentSession | null {
+    return this.defaultSession;
+  }
+
+  remove(sessionId: string): boolean {
+    if (this.defaultSession?.getSessionId() === sessionId) {
+      this.defaultSession = null;
+    }
+    return this.sessions.delete(sessionId);
+  }
+
+  list(): Array<{ sessionId: string; model: string; provider: string }> {
+    return Array.from(this.sessions.values()).map((s) => {
+      const state = s.getState();
+      return {
+        sessionId: s.getSessionId(),
+        model: state.model,
+        provider: state.provider,
+      };
+    });
+  }
+}
