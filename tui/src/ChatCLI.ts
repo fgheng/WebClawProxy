@@ -21,7 +21,7 @@ export class ChatCLI {
   private spinnerInterval: NodeJS.Timeout | null = null;
   private roundCount = 0;
   private currentModel: string;
-  private currentMode: string;
+  private currentMode: 'web' | 'forward';
 
   constructor(options: { agentUrl: string; model?: string; mode?: string }) {
     this.client = new AgentClient({ agentUrl: options.agentUrl });
