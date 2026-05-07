@@ -900,6 +900,14 @@ export default function App() {
               <button className="tab" type="button" title="自修复">
                 自修复
               </button>
+              <button
+                className="tab"
+                type="button"
+                title="刷新当前浏览器页面"
+                onClick={() => void window.webclawDesktop?.reloadCurrentProvider()}
+              >
+                ↻ 刷新
+              </button>
               <span className="control-label mono">主题</span>
               <select
                 className="control-provider-select control-theme-select"

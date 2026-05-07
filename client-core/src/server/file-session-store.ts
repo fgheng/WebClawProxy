@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import type { ClientSessionData, ClientSessionSummary, ClientSessionStore, ClientRouteMode } from '../core/types';
 import type { ProviderKey } from '../core/provider-models';
+import { WebclawPaths } from '../core/webclaw-home';
 
 /**
  * 文件系统会话存储（Node.js 环境）
@@ -14,7 +15,7 @@ export class FileSessionStore implements ClientSessionStore {
   private rootDir: string;
 
   constructor(rootDir?: string) {
-    this.rootDir = rootDir ?? path.join(os.homedir(), '.webclaw', 'sessions');
+    this.rootDir = rootDir ?? WebclawPaths.sessionsDir;
     if (!fs.existsSync(this.rootDir)) {
       fs.mkdirSync(this.rootDir, { recursive: true });
     }

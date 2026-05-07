@@ -3,6 +3,7 @@ import * as path from 'path';
 import { ConversationStore } from './ConversationStore';
 import { ConversationRecord, ConversationSnapshot } from './types';
 import { loadAppConfig } from '../config/app-config';
+import { WebclawPaths } from '../config/webclaw-home';
 
 type StoreIndex = {
   conversationIds: string[];
@@ -152,11 +153,7 @@ export class FileConversationStore implements ConversationStore {
       const raw = input.trim();
       return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
     }
-
-    const config = loadAppConfig();
-    const dataRootDir = typeof config?.data?.root_dir === 'string' ? config.data.root_dir : '.data';
-    const root = path.join(dataRootDir, 'conversations');
-    return path.isAbsolute(root) ? root : path.resolve(process.cwd(), root);
+    return WebclawPaths.conversationsDir;
   }
 
   private getRecordPath(conversationId: string): string {

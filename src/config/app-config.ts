@@ -1,9 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolvePromptRefsInValue } from './prompt-loader';
+import { WebclawPaths, initConfigFromProject } from './webclaw-home';
 
-const configPath = path.join(process.cwd(), 'config', 'default.json');
-const promptsRoot = path.join(process.cwd(), 'prompts');
+// 首次启动时将项目内 config/ 和 prompts/ 复制到 ~/.webclaw/config/
+initConfigFromProject(process.cwd());
+
+const configPath = WebclawPaths.mainConfig;
+const promptsRoot = WebclawPaths.promptsDir;
 
 let cachedConfig: Record<string, any> | null = null;
 

@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ProviderKey } from './provider-sites';
+import { WebclawPaths } from './webclaw-home';
 
 type ProviderConfig = {
   models?: string[];
 };
 
-export function readProviderModels(projectRoot: string): Record<ProviderKey, string[]> {
-  const configPath = path.join(projectRoot, 'config', 'default.json');
+export function readProviderModels(_projectRoot: string): Record<ProviderKey, string[]> {
+  const configPath = WebclawPaths.mainConfig;
   const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
     providers?: Record<string, ProviderConfig>;
   };

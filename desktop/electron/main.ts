@@ -7,12 +7,22 @@ import { BrowserViewManager } from './browser-view-manager';
 import type { ProviderKey } from './provider-sites';
 import { ServiceManager } from './service-manager';
 import { ShellTerminalManager } from './shell-terminal-manager';
+import { WebclawPaths, initConfigFromProject } from './webclaw-home';
 
 const execFileAsync = promisify(execFile);
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
-const APP_DATA_ROOT = path.join(process.cwd(), '.electron-data');
-const PROJECT_ROOT = path.resolve(process.cwd(), '..');
+// 首次启动时将项目 config/ 复制到 ~/.webclaw/config/
+// __dirname = desktop/.electron-dist/electron/ → ../../.. = 项目根目录 (dev)
+const PROJECT_ROOT = DEV_SERVER_URL
+  ? path.resolve(__dirname, '..', '..', '..')
+  : path.resolve(__dirname, '..', '..'); // prod build 下根据实际打包结构调整
+try {
+  initConfigFromProject(PROJECT_ROOT);
+} catch (e) {
+  console.warn('[WebClawProxy] initConfigFromProject failed (non-fatal):', e instanceof Error ? e.message : e);
+}
+const APP_DATA_ROOT = WebclawPaths.electronDir;
 const CDP_URL = 'http://127.0.0.1:9222';
 const CDP_PORT = '9222';
 const DEFAULT_SPLIT_RATIO = 0.56;
@@ -65,7 +75,7 @@ app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT);
 
 function readConfiguredServicePortFromFile(): number {
   try {
-    const configPath = path.join(PROJECT_ROOT, 'config', 'default.json');
+    const configPath = WebclawPaths.mainConfig;
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as { server?: { port?: unknown } };
     const value = Number(raw?.server?.port);
     if (Number.isInteger(value) && value > 0 && value <= 65535) {
@@ -85,7 +95,7 @@ function readPromptConfigFromFile(): {
   format_only_retry_template: string;
 } {
   try {
-    const configPath = path.join(PROJECT_ROOT, 'config', 'default.json');
+    const configPath = WebclawPaths.mainConfig;
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
     const source = (raw.prompt ?? raw.defaults ?? {}) as Record<string, any>;
     return {
@@ -525,7 +535,7 @@ app.whenReady().then(() => {
       throw new Error('端口范围必须在 1-65535');
     }
     try {
-      const configPath = path.join(PROJECT_ROOT, 'config', 'default.json');
+      const configPath = WebclawPaths.mainConfig;
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
       raw.server = raw.server ?? {};
       raw.server.port = nextPort;
@@ -548,7 +558,7 @@ app.whenReady().then(() => {
         format_only_retry_template: string;
       }
     ) => {
-      const configPath = path.join(PROJECT_ROOT, 'config', 'default.json');
+      const configPath = WebclawPaths.mainConfig;
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
       raw.prompt = {
         init_prompt: String(payload.init_prompt ?? ''),

@@ -2,6 +2,7 @@ import { createApp } from './server';
 import { preflightWebDriverSites, openConfiguredWebDriverSites, closeWebDriver } from './routes/openai';
 import { initServiceLogger } from './logger';
 import { loadAppConfig } from '../config/app-config';
+import { WEBCLAW_HOME } from '../config/webclaw-home';
 
 // 加载配置
 const config = loadAppConfig();
@@ -25,6 +26,7 @@ const server = app.listen(PORT, () => {
 ║  GET  /health                            ║
 ╚══════════════════════════════════════════╝
   `);
+  console.log(`[Config] WEBCLAW_HOME: ${WEBCLAW_HOME}`);
 
   const startupOpenSitesEnabled = config.webdriver?.startup_open_sites_enabled === true;
   const startupPreflightEnabled = config.webdriver?.startup_preflight_enabled !== false;

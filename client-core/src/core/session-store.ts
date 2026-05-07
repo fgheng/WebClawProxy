@@ -7,6 +7,7 @@ import {
   ClientSessionSummary,
 } from './types';
 import { ProviderKey } from './provider-models';
+import { WebclawPaths } from './webclaw-home';
 
 type SessionIndex = {
   sessions: ClientSessionSummary[];
@@ -42,7 +43,7 @@ export class FileClientSessionStore implements ClientSessionStore {
     const base =
       rootDir && rootDir.trim()
         ? rootDir
-        : path.join(os.homedir(), '.webclaw', 'client-core');
+        : WebclawPaths.coreSessionsDir;
     this.rootDir = path.isAbsolute(base) ? base : path.resolve(process.cwd(), base);
     this.sessionsDir = path.join(this.rootDir, 'sessions');
     this.indexPath = path.join(this.rootDir, 'index.json');

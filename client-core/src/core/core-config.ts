@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { ClientRouteMode } from './types';
 import { ProviderKey } from './provider-models';
+import { WebclawPaths } from './webclaw-home';
 
 export type ClientCoreRuntimeConfig = {
   api: {
@@ -36,7 +37,7 @@ const BUILTIN_DEFAULTS: ClientCoreRuntimeConfig = {
     tracePreviewChars: 180,
   },
   storage: {
-    rootDir: path.join(os.homedir(), '.webclaw', 'client-core'),
+    rootDir: WebclawPaths.coreSessionsDir,
   },
 };
 
@@ -64,7 +65,7 @@ function deepMergeConfig(partial?: PartialRuntimeConfig): ClientCoreRuntimeConfi
 }
 
 export function defaultClientCoreConfigPath(): string {
-  return path.join(os.homedir(), '.webclaw', 'client-core.json');
+  return WebclawPaths.clientCoreConfig;
 }
 
 function ensureConfigFileExists(configPath: string): void {

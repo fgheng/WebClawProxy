@@ -29,6 +29,7 @@ import { BrowserBackend, BrowserBackendName } from './backends/types';
 import { PlaywrightLaunchBackend } from './backends/PlaywrightLaunchBackend';
 import { ElectronCdpBackend } from './backends/ElectronCdpBackend';
 import { loadAppConfig } from '../config/app-config';
+import { WebclawPaths } from '../config/webclaw-home';
 
 // 注册 Stealth 插件（全局只需一次）
 // Stealth 插件消除以下自动化特征：
@@ -114,11 +115,7 @@ interface InternalPromptDispatchOptions {
  * 3. 不需要每次都重新登录
  */
 function getUserDataDir(): string {
-  const dataDir = path.join(
-    process.cwd(),
-    config.data?.root_dir ?? './data',
-    '.browser-profile'
-  );
+  const dataDir = WebclawPaths.browserProfile;
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
@@ -874,7 +871,7 @@ export class WebDriverManager {
   }
 
   private loadLoginProbeConfig(site: SiteKey): LoginProbeConfig {
-    const probeDir = path.join(process.cwd(), 'config', 'login-probes');
+    const probeDir = WebclawPaths.loginProbesDir;
     const commonPath = path.join(probeDir, 'common.json');
     const sitePath = path.join(probeDir, `${site}.json`);
 

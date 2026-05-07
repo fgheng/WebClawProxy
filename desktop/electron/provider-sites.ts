@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { WebclawPaths } from './webclaw-home';
 
 export type ProviderKey = 'gpt' | 'qwen' | 'deepseek' | 'kimi' | 'glm' | 'claude' | 'doubao';
 
@@ -13,8 +14,8 @@ type ProviderConfig = {
   };
 };
 
-export function readProviderSites(projectRoot: string): Record<ProviderKey, string> {
-  const configPath = path.join(projectRoot, 'config', 'default.json');
+export function readProviderSites(_projectRoot: string): Record<ProviderKey, string> {
+  const configPath = WebclawPaths.mainConfig;
   const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
     providers?: Record<string, ProviderConfig>;
   };

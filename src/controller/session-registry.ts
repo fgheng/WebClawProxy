@@ -13,6 +13,7 @@ import * as crypto from 'crypto';
 import { FileConversationStore } from '../conversation/FileConversationStore';
 import type { ConversationMessage, ConversationRecord, ConversationSnapshot } from '../conversation/types';
 import { loadAppConfig } from '../config/app-config';
+import { WebclawPaths } from '../config/webclaw-home';
 
 // ── Hash 工具 ─────────────────────────────────────────────────────────────────
 
@@ -330,12 +331,10 @@ export class SessionRegistry {
   private persistTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
-    const config = loadAppConfig();
-    const dataRootDir = typeof config?.data?.root_dir === 'string' ? config.data.root_dir : '.data';
-    const dataRootAbs = path.isAbsolute(dataRootDir) ? dataRootDir : path.resolve(process.cwd(), dataRootDir);
+    const { proxySessions, conversationsDir } = WebclawPaths;
 
-    this.persistFilePath = path.join(dataRootAbs, 'sessions.json');
-    this.conversationStore = new FileConversationStore(path.join(dataRootAbs, 'conversations'));
+    this.persistFilePath = proxySessions;
+    this.conversationStore = new FileConversationStore(conversationsDir);
 
     // 启动时加载持久化数据
     this.load();
