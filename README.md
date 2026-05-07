@@ -92,30 +92,26 @@ pnpm install
 
 ### 3. 启动服务
 
-启动后请现在打开的浏览器页面进行登录，登录后才能使用模型服务商提供的 web 服务
+启动后请在打开的浏览器页面进行登录（Web 模式），登录后才能使用对应 AI 服务商。
 
-#### 方式一：CLI 命令行模式
+#### 方式一：TUI 命令行模式（推荐）
 
 ```bash
-# 开发模式（自动重启）
-pnpm dev
-
-# 生产模式
-pnpm build
-pnpm start
+npm run dev:tui
 ```
 
-服务将在 `http://127.0.0.1:3000` 启动。
+一键启动 Proxy + Agent Service + TUI，Ctrl-C 关闭全部。  
+后台服务日志写入 `.logs/`，TUI 独占终端，交互界面不被日志打断。
 
-#### 方式二：桌面应用模式（推荐）
+#### 方式二：桌面应用模式
 
 ```bash
 # 开发模式（热重载）
-pnpm dev:desktop
+npm run dev:desktop
 
 # 生产模式
-pnpm build:all
-pnpm start:desktop
+npm run build:all
+npm run start:desktop
 ```
 
 桌面应用提供：
@@ -123,6 +119,19 @@ pnpm start:desktop
 - 多 Provider Web 界面切换
 - Forward Monitor 实时监控
 - 内置终端和日志查看
+
+#### 方式三：仅启动代理服务
+
+```bash
+# 开发模式
+npm run dev
+
+# 生产模式
+npm run build
+npm run start
+```
+
+服务将在 `http://127.0.0.1:3000` 启动。
 
 ### 4. 测试 API
 
@@ -137,20 +146,84 @@ curl -X POST http://127.0.0.1:3000/v1/chat/completions \
   }'
 ```
 
+## 整体架构
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     用户界面层 (UI Layer)                      │
+│                                                              │
+│  Desktop (Electron + React)      TUI (Node.js + readline)    │
+│  图形化桌面客户端                  命令行交互客户端               │
+│  HTTP + WebSocket                HTTP + WebSocket            │
+└─────────────────────┬────────────────────┬───────────────────┘
+                      │                    │
+                      ▼                    ▼
+┌──────────────────────────────────────────────────────────────┐
+│               Agent Service (client-core/src/server/)         │
+│                      默认端口 :8100                            │
+│                                                              │
+│  SessionManager ──► AgentSession ──► WebClawClientCore       │
+│  (多会话管理)         (单会话包装)      (Tool Loop 核心逻辑)     │
+│  FileSessionStore                   内置工具：browser/exec/   │
+│  (~/.webclaw/sessions)              read-file/web-search 等  │
+│                                                              │
+│  REST API:  POST /v1/chat   GET /v1/sessions  PATCH /v1/config│
+│  WebSocket: ws://localhost:8100/ws  (实时事件推送)             │
+└─────────────────────────────┬────────────────────────────────┘
+                              │  HTTP POST /v1/chat/completions
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│                  WebClawProxy (src/)                          │
+│                    默认端口 :3000                              │
+│                                                              │
+│  ┌─────────────────────┐    ┌──────────────────────────────┐ │
+│  │     Web 模式         │    │        Forward 模式           │ │
+│  │  Playwright/CDP      │    │  透明转发到上游 OpenAI API    │ │
+│  │  驱动真实 Chromium   │    │  SessionRegistry 会话管理    │ │
+│  │  操作 ChatGPT/Claude │    │  SSE Forward Monitor        │ │
+│  │  /DeepSeek 等网站    │    │                              │ │
+│  └─────────────────────┘    └──────────────────────────────┘ │
+│                                                              │
+│  OpenAI 兼容接口：POST /v1/chat/completions                   │
+│  管理接口：/v1/models  /v1/providers  /v1/conversations       │
+│  监控界面：/monitor                                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**数据流向**：
+```
+用户输入 → Desktop / TUI
+         → Agent Service (:8100)  [处理命令、管理会话]
+         → WebClawClientCore      [Tool Loop 自动循环执行工具]
+         → WebClawProxy (:3000)   [路由分发]
+         → Web 模式: Playwright 驱动浏览器访问 AI 网站
+         → Forward 模式: 直接调用上游 OpenAI 兼容 API
+```
+
 ## 项目结构
 
 ```
 WebClawProxy/
 ├── config/              # 配置文件目录
 │   └── default.json     # 主配置文件
-├── src/                 # 核心服务代码
-│   ├── controller/      # API 路由和控制器
-│   ├── web-driver/      # Playwright 自动化
+├── src/                 # WebClawProxy 代理服务（端口 3000）
+│   ├── controller/      # API 路由、会话注册、Forward Monitor
+│   ├── web-driver/      # Playwright 浏览器自动化
 │   ├── data-manager/    # 数据管理
-│   └── protocol/        # 协议解析
-├── desktop/             # Electron 桌面应用
-│   ├── electron/        # Electron 主进程
-│   └── src/             # React 渲染进程
+│   └── protocol/        # 协议解析（OpenAI 格式）
+├── client-core/         # 客户端核心库 + Agent Service
+│   └── src/
+│       ├── core/        # WebClawClientCore（Tool Loop 核心）
+│       │   └── tools/   # 内置工具（browser/exec/web-search 等）
+│       ├── server/      # Agent Service（端口 8100）
+│       └── shared/      # 共享类型定义
+├── desktop/             # Electron 桌面客户端
+│   ├── electron/        # Electron 主进程（服务管理、CDP）
+│   └── src/             # React 渲染进程（聊天面板、监控界面）
+├── tui/                 # 命令行交互客户端
+│   └── src/             # ChatCLI + AgentClient
+├── scripts/             # 开发脚本
+│   └── dev-tui.sh       # TUI 一键启动脚本
 ├── tests/               # 测试用例
 ├── docs/                # 文档
 └── pnpm-workspace.yaml  # pnpm workspace 配置
@@ -158,35 +231,72 @@ WebClawProxy/
 
 ## 可用命令
 
-### 根目录（服务端）
+### 启动方式汇总
+
+| 命令 | 说明 |
+|------|------|
+| `npm run dev` | 仅启动 WebClawProxy 代理服务（端口 3000） |
+| `npm run dev:desktop` | 一键启动桌面应用（含代理服务） |
+| `npm run dev:tui` | 一键启动 TUI 客户端（proxy + agent + tui） |
+
+### TUI 一键启动（推荐）
+
+```bash
+npm run dev:tui
+```
+
+启动流程：
+1. 后台启动 WebClawProxy（日志写入 `.logs/proxy.log`）
+2. 后台启动 Agent Service（日志写入 `.logs/agent.log`）
+3. 前台运行 TUI 终端界面（独占终端，不被后台日志打断）
+4. Ctrl-C 时自动关闭所有后台进程
+
+```bash
+# 查看后台服务日志（可另开终端）
+tail -f .logs/proxy.log
+tail -f .logs/agent.log
+```
+
+### 根目录命令
 
 ```bash
 # 开发
-pnpm dev                 # 启动服务（开发模式）
-pnpm build               # 编译 TypeScript
-pnpm start               # 启动服务（生产模式）
+npm run dev              # 启动 WebClawProxy（开发模式）
+npm run build            # 编译 TypeScript
+npm run start            # 启动服务（生产模式）
 
 # 测试
-pnpm test                # 运行所有测试
-pnpm test:web-driver     # 测试 Web Driver
-pnpm test:protocol       # 测试协议解析
-pnpm test:controller     # 测试控制器
-
-# 脚本
-pnpm script:all          # 运行所有测试脚本
-pnpm client              # 运行客户端测试
+npm run test             # 运行所有测试
+npm run test:web-driver  # 测试 Web Driver
+npm run test:protocol    # 测试协议解析
+npm run test:controller  # 测试控制器
 ```
 
 ### Desktop（桌面应用）
 
 ```bash
 # 开发
-pnpm dev:desktop         # 启动桌面应用（开发模式）
-pnpm build:desktop       # 编译桌面应用
-pnpm start:desktop       # 启动桌面应用（生产模式）
+npm run dev:desktop      # 启动桌面应用（开发模式，含代理服务）
+npm run build:desktop    # 编译桌面应用
+npm run start:desktop    # 启动桌面应用（生产模式）
+npm run build:all        # 编译服务端 + 桌面端
+```
 
-# 一键构建所有
-pnpm build:all           # 编译服务端 + 桌面端
+### TUI 内置命令
+
+在 TUI 交互界面中可使用以下命令：
+
+```
+/help              显示帮助
+/model <名称>      切换模型（如 /model gpt-4o）
+/mode <web|forward> 切换路由模式
+/new               新建会话
+/sessions          列出所有会话
+/session           显示当前会话信息
+/clear             清空当前对话
+/config            查看当前配置
+/tools             查看可用工具列表
+/quit              退出
 ```
 
 ## API 端点

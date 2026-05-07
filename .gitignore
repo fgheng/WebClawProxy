@@ -8,3 +8,5 @@ dist/
 desktop/dist/
 .data/
 client-core/src/**/*.js
+# dev:tui 后台日志
+.logs/

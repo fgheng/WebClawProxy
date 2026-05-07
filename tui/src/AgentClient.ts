@@ -57,7 +57,7 @@ export class AgentClient {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
-          if (res.statusCode >= 400) {
+          if ((res.statusCode ?? 0) >= 400) {
             try {
               const err = JSON.parse(data);
               reject(new Error(err.error ?? `HTTP ${res.statusCode}`));

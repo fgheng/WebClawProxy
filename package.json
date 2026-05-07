@@ -11,7 +11,7 @@
     "start:desktop": "pnpm --filter webclaw-console run start",
     "dev": "ts-node src/controller/index.ts",
     "dev:desktop": "pnpm --filter webclaw-console run dev",
-    "dev:tui": "concurrently -k -n proxy,agent,tui -c blue,green,magenta \"npm:dev:tui:proxy\" \"npm:dev:tui:agent\" \"npm:dev:tui:client\"",
+    "dev:tui": "bash scripts/dev-tui.sh",
     "dev:tui:proxy": "ts-node src/controller/index.ts",
     "dev:tui:agent": "wait-on tcp:3000 && cross-env WEBCLAW_AGENT_PORT=8100 WEBCLAW_PROXY_URL=http://localhost:3000 ts-node client-core/src/server/index.ts",
     "dev:tui:client": "wait-on tcp:8100 && ts-node tui/src/index.ts -- --agent-url http://localhost:8100",

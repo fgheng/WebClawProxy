@@ -7,6 +7,16 @@ import {
   formatAssistantContent,
 } from './utils/display';
 
+/** 安全清除当前行（非 TTY 环境下降级为换行） */
+function clearCurrentLine(): void {
+  if (process.stdout.clearLine) {
+    process.stdout.clearLine(0);
+    process.stdout.cursorTo(0);
+  } else {
+    process.stdout.write('\n');
+  }
+}
+
 /**
  * 交互式 CLI 界面（服务模式）
  *
@@ -23,10 +33,10 @@ export class ChatCLI {
   private currentModel: string;
   private currentMode: 'web' | 'forward';
 
-  constructor(options: { agentUrl: string; model?: string; mode?: string }) {
+  constructor(options: { agentUrl: string; model?: string; mode?: 'web' | 'forward' }) {
     this.client = new AgentClient({ agentUrl: options.agentUrl });
     this.currentModel = options.model ?? 'gpt-4o';
-    this.currentMode = options.mode ?? 'web';
+    this.currentMode = options.mode ?? 'web' as 'web' | 'forward';
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -49,11 +59,10 @@ export class ChatCLI {
     this.client.setEventCallback((event) => {
       if (event.type === 'tool_executing' && event.data.toolName) {
         const name = String(event.data.toolName);
-        process.stdout.write(colorize(`  执行工具: ${name}...`, 'gray') + '\r');
+        this.updateSpinnerMsg(`执行工具: ${name}...`);
       }
       if (event.type === 'tool_loop_end') {
-        process.stdout.clearLine(0);
-        process.stdout.cursorTo(0);
+        this.updateSpinnerMsg('正在等待 Agent Service 响应...');
       }
     });
     this.client.connectWebSocket();
@@ -77,8 +86,7 @@ export class ChatCLI {
 
     process.stdout.write(colorize('  正在连接 Agent Service...', 'gray'));
     const alive = await this.client.healthCheck();
-    process.stdout.clearLine(0);
-    process.stdout.cursorTo(0);
+    clearCurrentLine();
 
     if (alive) {
       console.log(colorize('  ✓ Agent Service 已连接', 'green'));
@@ -100,14 +108,20 @@ export class ChatCLI {
     printSeparator('─', 'gray');
   }
 
+  private spinnerMsg = '';
+
+  updateSpinnerMsg(msg: string): void {
+    this.spinnerMsg = msg;
+  }
+
   private startSpinner(msg: string): void {
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let i = 0;
+    this.spinnerMsg = msg;
     process.stdout.write('\n');
     this.spinnerInterval = setInterval(() => {
-      process.stdout.clearLine(0);
-      process.stdout.cursorTo(0);
-      process.stdout.write(colorize(`  ${frames[i % frames.length]} `, 'cyan') + colorize(msg, 'gray'));
+      clearCurrentLine();
+      process.stdout.write(colorize(`  ${frames[i % frames.length]} `, 'cyan') + colorize(this.spinnerMsg, 'gray'));
       i++;
     }, 80);
   }
@@ -116,8 +130,7 @@ export class ChatCLI {
     if (this.spinnerInterval) {
       clearInterval(this.spinnerInterval);
       this.spinnerInterval = null;
-      process.stdout.clearLine(0);
-      process.stdout.cursorTo(0);
+      clearCurrentLine();
     }
   }
 

@@ -63,7 +63,8 @@ function getArg(flag: string): string | undefined {
 
 const agentUrl = getArg('--agent-url') ?? `http://localhost:${DEFAULT_AGENT_PORT}`;
 const model = getArg('--model') ?? 'gpt-4o';
-const mode = getArg('--mode') ?? 'web';
+const modeRaw = getArg('--mode');
+const mode: 'web' | 'forward' = modeRaw === 'forward' ? 'forward' : 'web';
 
 const cli = new ChatCLI({ agentUrl, model, mode });
 cli.start().catch((err) => {
