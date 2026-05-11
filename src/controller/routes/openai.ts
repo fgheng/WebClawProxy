@@ -929,6 +929,17 @@ function tryDirectContentExtraction(text: string): { content: string; tool_calls
     if (fromStripped) return fromStripped;
   }
 
+  // 从噪声文本中提取平衡 JSON 块（跳过前后噪声字符）
+  // 优先找最大的包含 message 字段的块
+  const balancedBlocks = extractBalancedJsonLikeBlocks(text);
+  // 按长度降序排列（优先尝试最大的块，因为大的块更可能是完整 choice 而非 tool_call 子块）
+  const sortedBlocks = balancedBlocks.sort((a, b) => b.length - a.length);
+  for (const block of sortedBlocks) {
+    const result = tryParse(block.trim());
+    // 只接受包含 message 字段的解析结果（排除 tool_call 子块等误判）
+    if (result) return result;
+  }
+
   return null;
 }
 
