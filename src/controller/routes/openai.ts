@@ -1498,11 +1498,35 @@ export async function chatCompletionsHandler(
     let parsedJson = extractJson(responseContent);
     let upstreamError = detectUpstreamServiceError(responseContent);
 
+    // 快速兜底：如果 extractJson 失败但原始文本是标准 OpenAI JSON（只是被噪声干扰），
+    // 直接提取 content，避免不必要的重试
+    let directContentFallback: string | null = null;
+    if (!parsedJson && !upstreamError) {
+      directContentFallback = tryDirectContentExtraction(responseContent);
+      if (directContentFallback) {
+        // 构造等效的 parsedJson：将提取出的 content 包装成标准 completion choice 格式
+        parsedJson = JSON.stringify({
+          index: 0,
+          message: { role: 'assistant', content: directContentFallback },
+          finish_reason: 'stop',
+        });
+
+        logRequestTrace(traceId, 'step7_direct_content_fallback', {
+          reason: 'extractJson failed but tryDirectContentExtraction succeeded',
+          original_content_length: responseContent.length,
+          original_content_first_200: responseContent.slice(0, 200),
+          extracted_content_length: directContentFallback.length,
+          extracted_content_preview: directContentFallback.slice(0, 200),
+        });
+      }
+    }
+
     logRequestTrace(traceId, 'step7_json_extract_initial', {
       content_length: responseContent.length,
       content_first_500: responseContent.slice(0, 500),
       parsed_json: Boolean(parsedJson),
       parsed_json_preview: parsedJson ? parsedJson.slice(0, 300) : null,
+      direct_fallback_used: Boolean(directContentFallback),
       upstream_error: Boolean(upstreamError),
       upstream_error_detail: upstreamError ? { status: upstreamError.status, message: upstreamError.message } : null,
     });
