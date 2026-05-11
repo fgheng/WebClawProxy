@@ -876,6 +876,35 @@ function extractJson(content: string): string | null {
 }
 
 
+/**
+ * 兜底提取：当 extractJson() 和 normalizeJsonLike() 都失败时，
+ * 直接对原始文本做 JSON.parse，尝试提取 choices[0].message.content。
+ * 这处理了浏览器页面返回标准 OpenAI JSON 但被噪声干扰导致 extractJson 失败的情况。
+ */
+function tryDirectContentExtraction(text: string): string | null {
+  // 先尝试直接解析
+  try {
+    const obj = JSON.parse(text.trim());
+    const content = obj?.choices?.[0]?.message?.content;
+    if (typeof content === 'string') return content;
+  } catch {}
+
+  // 尝试去掉可能的代码块标记再解析
+  const stripped = text.trim()
+    .replace(/^```(?:json|javascript|js)?\s*\n?/i, '')
+    .replace(/\n?```\s*$/i, '')
+    .trim();
+  if (stripped !== text.trim()) {
+    try {
+      const obj = JSON.parse(stripped);
+      const content = obj?.choices?.[0]?.message?.content;
+      if (typeof content === 'string') return content;
+    } catch {}
+  }
+
+  return null;
+}
+
 interface UpstreamServiceError {
   status: number;
   type: string;
@@ -1556,23 +1585,31 @@ export async function chatCompletionsHandler(
             finish_reason: parsedChoiceObj.finish_reason,
           };
         } else {
+          // parsedChoiceObj 没有 message 对象，尝试兜底提取
+          const fallbackContent = tryDirectContentExtraction(responseContent);
           persistAssistantCurrent({
             role: 'assistant',
-            content: responseContent,
+            content: fallbackContent ?? responseContent,
           });
+          messagePayload = { content: fallbackContent ?? responseContent };
         }
       } catch {
-        // JSON 解析失败，回退到纯文本包装
+        // JSON 解析失败，尝试兜底提取
+        const fallbackContent = tryDirectContentExtraction(responseContent);
         persistAssistantCurrent({
           role: 'assistant',
-          content: responseContent,
+          content: fallbackContent ?? responseContent,
         });
+        messagePayload = { content: fallbackContent ?? responseContent };
       }
     } else {
+      // extractJson 返回 null，尝试兜底提取
+      const fallbackContent = tryDirectContentExtraction(responseContent);
       persistAssistantCurrent({
         role: 'assistant',
-        content: responseContent,
+        content: fallbackContent ?? responseContent,
       });
+      messagePayload = { content: fallbackContent ?? responseContent };
     }
 
     await dm.save_data();
