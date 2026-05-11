@@ -1011,6 +1011,79 @@ th {
   line-height: 1.55;
 }
 
+/* ===== 工具调用摘要区域 ===== */
+.tool-call-area {
+  margin-top: 6px;
+  border-top: 1px solid rgba(71, 85, 105, 0.2);
+}
+
+.tool-call-toggle {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 4px;
+  background: rgba(30, 41, 59, 0.4);
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.tool-call-toggle:hover {
+  background: rgba(71, 85, 105, 0.4);
+  color: #94a3b8;
+}
+
+.tool-call-list {
+  margin-top: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 11px;
+  color: #94a3b8;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+}
+
+.tool-call-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.tool-call-list::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 2px;
+}
+
+.tool-call-item {
+  padding: 2px 0;
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.tool-call-name {
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.tool-call-args {
+  color: #64748b;
+  word-break: break-all;
+}
+
+/* ===== Light theme 工具调用样式 ===== */
+.chat-bubble.webclaw.muted.light .tool-call-toggle {
+  background: rgba(148, 163, 184, 0.1);
+  color: #64748b;
+}
+
+.chat-bubble.webclaw.muted.light .tool-call-name {
+  color: #334155;
+}
+
+.chat-bubble.webclaw.muted.light .tool-call-args {
+  color: #94a3b8;
+}
+
 .webclaw-inputbar {
   display: grid;
   grid-template-columns: 1fr auto;

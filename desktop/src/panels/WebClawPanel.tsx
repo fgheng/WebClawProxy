@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentClient } from '../lib/AgentClient';
 import type { AgentChatResponse, AgentEvent } from '../lib/AgentClient';
 
+/** 工具参数最大显示字符数 */
+const MAX_TOOL_ARGS_DISPLAY = 80;
+
 type FeedItem = {
   id: string;
   role: 'user' | 'webclaw' | 'tool';
@@ -9,7 +12,23 @@ type FeedItem = {
   tone?: 'normal' | 'error' | 'muted';
   /** 工具名称（仅 tool role 时有值） */
   toolName?: string;
+  /** 工具调用摘要列表（用于可折叠展示） */
+  toolCallSummaries?: { name: string; argsPreview: string }[];
+  /** 是否展开工具详情 */
+  toolExpanded?: boolean;
 };
+
+/** 将 tool_call 的 arguments 截断为可读预览 */
+function truncateToolArgs(argsRaw: string, maxLen: number): string {
+  if (!argsRaw) return '';
+  try {
+    const obj = JSON.parse(argsRaw);
+    const preview = JSON.stringify(obj);
+    return preview.length > maxLen ? preview.slice(0, maxLen) + '...' : preview;
+  } catch {
+    return argsRaw.length > maxLen ? argsRaw.slice(0, maxLen) + '...' : argsRaw;
+  }
+}
 
 type WebClawPanelProps = {
   agentUrl: string;
@@ -35,13 +54,19 @@ function buildFeedFromEventHistory(messages: any[]): FeedItem[] {
     }
     if (msg.role === 'assistant') {
       const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
-      const toolSummary = toolCalls.length > 0
-        ? toolCalls.map((tc: any) => `🔧 ${tc?.function?.name ?? 'unknown'}(${(tc?.function?.arguments ?? '').slice(0, 60)}...)`).join('\n')
-        : '';
-      const displayContent = toolSummary
-        ? (msg.content ? `${msg.content}\n${toolSummary}` : toolSummary)
-        : (msg.content ?? '');
-      items.push({ id: `history-${i}-assistant`, role: 'webclaw', content: displayContent, tone: toolSummary ? 'muted' : 'normal' });
+      const toolCallSummaries = toolCalls.map((tc: any) => ({
+        name: tc?.function?.name ?? 'unknown',
+        argsPreview: truncateToolArgs(tc?.function?.arguments ?? '', MAX_TOOL_ARGS_DISPLAY),
+      }));
+      const content = msg.content ?? '';
+      items.push({
+        id: `history-${i}-assistant`,
+        role: 'webclaw',
+        content,
+        tone: toolCalls.length > 0 ? 'muted' : 'normal',
+        toolCallSummaries: toolCallSummaries.length > 0 ? toolCallSummaries : undefined,
+        toolExpanded: false,
+      });
       continue;
     }
     if (msg.role === 'tool') {
@@ -126,10 +151,23 @@ export function WebClawPanel(props: WebClawPanelProps) {
       }
       if (event.type === 'tool_executing' && event.data.toolName) {
         const name = String(event.data.toolName);
+        const args = event.data.toolArgs;
+        // 将参数转为截断预览
+        let argsPreview = '';
+        if (args && typeof args === 'object') {
+          const serialized = JSON.stringify(args);
+          argsPreview = serialized.length > MAX_TOOL_ARGS_DISPLAY
+            ? serialized.slice(0, MAX_TOOL_ARGS_DISPLAY) + '...'
+            : serialized;
+        }
+        const displayText = argsPreview
+          ? `执行工具: ${name}(${argsPreview})`
+          : `执行工具: ${name}`;
+
         setFeed((prev) => {
-          // 移除之前的 tool-loop 提示，替换为具体工具名
-          const cleaned = prev.filter((item) => !item.id.startsWith('tool-loop-'));
-          return [...cleaned, { id: `tool-${Date.now()}`, role: 'webclaw', content: `执行工具: ${name}...`, tone: 'muted' }];
+          // 移除之前的 tool-loop 提示，替换为具体工具名+参数
+          const cleaned = prev.filter((item) => !item.id.startsWith('tool-loop-') && !item.id.startsWith('tool-'));
+          return [...cleaned, { id: `tool-${Date.now()}`, role: 'webclaw', content: displayText, tone: 'muted' }];
         });
       }
       if (event.type === 'tool_loop_end') {
@@ -157,14 +195,9 @@ export function WebClawPanel(props: WebClawPanelProps) {
       if (valid) {
         const history = await client.getSessionHistory();
         if (history.length > 0) {
-          const historyItems = history
-            .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-            .map((m: any, i: number): FeedItem => ({
-              id: `history-${i}-${Date.now()}`,
-              role: m.role === 'assistant' ? 'webclaw' as const : 'user' as const,
-              content: m.content ?? '',
-              tone: 'normal' as const,
-            }));
+          const historyItems = buildFeedFromEventHistory(
+            history.filter((m: any) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
+          );
           setFeed((prev) => [
             ...historyItems,
             ...prev,
@@ -204,6 +237,13 @@ export function WebClawPanel(props: WebClawPanelProps) {
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });
   }, [feed]);
+
+  /** 切换工具调用区域的展开/折叠 */
+  function toggleToolExpanded(itemId: string) {
+    setFeed((prev) => prev.map((item) =>
+      item.id === itemId ? { ...item, toolExpanded: !item.toolExpanded } : item
+    ));
+  }
 
   async function handleSubmit() {
     const client = clientRef.current;
@@ -311,18 +351,24 @@ export function WebClawPanel(props: WebClawPanelProps) {
   function applyResultToFeed(result: AgentChatResponse, pendingId?: string) {
     if (result.kind === 'chat') {
       const toolCalls = Array.isArray(result.toolCalls) ? result.toolCalls : [];
-      const toolSummary = toolCalls.length > 0
-        ? toolCalls.map((tc: any) => `🔧 ${tc?.function?.name ?? 'unknown'}(${(tc?.function?.arguments ?? '').slice(0, 60)}...)`).join('\n')
-        : '';
-      const displayContent = toolSummary
-        ? (result.content ? `${toolSummary}\n${result.content}` : toolSummary)
-        : (result.content || '（空响应）');
+      const toolCallSummaries = toolCalls.map((tc: any) => ({
+        name: tc?.function?.name ?? 'unknown',
+        argsPreview: truncateToolArgs(tc?.function?.arguments ?? '', MAX_TOOL_ARGS_DISPLAY),
+      }));
+      const content = result.content || '（空响应）';
 
-      setFeed((prev) => prev.map((item) => (
+      setFeed((prev) => prev.map((item) =>
         item.id === pendingId
-          ? { ...item, id: `assistant-${Date.now()}-${result.model}`, content: displayContent, tone: toolSummary ? 'muted' : 'normal' }
+          ? {
+            ...item,
+            id: `assistant-${Date.now()}-${result.model}`,
+            content,
+            tone: toolCalls.length > 0 ? 'muted' : 'normal',
+            toolCallSummaries: toolCallSummaries.length > 0 ? toolCallSummaries : undefined,
+            toolExpanded: false,
+          }
           : item
-      )));
+      ));
       return;
     }
 
@@ -349,7 +395,35 @@ export function WebClawPanel(props: WebClawPanelProps) {
         {feed.map((item) => (
           <div key={item.id} className={`chat-row ${item.role}`}>
             <div className={`chat-bubble ${item.role} ${item.tone ?? 'normal'}`}>
-              <div className="chat-content">{item.content}</div>
+              {/* content 部分 */}
+              {item.content && (
+                <div className="chat-content">{item.content}</div>
+              )}
+
+              {/* 工具调用摘要区域：可折叠 */}
+              {item.toolCallSummaries && item.toolCallSummaries.length > 0 && (
+                <div className="tool-call-area">
+                  <div
+                    className="tool-call-toggle"
+                    onClick={() => toggleToolExpanded(item.id)}
+                  >
+                    🔧 {item.toolCallSummaries.length} 个工具调用
+                    {item.toolExpanded ? ' ▼' : ' ▸'}
+                  </div>
+                  {item.toolExpanded && (
+                    <div className="tool-call-list">
+                      {item.toolCallSummaries.map((tc, idx) => (
+                        <div key={idx} className="tool-call-item">
+                          <span className="tool-call-name">{tc.name}</span>
+                          {tc.argsPreview && (
+                            <span className="tool-call-args">{tc.argsPreview}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}
