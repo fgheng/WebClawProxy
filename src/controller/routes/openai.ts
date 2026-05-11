@@ -1497,12 +1497,16 @@ export async function chatCompletionsHandler(
     let responseContent = chatResult.content;
     let parsedJson = extractJson(responseContent);
     let upstreamError = detectUpstreamServiceError(responseContent);
-    logRequestTrace(traceId, 'json_extract_initial', {
+
+    logRequestTrace(traceId, 'step7_json_extract_initial', {
       content_length: responseContent.length,
+      content_first_500: responseContent.slice(0, 500),
       parsed_json: Boolean(parsedJson),
+      parsed_json_preview: parsedJson ? parsedJson.slice(0, 300) : null,
       upstream_error: Boolean(upstreamError),
-      content_preview: buildContentPreview(responseContent),
+      upstream_error_detail: upstreamError ? { status: upstreamError.status, message: upstreamError.message } : null,
     });
+
     const maxRetries = 2;
     let retryCount = 0;
 
@@ -1522,13 +1526,15 @@ export async function chatCompletionsHandler(
         responseContent = retryResult.content;
         parsedJson = extractJson(responseContent);
         upstreamError = detectUpstreamServiceError(responseContent);
-        logRequestTrace(traceId, 'json_extract_retry', {
+
+        logRequestTrace(traceId, 'step7_json_extract_retry', {
           retry_index: retryCount + 1,
           prompt_mode: 'format_only',
           content_length: responseContent.length,
+          content_first_500: responseContent.slice(0, 500),
           parsed_json: Boolean(parsedJson),
+          parsed_json_preview: parsedJson ? parsedJson.slice(0, 300) : null,
           upstream_error: Boolean(upstreamError),
-          content_preview: buildContentPreview(responseContent),
         });
       } catch (err) {
         if (handleDispatchError(err)) {
@@ -1540,10 +1546,10 @@ export async function chatCompletionsHandler(
     }
 
     if (!parsedJson && !upstreamError) {
-      logRequestTrace(traceId, 'json_extract_fallback_plain_text', {
+      logRequestTrace(traceId, 'step7_fallback_plain_text', {
         retries: retryCount,
         content_length: responseContent.length,
-        content_preview: buildContentPreview(responseContent),
+        content_first_500: responseContent.slice(0, 500),
       });
     }
 
@@ -1577,25 +1583,69 @@ export async function chatCompletionsHandler(
         const jsonResponse = JSON.parse(parsedJson) as any;
         parsedChoiceObj = jsonResponse?.choices?.[0] ?? jsonResponse;
 
+        logRequestTrace(traceId, 'step8_parsedJson_success', {
+          json_keys: Object.keys(jsonResponse),
+          has_choices: Boolean(jsonResponse?.choices),
+          choices_count: jsonResponse?.choices?.length ?? 0,
+          parsed_choice_keys: parsedChoiceObj ? Object.keys(parsedChoiceObj) : [],
+          has_message: Boolean(parsedChoiceObj?.message),
+          message_content_type: typeof parsedChoiceObj?.message?.content,
+          message_content_length: typeof parsedChoiceObj?.message?.content === 'string' ? parsedChoiceObj.message.content.length : null,
+          message_content_preview: typeof parsedChoiceObj?.message?.content === 'string' ? parsedChoiceObj.message.content.slice(0, 200) : null,
+          has_tool_calls: Boolean(parsedChoiceObj?.message?.tool_calls),
+          finish_reason: parsedChoiceObj?.finish_reason,
+        });
+
         if (parsedChoiceObj?.message && typeof parsedChoiceObj.message === 'object') {
+          // 正常路径：标准 OpenAI 格式，成功提取 content
           persistAssistantCurrent(parsedChoiceObj.message);
           messagePayload = {
             content: parsedChoiceObj.message.content ?? responseContent,
             tool_calls: parsedChoiceObj.message.tool_calls,
             finish_reason: parsedChoiceObj.finish_reason,
           };
+
+          logRequestTrace(traceId, 'step8_normal_extract', {
+            extract_path: 'parsedChoiceObj.message.content',
+            content_length: typeof messagePayload.content === 'string' ? messagePayload.content.length : null,
+            content_preview: typeof messagePayload.content === 'string' ? messagePayload.content.slice(0, 200) : null,
+            has_tool_calls: Boolean(messagePayload.tool_calls?.length),
+          });
         } else {
           // parsedChoiceObj 没有 message 对象，尝试兜底提取
           const fallbackContent = tryDirectContentExtraction(responseContent);
+
+          logRequestTrace(traceId, 'step8_no_message_fallback', {
+            reason: 'parsedChoiceObj has no message object',
+            parsed_choice_preview: JSON.stringify(parsedChoiceObj).slice(0, 300),
+            fallback_extract_success: Boolean(fallbackContent),
+            fallback_content_length: fallbackContent?.length ?? null,
+            fallback_content_preview: fallbackContent ? fallbackContent.slice(0, 200) : null,
+            raw_response_length: responseContent.length,
+            raw_response_preview: responseContent.slice(0, 300),
+          });
+
           persistAssistantCurrent({
             role: 'assistant',
             content: fallbackContent ?? responseContent,
           });
           messagePayload = { content: fallbackContent ?? responseContent };
         }
-      } catch {
-        // JSON 解析失败，尝试兜底提取
+      } catch (parseError) {
+        // parsedJson 被 JSON.parse 成功提取但二次解析失败
         const fallbackContent = tryDirectContentExtraction(responseContent);
+
+        logRequestTrace(traceId, 'step8_json_parse_error', {
+          error_message: parseError instanceof Error ? parseError.message : String(parseError),
+          parsed_json_length: parsedJson.length,
+          parsed_json_preview: parsedJson.slice(0, 300),
+          fallback_extract_success: Boolean(fallbackContent),
+          fallback_content_length: fallbackContent?.length ?? null,
+          fallback_content_preview: fallbackContent ? fallbackContent.slice(0, 200) : null,
+          raw_response_length: responseContent.length,
+          raw_response_preview: responseContent.slice(0, 300),
+        });
+
         persistAssistantCurrent({
           role: 'assistant',
           content: fallbackContent ?? responseContent,
@@ -1605,6 +1655,16 @@ export async function chatCompletionsHandler(
     } else {
       // extractJson 返回 null，尝试兜底提取
       const fallbackContent = tryDirectContentExtraction(responseContent);
+
+      logRequestTrace(traceId, 'step8_extractJson_null_fallback', {
+        reason: 'extractJson returned null',
+        fallback_extract_success: Boolean(fallbackContent),
+        fallback_content_length: fallbackContent?.length ?? null,
+        fallback_content_preview: fallbackContent ? fallbackContent.slice(0, 200) : null,
+        raw_response_length: responseContent.length,
+        raw_response_preview: responseContent.slice(0, 500),
+      });
+
       persistAssistantCurrent({
         role: 'assistant',
         content: fallbackContent ?? responseContent,
