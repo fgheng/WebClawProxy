@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadAppConfig } from '../config/app-config';
+import { WebclawPaths } from '../config/webclaw-home';
 
 interface LoggingConfig {
   enabled: boolean;
@@ -29,7 +30,7 @@ function loadLoggingConfig(): LoggingConfig {
     return {
       enabled: logging.enabled !== false,
       debug: Boolean(logging.debug),
-      dir: typeof logging.dir === 'string' && logging.dir.trim() ? logging.dir : './data/logs',
+      dir: typeof logging.dir === 'string' && logging.dir.trim() ? logging.dir : WebclawPaths.logsDir,
       file_prefix:
         typeof logging.file_prefix === 'string' && logging.file_prefix.trim()
           ? logging.file_prefix
@@ -49,7 +50,7 @@ function loadLoggingConfig(): LoggingConfig {
     return {
       enabled: true,
       debug: false,
-      dir: './data/logs',
+      dir: WebclawPaths.logsDir,
       file_prefix: 'webclaw-proxy',
       pretty_json: false,
       pretty_json_indent: 2,
@@ -92,7 +93,7 @@ export function initServiceLogger(): void {
   requestBodyMaxChars = cfg.request_body_max_chars;
   if (!cfg.enabled) return;
 
-  const dir = path.isAbsolute(cfg.dir) ? cfg.dir : path.join(process.cwd(), cfg.dir);
+  const dir = cfg.dir;
   fs.mkdirSync(dir, { recursive: true });
   const date = new Date().toISOString().slice(0, 10);
   const filePath = path.join(dir, `${cfg.file_prefix}-${date}.log`);

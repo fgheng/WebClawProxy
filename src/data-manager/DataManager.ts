@@ -14,6 +14,7 @@ import { buildSystemPrompt,
 import { stringifyLogPayload } from '../controller/logger';
 import type {} from './utils/prompt';
 import { clearAppConfigCache, loadAppConfig } from '../config/app-config';
+import { WebclawPaths } from '../config/webclaw-home';
 
 interface SessionIndexEntry {
   /** 当前会话最新 hash（每会话仅保留一个可命中 hash） */
@@ -95,7 +96,7 @@ export class DataManager {
     this.current = this.normalizeCurrentList(request.current);
 
     this.config = {
-      rootDir: customConfig?.rootDir ?? config.data?.root_dir ?? './data',
+      rootDir: customConfig?.rootDir ?? WebclawPaths.dataDir,
       models: customConfig?.models ?? getModelMapFromConfig(config),
       initPrompt:
         customConfig?.initPrompt ??

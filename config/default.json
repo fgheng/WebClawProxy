@@ -1,7 +1,4 @@
 {
-  "data": {
-    "root_dir": ".data"
-  },
   "providers": {
     "deepseek": {
       "default_mode": "forward",
@@ -162,7 +159,7 @@
   "logging": {
     "enabled": true,
     "debug": true,
-    "dir": ".data/logs",
+    "dir": "",
     "file_prefix": "webclaw-proxy",
     "pretty_json": false,
     "pretty_json_indent": 4,
