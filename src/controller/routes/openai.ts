@@ -877,29 +877,56 @@ function extractJson(content: string): string | null {
 
 
 /**
- * 兜底提取：当 extractJson() 和 normalizeJsonLike() 都失败时，
- * 直接对原始文本做 JSON.parse，尝试提取 choices[0].message.content。
- * 这处理了浏览器页面返回标准 OpenAI JSON 但被噪声干扰导致 extractJson 失败的情况。
+ * 兜底提取：当 extractJson() 返回了错误子块（如 tool_call 而非完整 choice）时，
+ * 直接对原始文本做 JSON.parse，提取 message.content + message.tool_calls。
+ * 支持三种格式：
+ * 1. 标准 OpenAI completion: {"choices":[{"message":{"content":"...","tool_calls":[...]}}]}
+ * 2. 无 choices 包裹的 choice: {"index":0,"message":{"content":"...","tool_calls":[...]}}
+ * 3. 被代码块标记包裹的上述格式
  */
-function tryDirectContentExtraction(text: string): string | null {
-  // 先尝试直接解析
-  try {
-    const obj = JSON.parse(text.trim());
-    const content = obj?.choices?.[0]?.message?.content;
-    if (typeof content === 'string') return content;
-  } catch {}
+function tryDirectContentExtraction(text: string): { content: string; tool_calls?: any[]; finish_reason?: string } | null {
+  const tryParse = (raw: string): { content: string; tool_calls?: any[]; finish_reason?: string } | null => {
+    try {
+      const obj = JSON.parse(raw);
 
-  // 尝试去掉可能的代码块标记再解析
+      // 格式1: 标准 completion 有 choices 数组
+      const choice1 = obj?.choices?.[0]?.message;
+      if (choice1 && typeof choice1 === 'object') {
+        return {
+          content: typeof choice1.content === 'string' ? choice1.content : '',
+          tool_calls: Array.isArray(choice1.tool_calls) ? choice1.tool_calls : undefined,
+          finish_reason: obj?.choices?.[0]?.finish_reason ?? choice1.finish_reason ?? 'stop',
+        };
+      }
+
+      // 格式2: 无 choices 包裹，顶层直接是 choice-like（有 message 字段）
+      const choice2 = obj?.message;
+      if (choice2 && typeof choice2 === 'object' && !Array.isArray(choice2)) {
+        return {
+          content: typeof choice2.content === 'string' ? choice2.content : '',
+          tool_calls: Array.isArray(choice2.tool_calls) ? choice2.tool_calls : undefined,
+          finish_reason: obj?.finish_reason ?? (Array.isArray(choice2.tool_calls) ? 'tool_calls' : 'stop'),
+        };
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  // 先尝试直接解析
+  const direct = tryParse(text.trim());
+  if (direct) return direct;
+
+  // 尝试去掉代码块标记再解析
   const stripped = text.trim()
     .replace(/^```(?:json|javascript|js)?\s*\n?/i, '')
     .replace(/\n?```\s*$/i, '')
     .trim();
   if (stripped !== text.trim()) {
-    try {
-      const obj = JSON.parse(stripped);
-      const content = obj?.choices?.[0]?.message?.content;
-      if (typeof content === 'string') return content;
-    } catch {}
+    const fromStripped = tryParse(stripped);
+    if (fromStripped) return fromStripped;
   }
 
   return null;
@@ -1499,24 +1526,31 @@ export async function chatCompletionsHandler(
     let upstreamError = detectUpstreamServiceError(responseContent);
 
     // 快速兜底：如果 extractJson 失败但原始文本是标准 OpenAI JSON（只是被噪声干扰），
-    // 直接提取 content，避免不必要的重试
-    let directContentFallback: string | null = null;
+    // 直接提取 content + tool_calls，避免不必要的重试
+    let directContentFallback: { content: string; tool_calls?: any[]; finish_reason?: string } | null = null;
     if (!parsedJson && !upstreamError) {
       directContentFallback = tryDirectContentExtraction(responseContent);
       if (directContentFallback) {
-        // 构造等效的 parsedJson：将提取出的 content 包装成标准 completion choice 格式
+        // 构造等效的 parsedJson：将提取出的 content/tool_calls 包装成标准 completion choice 格式
         parsedJson = JSON.stringify({
           index: 0,
-          message: { role: 'assistant', content: directContentFallback },
-          finish_reason: 'stop',
+          message: {
+            role: 'assistant',
+            content: directContentFallback.content,
+            tool_calls: directContentFallback.tool_calls,
+          },
+          finish_reason: directContentFallback.finish_reason ?? (directContentFallback.tool_calls?.length ? 'tool_calls' : 'stop'),
         });
 
         logRequestTrace(traceId, 'step7_direct_content_fallback', {
           reason: 'extractJson failed but tryDirectContentExtraction succeeded',
           original_content_length: responseContent.length,
           original_content_first_200: responseContent.slice(0, 200),
-          extracted_content_length: directContentFallback.length,
-          extracted_content_preview: directContentFallback.slice(0, 200),
+          extracted_content_length: directContentFallback.content.length,
+          extracted_content_preview: directContentFallback.content.slice(0, 200),
+          has_tool_calls: Boolean(directContentFallback.tool_calls?.length),
+          tool_calls_count: directContentFallback.tool_calls?.length ?? 0,
+          finish_reason: directContentFallback.finish_reason,
         });
       }
     }
@@ -1637,63 +1671,106 @@ export async function chatCompletionsHandler(
           });
         } else {
           // parsedChoiceObj 没有 message 对象，尝试兜底提取
-          const fallbackContent = tryDirectContentExtraction(responseContent);
+          const fallbackResult = tryDirectContentExtraction(responseContent);
 
           logRequestTrace(traceId, 'step8_no_message_fallback', {
             reason: 'parsedChoiceObj has no message object',
             parsed_choice_preview: JSON.stringify(parsedChoiceObj).slice(0, 300),
-            fallback_extract_success: Boolean(fallbackContent),
-            fallback_content_length: fallbackContent?.length ?? null,
-            fallback_content_preview: fallbackContent ? fallbackContent.slice(0, 200) : null,
+            fallback_extract_success: Boolean(fallbackResult),
+            fallback_content_length: fallbackResult?.content?.length ?? null,
+            fallback_content_preview: fallbackResult?.content?.slice(0, 200) ?? null,
+            fallback_has_tool_calls: Boolean(fallbackResult?.tool_calls?.length),
+            fallback_tool_calls_count: fallbackResult?.tool_calls?.length ?? 0,
             raw_response_length: responseContent.length,
             raw_response_preview: responseContent.slice(0, 300),
           });
 
-          persistAssistantCurrent({
-            role: 'assistant',
-            content: fallbackContent ?? responseContent,
-          });
-          messagePayload = { content: fallbackContent ?? responseContent };
+          if (fallbackResult) {
+            persistAssistantCurrent({
+              role: 'assistant',
+              content: fallbackResult.content,
+              tool_calls: fallbackResult.tool_calls,
+            });
+            messagePayload = {
+              content: fallbackResult.content,
+              tool_calls: fallbackResult.tool_calls,
+              finish_reason: fallbackResult.finish_reason ?? (fallbackResult.tool_calls?.length ? 'tool_calls' : 'stop'),
+            };
+          } else {
+            persistAssistantCurrent({
+              role: 'assistant',
+              content: responseContent,
+            });
+            messagePayload = { content: responseContent };
+          }
         }
       } catch (parseError) {
         // parsedJson 被 JSON.parse 成功提取但二次解析失败
-        const fallbackContent = tryDirectContentExtraction(responseContent);
+        const fallbackResult = tryDirectContentExtraction(responseContent);
 
         logRequestTrace(traceId, 'step8_json_parse_error', {
           error_message: parseError instanceof Error ? parseError.message : String(parseError),
           parsed_json_length: parsedJson.length,
           parsed_json_preview: parsedJson.slice(0, 300),
-          fallback_extract_success: Boolean(fallbackContent),
-          fallback_content_length: fallbackContent?.length ?? null,
-          fallback_content_preview: fallbackContent ? fallbackContent.slice(0, 200) : null,
+          fallback_extract_success: Boolean(fallbackResult),
+          fallback_content_length: fallbackResult?.content?.length ?? null,
+          fallback_content_preview: fallbackResult?.content?.slice(0, 200) ?? null,
+          fallback_has_tool_calls: Boolean(fallbackResult?.tool_calls?.length),
           raw_response_length: responseContent.length,
           raw_response_preview: responseContent.slice(0, 300),
         });
 
-        persistAssistantCurrent({
-          role: 'assistant',
-          content: fallbackContent ?? responseContent,
-        });
-        messagePayload = { content: fallbackContent ?? responseContent };
+        if (fallbackResult) {
+          persistAssistantCurrent({
+            role: 'assistant',
+            content: fallbackResult.content,
+            tool_calls: fallbackResult.tool_calls,
+          });
+          messagePayload = {
+            content: fallbackResult.content,
+            tool_calls: fallbackResult.tool_calls,
+            finish_reason: fallbackResult.finish_reason ?? (fallbackResult.tool_calls?.length ? 'tool_calls' : 'stop'),
+          };
+        } else {
+          persistAssistantCurrent({
+            role: 'assistant',
+            content: responseContent,
+          });
+          messagePayload = { content: responseContent };
+        }
       }
     } else {
       // extractJson 返回 null，尝试兜底提取
-      const fallbackContent = tryDirectContentExtraction(responseContent);
+      const fallbackResult = tryDirectContentExtraction(responseContent);
 
       logRequestTrace(traceId, 'step8_extractJson_null_fallback', {
         reason: 'extractJson returned null',
-        fallback_extract_success: Boolean(fallbackContent),
-        fallback_content_length: fallbackContent?.length ?? null,
-        fallback_content_preview: fallbackContent ? fallbackContent.slice(0, 200) : null,
+        fallback_extract_success: Boolean(fallbackResult),
+        fallback_content_length: fallbackResult?.content?.length ?? null,
+        fallback_content_preview: fallbackResult?.content?.slice(0, 200) ?? null,
+        fallback_has_tool_calls: Boolean(fallbackResult?.tool_calls?.length),
         raw_response_length: responseContent.length,
         raw_response_preview: responseContent.slice(0, 500),
       });
 
-      persistAssistantCurrent({
-        role: 'assistant',
-        content: fallbackContent ?? responseContent,
-      });
-      messagePayload = { content: fallbackContent ?? responseContent };
+      if (fallbackResult) {
+        persistAssistantCurrent({
+          role: 'assistant',
+          content: fallbackResult.content,
+          tool_calls: fallbackResult.tool_calls,
+        });
+        messagePayload = {
+          content: fallbackResult.content,
+          tool_calls: fallbackResult.tool_calls,
+          finish_reason: fallbackResult.finish_reason ?? (fallbackResult.tool_calls?.length ? 'tool_calls' : 'stop'),
+        };
+      } else {
+        persistAssistantCurrent({
+          role: 'assistant',
+          content: responseContent,
+        });
+        messagePayload = { content: responseContent };
+      }
     }
 
     await dm.save_data();
