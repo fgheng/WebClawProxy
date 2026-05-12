@@ -144,10 +144,11 @@ export function WebClawPanel(props: WebClawPanelProps) {
         void onProviderChangeRef.current(String(event.data.provider));
       }
       if (event.type === 'tool_loop_start') {
-        setFeed((prev) => [
-          ...prev,
-          { id: `tool-loop-${Date.now()}`, role: 'webclaw', content: '开始执行工具...', tone: 'muted' },
-        ]);
+        // 清除上一轮工具的完成提示，然后显示新一轮的开始提示
+        setFeed((prev) => {
+          const cleaned = prev.filter((item) => !item.id.startsWith('tool-loop-') && !item.id.startsWith('tool-'));
+          return [...cleaned, { id: `tool-loop-${Date.now()}`, role: 'webclaw', content: '开始执行工具...', tone: 'muted' }];
+        });
       }
       if (event.type === 'tool_executing' && event.data.toolName) {
         const name = String(event.data.toolName);
@@ -171,7 +172,13 @@ export function WebClawPanel(props: WebClawPanelProps) {
         });
       }
       if (event.type === 'tool_loop_end') {
-        setFeed((prev) => prev.filter((item) => !item.id.startsWith('tool-loop-') && !item.id.startsWith('tool-')));
+        // 将正在执行的工具提示改为完成提示，而不是直接删除
+        setFeed((prev) => prev.map((item) => {
+          if (item.id.startsWith('tool-loop-') || item.id.startsWith('tool-')) {
+            return { ...item, content: '✓ 工具执行完毕', tone: 'muted' };
+          }
+          return item;
+        }));
       }
     });
 
