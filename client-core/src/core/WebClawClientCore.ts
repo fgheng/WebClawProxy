@@ -355,6 +355,9 @@ export class WebClawClientCore {
     // 首次 response 已经有 assistant(tool_calls) 在 history 里了
     let currentToolCalls = initialResponse.tool_calls;
 
+    // 通知前端：工具循环开始
+    this.hostActions?.onEvent?.({ type: 'tool-loop-start' });
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       // 执行每个 tool_call
       for (const tc of currentToolCalls) {
@@ -423,6 +426,7 @@ export class WebClawClientCore {
 
       // 如果没有更多 tool_calls，循环结束
       if (nextResponse.tool_calls.length === 0) {
+        this.hostActions?.onEvent?.({ type: 'tool-loop-end' });
         return nextResponse;
       }
 
@@ -431,6 +435,7 @@ export class WebClawClientCore {
     }
 
     // 达到最大轮次，返回最后一条响应
+    this.hostActions?.onEvent?.({ type: 'tool-loop-end' });
     return {
       content: initialResponse.content,
       tool_calls: [],
