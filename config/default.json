@@ -129,7 +129,6 @@
     }
   },
   "prompt": {
-    "system": "",
     "init_prompt": "All subsequent replies should strictly follow JSON formatting. The agreed rules are as follows:\n\n[[output_rules.md]]\n\n[[output_template.json]]\n",
     "init_prompt_template": "{{init_prompt}}\n\n{{system_prompt}}\n\n{{tools_prompt}}\n\n{{history_prompt}}\n\nOnly reply “Received” in the required JSON format for this message.",
     "user_message_template": "{{content}}\n\nRespond in the required JSON format.",

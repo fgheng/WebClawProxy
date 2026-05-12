@@ -97,38 +97,43 @@ function readPromptConfigFromFile(): {
   response_schema_template: string;
   format_only_retry_template: string;
 } {
+  // 从 default.json 读取 Proxy 服务端的 5 个 prompt 字段
+  let proxyPrompt: Record<string, any> = {};
   try {
     const configPath = WebclawPaths.mainConfig;
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
-    const source = (raw.prompt ?? raw.defaults ?? {}) as Record<string, any>;
-    // 如果 system 为空字符串，尝试从 system.md 文件读取
-    let systemPrompt = typeof source.system === 'string' ? source.system : '';
-    if (!systemPrompt) {
-      const systemMdPath = path.join(WebclawPaths.promptsDir, 'system.md');
-      try {
-        if (fs.existsSync(systemMdPath)) {
-          systemPrompt = fs.readFileSync(systemMdPath, 'utf-8').trim();
-        }
-      } catch { /* ignore */ }
+    proxyPrompt = (raw.prompt ?? raw.defaults ?? {}) as Record<string, any>;
+  } catch { /* ignore */ }
+
+  // 从 client-core.json 读取客户端的 system_prompt
+  let systemPrompt = '';
+  try {
+    const clientCorePath = WebclawPaths.clientCoreConfig;
+    if (fs.existsSync(clientCorePath)) {
+      const raw = JSON.parse(fs.readFileSync(clientCorePath, 'utf-8')) as Record<string, any>;
+      if (raw.prompt && typeof raw.prompt.system === 'string') {
+        systemPrompt = raw.prompt.system;
+      }
     }
-    return {
-      system_prompt: systemPrompt,
-      init_prompt: typeof source.init_prompt === 'string' ? source.init_prompt : '',
-      init_prompt_template: typeof source.init_prompt_template === 'string' ? source.init_prompt_template : '',
-      user_message_template: typeof source.user_message_template === 'string' ? source.user_message_template : '',
-      response_schema_template: typeof source.response_schema_template === 'string' ? source.response_schema_template : '',
-      format_only_retry_template: typeof source.format_only_retry_template === 'string' ? source.format_only_retry_template : '',
-    };
-  } catch {
-    return {
-      system_prompt: '',
-      init_prompt: '',
-      init_prompt_template: '',
-      user_message_template: '',
-      response_schema_template: '',
-      format_only_retry_template: '',
-    };
+  } catch { /* ignore */ }
+  // 如果 client-core.json 中没有配置 system，从 system.md 读取默认值
+  if (!systemPrompt) {
+    const systemMdPath = path.join(WebclawPaths.promptsDir, 'system.md');
+    try {
+      if (fs.existsSync(systemMdPath)) {
+        systemPrompt = fs.readFileSync(systemMdPath, 'utf-8').trim();
+      }
+    } catch { /* ignore */ }
   }
+
+  return {
+    system_prompt: systemPrompt,
+    init_prompt: typeof proxyPrompt.init_prompt === 'string' ? proxyPrompt.init_prompt : '',
+    init_prompt_template: typeof proxyPrompt.init_prompt_template === 'string' ? proxyPrompt.init_prompt_template : '',
+    user_message_template: typeof proxyPrompt.user_message_template === 'string' ? proxyPrompt.user_message_template : '',
+    response_schema_template: typeof proxyPrompt.response_schema_template === 'string' ? proxyPrompt.response_schema_template : '',
+    format_only_retry_template: typeof proxyPrompt.format_only_retry_template === 'string' ? proxyPrompt.format_only_retry_template : '',
+  };
 }
 
 function getApiBaseUrl(): string {
@@ -574,10 +579,22 @@ app.whenReady().then(() => {
         format_only_retry_template: string;
       }
     ) => {
+      // 将 system_prompt 写入 client-core.json（客户端配置）
+      const clientCorePath = WebclawPaths.clientCoreConfig;
+      let clientCoreRaw: Record<string, any> = {};
+      if (fs.existsSync(clientCorePath)) {
+        try {
+          clientCoreRaw = JSON.parse(fs.readFileSync(clientCorePath, 'utf-8')) as Record<string, any>;
+        } catch { /* ignore */ }
+      }
+      clientCoreRaw.prompt = clientCoreRaw.prompt ?? {};
+      clientCoreRaw.prompt.system = String(payload.system_prompt ?? '');
+      fs.writeFileSync(clientCorePath, JSON.stringify(clientCoreRaw, null, 2), 'utf-8');
+
+      // 将其他 5 个 prompt 字段写入 default.json（Proxy 服务端配置）
       const configPath = WebclawPaths.mainConfig;
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
       raw.prompt = {
-        system: String(payload.system_prompt ?? ''),
         init_prompt: String(payload.init_prompt ?? ''),
         init_prompt_template: String(payload.init_prompt_template ?? ''),
         user_message_template: String(payload.user_message_template ?? ''),
@@ -586,6 +603,7 @@ app.whenReady().then(() => {
       };
       delete raw.defaults;
       fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf-8');
+
       promptConfig = readPromptConfigFromFile();
       return { ok: true, promptConfig };
     }
