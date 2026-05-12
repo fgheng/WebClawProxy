@@ -28,7 +28,7 @@ export const execModule: ToolModule = {
           },
           timeout: {
             type: 'number',
-            description: 'Maximum execution time in milliseconds (default: 30000)',
+            description: 'Maximum execution time in milliseconds (default: 300000)',
           },
         },
         required: ['command'],
@@ -41,24 +41,69 @@ export const execModule: ToolModule = {
     if (!command.trim()) return JSON.stringify({ error: 'Empty command' });
     if (isBlocked(command)) return JSON.stringify({ error: 'Command blocked for safety' });
 
-    const timeoutMs = typeof args.timeout === 'number' && args.timeout > 0 ? args.timeout : 30000;
+    const timeoutMs = typeof args.timeout === 'number' && args.timeout > 0 ? args.timeout : 300000;
 
-    try {
-      const result = child_process.execSync(command, {
-        timeout: timeoutMs,
-        maxBuffer: 1024 * 1024, // 1MB
-        encoding: 'utf-8',
+    return new Promise<string>((resolve) => {
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+
+      const proc = child_process.spawn(command, [], {
         shell: '/bin/sh',
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
-      // 截断过长输出
-      const maxLen = 10000;
-      const stdout = result.length > maxLen ? result.slice(0, maxLen) + '\n... (truncated)' : result;
-      return JSON.stringify({ stdout, stderr: '', exit_code: 0 });
-    } catch (err: any) {
-      const stdout = typeof err.stdout === 'string' ? err.stdout : '';
-      const stderr = typeof err.stderr === 'string' ? err.stderr : err.message ?? '';
-      const exitCode = typeof err.status === 'number' ? err.status : 1;
-      return JSON.stringify({ stdout, stderr, exit_code: exitCode });
-    }
+
+      proc.stdout.on('data', (chunk: Buffer | string) => {
+        stdout += chunk.toString();
+        // 如果输出过大，提前截断并杀进程
+        if (stdout.length > 1_000_000 && !settled) {
+          settled = true;
+          proc.kill('SIGTERM');
+          const maxLen = 10000;
+          const truncated = stdout.slice(0, maxLen) + '\n... (truncated, output too large)';
+          resolve(JSON.stringify({ stdout: truncated, stderr: stderr.slice(0, 10000), exit_code: 1 }));
+        }
+      });
+
+      proc.stderr.on('data', (chunk: Buffer | string) => {
+        stderr += chunk.toString();
+      });
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          proc.kill('SIGTERM');
+          // SIGTERM 后给 5 秒让进程退出，否则 SIGKILL
+          setTimeout(() => {
+            if (!proc.killed) proc.kill('SIGKILL');
+          }, 5000);
+          const maxLen = 10000;
+          resolve(JSON.stringify({
+            stdout: stdout.length > maxLen ? stdout.slice(0, maxLen) + '\n... (truncated)' : stdout,
+            stderr: stderr.slice(0, maxLen) + `\n... timeout after ${timeoutMs}ms`,
+            exit_code: 124,
+          }));
+        }
+      }, timeoutMs);
+
+      proc.on('close', (code: number | null) => {
+        clearTimeout(timer);
+        if (settled) return; // 已经 resolve（超时或输出过大）
+        settled = true;
+        const maxLen = 10000;
+        resolve(JSON.stringify({
+          stdout: stdout.length > maxLen ? stdout.slice(0, maxLen) + '\n... (truncated)' : stdout,
+          stderr: stderr.length > maxLen ? stderr.slice(0, maxLen) + '\n... (truncated)' : stderr,
+          exit_code: code ?? 1,
+        }));
+      });
+
+      proc.on('error', (err: Error) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        resolve(JSON.stringify({ stdout: '', stderr: err.message, exit_code: 1 }));
+      });
+    });
   },
 };
