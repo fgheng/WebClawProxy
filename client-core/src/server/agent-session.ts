@@ -8,6 +8,7 @@ import type { ProviderKey } from '../core/provider-models';
 import type { ClientCoreResult, ClientCoreState, ClientSessionData } from '../core/types';
 import type { ChatMessage, AssistantResponse } from '../types';
 import type * as http from 'http';
+import { loadClientCoreRuntimeConfig } from '../core/core-config';
 
 /**
  * AgentSession — 服务端包装的 WebClaw Agent 会话
@@ -29,10 +30,12 @@ export class AgentSession {
     const proxyBaseUrl = options.proxyBaseUrl ?? 'http://localhost:3000';
 
     // 创建 WebClawClient（直接与 WebClawProxy 通信）
+    const coreConfig = loadClientCoreRuntimeConfig();
+    const defaultSystem = coreConfig.prompt.system;
     this.client = new WebClawClient({
       baseUrl: proxyBaseUrl,
       model: options.model ?? 'gpt-4o',
-      system: options.system ?? '',
+      system: options.system ?? defaultSystem,
       sessionId: options.sessionId ?? this.generateSessionId(),
       routeMode: options.mode ?? 'forward',
       stream: false,

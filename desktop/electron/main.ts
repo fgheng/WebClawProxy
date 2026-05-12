@@ -48,12 +48,14 @@ let lastBrowserBounds: { x: number; y: number; width: number; height: number } |
 let lastSplitRatio = DEFAULT_SPLIT_RATIO;
 let desktopTheme: 'dark' | 'light' = 'dark';
 let promptConfig: {
+  system_prompt: string;
   init_prompt: string;
   init_prompt_template: string;
   user_message_template: string;
   response_schema_template: string;
   format_only_retry_template: string;
 } = {
+  system_prompt: '',
   init_prompt: '',
   init_prompt_template: '',
   user_message_template: '',
@@ -88,6 +90,7 @@ function readConfiguredServicePortFromFile(): number {
 }
 
 function readPromptConfigFromFile(): {
+  system_prompt: string;
   init_prompt: string;
   init_prompt_template: string;
   user_message_template: string;
@@ -98,7 +101,18 @@ function readPromptConfigFromFile(): {
     const configPath = WebclawPaths.mainConfig;
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
     const source = (raw.prompt ?? raw.defaults ?? {}) as Record<string, any>;
+    // 如果 system 为空字符串，尝试从 system.md 文件读取
+    let systemPrompt = typeof source.system === 'string' ? source.system : '';
+    if (!systemPrompt) {
+      const systemMdPath = path.join(WebclawPaths.promptsDir, 'system.md');
+      try {
+        if (fs.existsSync(systemMdPath)) {
+          systemPrompt = fs.readFileSync(systemMdPath, 'utf-8').trim();
+        }
+      } catch { /* ignore */ }
+    }
     return {
+      system_prompt: systemPrompt,
       init_prompt: typeof source.init_prompt === 'string' ? source.init_prompt : '',
       init_prompt_template: typeof source.init_prompt_template === 'string' ? source.init_prompt_template : '',
       user_message_template: typeof source.user_message_template === 'string' ? source.user_message_template : '',
@@ -107,6 +121,7 @@ function readPromptConfigFromFile(): {
     };
   } catch {
     return {
+      system_prompt: '',
       init_prompt: '',
       init_prompt_template: '',
       user_message_template: '',
@@ -551,6 +566,7 @@ app.whenReady().then(() => {
     async (
       _event,
       payload: {
+        system_prompt: string;
         init_prompt: string;
         init_prompt_template: string;
         user_message_template: string;
@@ -561,6 +577,7 @@ app.whenReady().then(() => {
       const configPath = WebclawPaths.mainConfig;
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, any>;
       raw.prompt = {
+        system: String(payload.system_prompt ?? ''),
         init_prompt: String(payload.init_prompt ?? ''),
         init_prompt_template: String(payload.init_prompt_template ?? ''),
         user_message_template: String(payload.user_message_template ?? ''),

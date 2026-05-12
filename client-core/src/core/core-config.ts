@@ -21,6 +21,10 @@ export type ClientCoreRuntimeConfig = {
   storage: {
     rootDir: string;
   };
+  prompt: {
+    /** 系统提示词，为空时从 ~/.webclaw/config/prompts/system.md 读取 */
+    system: string;
+  };
 };
 
 const BUILTIN_DEFAULTS: ClientCoreRuntimeConfig = {
@@ -39,12 +43,16 @@ const BUILTIN_DEFAULTS: ClientCoreRuntimeConfig = {
   storage: {
     rootDir: WebclawPaths.coreSessionsDir,
   },
+  prompt: {
+    system: readDefaultSystemPrompt(),
+  },
 };
 
 type PartialRuntimeConfig = Partial<{
   api: Partial<ClientCoreRuntimeConfig['api']>;
   defaults: Partial<ClientCoreRuntimeConfig['defaults']>;
   storage: Partial<ClientCoreRuntimeConfig['storage']>;
+  prompt: Partial<ClientCoreRuntimeConfig['prompt']>;
 }>;
 
 function deepMergeConfig(partial?: PartialRuntimeConfig): ClientCoreRuntimeConfig {
@@ -60,6 +68,10 @@ function deepMergeConfig(partial?: PartialRuntimeConfig): ClientCoreRuntimeConfi
     storage: {
       ...BUILTIN_DEFAULTS.storage,
       ...(partial?.storage ?? {}),
+    },
+    prompt: {
+      ...BUILTIN_DEFAULTS.prompt,
+      ...(partial?.prompt ?? {}),
     },
   };
 }
@@ -92,5 +104,25 @@ export function loadClientCoreRuntimeConfig(customPath?: string): ClientCoreRunt
   if (!path.isAbsolute(merged.storage.rootDir)) {
     merged.storage.rootDir = path.resolve(process.cwd(), merged.storage.rootDir);
   }
+  // 如果 prompt.system 配置为空，从 system.md 文件加载默认值
+  if (!merged.prompt.system) {
+    merged.prompt.system = readDefaultSystemPrompt();
+  }
   return merged;
+}
+
+/**
+ * 从 ~/.webclaw/config/prompts/system.md 读取默认系统提示词。
+ * 如果文件不存在，返回空字符串。
+ */
+function readDefaultSystemPrompt(): string {
+  const systemMdPath = path.join(WebclawPaths.promptsDir, 'system.md');
+  try {
+    if (fs.existsSync(systemMdPath)) {
+      return fs.readFileSync(systemMdPath, 'utf-8').trim();
+    }
+  } catch {
+    // ignore
+  }
+  return '';
 }

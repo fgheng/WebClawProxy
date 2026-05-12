@@ -40,12 +40,14 @@ export default function App() {
   const [providerApiKeyMasked, setProviderApiKeyMasked] = useState<Record<string, string>>({});
   const [servicePort, setServicePort] = useState(3000);
   const [promptConfig, setPromptConfig] = useState<{
+    system_prompt: string;
     init_prompt: string;
     init_prompt_template: string;
     user_message_template: string;
     response_schema_template: string;
     format_only_retry_template: string;
   }>({
+    system_prompt: '',
     init_prompt: '',
     init_prompt_template: '',
     user_message_template: '',
@@ -501,6 +503,7 @@ export default function App() {
 
   const handlePromptConfigSave = useCallback(
     async (payload: {
+      system_prompt: string;
       init_prompt: string;
       init_prompt_template: string;
       user_message_template: string;
@@ -587,12 +590,13 @@ export default function App() {
       selectedModel={displayMode === 'forward' ? selectedForwardModel : undefined}
       providerModels={providerModels}
       serviceStatus={serviceStatus}
+      systemPrompt={promptConfig.system_prompt}
       onProviderChange={handleProviderChange}
       onError={pushError}
       onSendingChange={setWebclawSending}
       notice={webclawNotice}
     />
-  ), [currentProvider, displayMode, selectedForwardModel, providerModels, serviceStatus, handleProviderChange, pushError, webclawNotice]);
+  ), [currentProvider, displayMode, selectedForwardModel, providerModels, serviceStatus, promptConfig.system_prompt, handleProviderChange, pushError, webclawNotice]);
 
   const panel = useMemo(() => {
     if (activeTab === 'webclaw') return null;
@@ -1236,6 +1240,7 @@ function ConfigPanel({
   serviceStatus: string;
   onSaveServiceSettings: (payload: { servicePort: number }) => Promise<void>;
   promptConfig: {
+    system_prompt: string;
     init_prompt: string;
     init_prompt_template: string;
     user_message_template: string;
@@ -1243,6 +1248,7 @@ function ConfigPanel({
     format_only_retry_template: string;
   };
   onSavePromptConfig: (payload: {
+    system_prompt: string;
     init_prompt: string;
     init_prompt_template: string;
     user_message_template: string;
@@ -1280,11 +1286,11 @@ function ConfigPanel({
   const [promptDraft, setPromptDraft] = useState(promptConfig);
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptMessageByKey, setPromptMessageByKey] = useState<Partial<Record<
-  'init_prompt' | 'init_prompt_template' | 'user_message_template' | 'response_schema_template' | 'format_only_retry_template',
+  'system_prompt' | 'init_prompt' | 'init_prompt_template' | 'user_message_template' | 'response_schema_template' | 'format_only_retry_template',
   string
   >>>({});
   const promptMessageTimersRef = useRef<Partial<Record<
-  'init_prompt' | 'init_prompt_template' | 'user_message_template' | 'response_schema_template' | 'format_only_retry_template',
+  'system_prompt' | 'init_prompt' | 'init_prompt_template' | 'user_message_template' | 'response_schema_template' | 'format_only_retry_template',
   number | null
   >>>({});
   const lastPromptConfigRef = useRef(promptConfig);
@@ -1293,6 +1299,7 @@ function ConfigPanel({
     setPromptDraft((prev) => {
       const last = lastPromptConfigRef.current;
       return {
+        system_prompt: prev.system_prompt === last.system_prompt ? promptConfig.system_prompt : prev.system_prompt,
         init_prompt: prev.init_prompt === last.init_prompt ? promptConfig.init_prompt : prev.init_prompt,
         init_prompt_template: prev.init_prompt_template === last.init_prompt_template ? promptConfig.init_prompt_template : prev.init_prompt_template,
         user_message_template: prev.user_message_template === last.user_message_template ? promptConfig.user_message_template : prev.user_message_template,
@@ -1320,6 +1327,7 @@ function ConfigPanel({
   }, [serviceStatus]);
 
   const promptChangedByKey = {
+    system_prompt: promptDraft.system_prompt !== promptConfig.system_prompt,
     init_prompt: promptDraft.init_prompt !== promptConfig.init_prompt,
     init_prompt_template: promptDraft.init_prompt_template !== promptConfig.init_prompt_template,
     user_message_template: promptDraft.user_message_template !== promptConfig.user_message_template,
@@ -1835,6 +1843,42 @@ function ConfigPanel({
             </div>
 
             <div className="prompt-grid">
+              <div className="panel-box prompt-card">
+                <div className="prompt-card-head mono">
+                  <div className="prompt-card-title">system_prompt</div>
+                  <div className="prompt-card-actions">
+                    {promptMessageByKey.system_prompt ? <div className="prompt-card-message">{promptMessageByKey.system_prompt}</div> : null}
+                    <button
+                      className="primary"
+                      type="button"
+                      data-action="save-prompt"
+                      onClick={() => void handlePromptSave('system_prompt')}
+                      disabled={promptSaving || !promptChangedByKey.system_prompt}
+                    >
+                      {promptSaving ? '保存中...' : '保存'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPromptDraft((prev) => ({ ...prev, system_prompt: promptConfig.system_prompt }));
+                      }}
+                    >
+                      恢复
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="mono"
+                  rows={6}
+                  value={promptDraft.system_prompt}
+                  onChange={(e) => {
+                    setPromptDraft((prev) => ({ ...prev, system_prompt: e.target.value }));
+                    const timer = promptMessageTimersRef.current.system_prompt;
+                    if (timer != null) window.clearTimeout(timer);
+                    promptMessageTimersRef.current.system_prompt = null;
+                  }}
+                />
+              </div>
               <div className="panel-box prompt-card">
                 <div className="prompt-card-head mono">
                   <div className="prompt-card-title">init_prompt</div>

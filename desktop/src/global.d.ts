@@ -30,6 +30,7 @@ declare global {
         apiBaseUrl: string;
         cdpUrl: string;
         promptConfig: {
+          system_prompt: string;
           init_prompt: string;
           init_prompt_template: string;
           user_message_template: string;
@@ -52,6 +53,7 @@ declare global {
         servicePort: number;
       }>;
       updatePromptConfig: (payload: {
+        system_prompt: string;
         init_prompt: string;
         init_prompt_template: string;
         user_message_template: string;
@@ -60,6 +62,7 @@ declare global {
       }) => Promise<{
         ok: boolean;
         promptConfig: {
+          system_prompt: string;
           init_prompt: string;
           init_prompt_template: string;
           user_message_template: string;

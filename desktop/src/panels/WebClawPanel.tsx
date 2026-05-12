@@ -37,6 +37,8 @@ type WebClawPanelProps = {
   selectedModel?: string;
   providerModels: Record<string, string[]>;
   serviceStatus: string;
+  /** 系统提示词，传入后 chat 调用时会作为 system message */
+  systemPrompt?: string;
   onProviderChange: (provider: string) => Promise<void> | void;
   onError: (message: string) => void;
   onSendingChange?: (sending: boolean) => void;
@@ -78,7 +80,7 @@ function buildFeedFromEventHistory(messages: any[]): FeedItem[] {
 }
 
 export function WebClawPanel(props: WebClawPanelProps) {
-  const { agentUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, onProviderChange, onError, onSendingChange, notice } = props;
+  const { agentUrl, currentProvider, displayMode, selectedModel, providerModels, serviceStatus, systemPrompt, onProviderChange, onError, onSendingChange, notice } = props;
   const feedRef = useRef<HTMLDivElement | null>(null);
   const clientRef = useRef<AgentClient | null>(null);
   const onProviderChangeRef = useRef(onProviderChange);
@@ -339,6 +341,7 @@ export function WebClawPanel(props: WebClawPanelProps) {
       const result = await client.chat(input, {
         model: nextModel,
         mode: displayMode,
+        system: systemPrompt,
       });
 
       applyResultToFeed(result, pendingId);
